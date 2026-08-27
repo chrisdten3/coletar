@@ -95,15 +95,27 @@ builds the exact hosted MCP server every later step reuses.
 - [ ] **Still single-tenant.** Scopes are enforced, tenancy is not — any valid key
       reaches the whole graph. Per-user isolation is M3.1
 
-### M2.2 Local proxy / bridge
+### M2.2 Local proxy / bridge ✅
 
 - [x] Proxy in front of any OpenAI-compatible endpoint; injects retrieved memory into
       the system prompt, extracts durable facts on the way out
-- [x] Conservative heuristic extraction — precision over recall
-- [ ] 50-example labelled turn set (durable fact vs. not), and a measured
-      false-positive write rate under 15%
-- [ ] Extraction on streamed responses (the streaming path passes through today)
-- [ ] Documented Ollama setup and a measured added-latency figure
+- [x] Conservative heuristic extraction — precision over recall, now guarded against
+      questions, quotation, attribution, anaphora and phrasal particles
+- [x] 50-turn labelled set with a written definition of "durable", labelled before
+      anything was measured against it. **False-positive rate 37.5% → 4.3%**
+      (bar: under 15%), precision 62.5% → 95.7%, recall 100%, 22/22 correctly typed
+- [x] Negation survives into stored content — a memory that inverts its source is
+      worse than no memory at all
+- [x] Extraction on streamed responses: chunks are forwarded first and reassembled
+      second, so nothing sits between the model and the screen. A failed stream
+      writes nothing
+- [x] Proxy writes recorded as connector writes under a `local-proxy` principal
+- [x] Added round-trip latency **~2.4ms p95** at 1,000 objects (budget: 2s)
+- [x] Documented Ollama setup (docs/EXTRACTION.md, README)
+- [ ] Live end-to-end run against a real Ollama model — deferred: the dev machine
+      is an 8GB M1 and could not host a 4.7GB model alongside the rest of its
+      working set. The logic is covered by fake-upstream tests; this is HTTP-shape
+      confirmation only
 
 ### M2.3 Retrieval evaluation and traces
 
