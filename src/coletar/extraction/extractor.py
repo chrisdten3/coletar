@@ -7,7 +7,7 @@ objects is a much harder problem than "chunk and embed."
 What exists today is a deliberately conservative heuristic baseline — it only fires
 on unambiguous first-person statements, and it tags everything
 `explicit_statement`. It exists so the local proxy loop is closed end to end from
-day one, not because a regex is the answer. The LLM-assisted path below is M2.
+day one, not because a regex is the answer. The LLM-assisted path below is M2.2.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ async def extract_memories(
     referents) but is never itself treated as a source of fact — a model's
     statements about the user are inference, not testimony.
     """
-    del assistant_text  # reserved for the M2 LLM-assisted path
+    del assistant_text  # reserved for the M2.2 LLM-assisted path
 
     found: list[Memory] = []
     seen: set[str] = set()
@@ -86,8 +86,8 @@ async def extract_memories(
 async def extract_with_model(*, transcript: str, scope: Scope = GLOBAL_SCOPE) -> list[Memory]:
     """LLM-assisted typed extraction with confidence scoring and dedup/merge.
 
-    M2. Note the cost risk named in §11: this runs on every export at consumer
+    M2.2. Note the cost risk named in §11: this runs on every export at consumer
     scale, so it must be modelled before the consumer tier is priced. The local
     wedge should run it against the user's own local model, where inference is free.
     """
-    raise NotImplementedError("LLM-assisted extraction is M2; see docs/ROADMAP.md")
+    raise NotImplementedError("LLM-assisted extraction is M2.2; see docs/ROADMAP.md")

@@ -4,7 +4,8 @@ The one compiler with no third-party constraint at all, which makes it the right
 place to get manifest and Continuity Score semantics correct before touching
 anyone's ToS. Emits an Ollama Modelfile SYSTEM block plus a knowledge directory.
 
-M1 — first compiler to build.
+M5 — first compiler to build, because it is the only one with no third-party
+constraint on its output format.
 """
 
 from __future__ import annotations
@@ -21,4 +22,4 @@ class LocalModelCompiler:
     async def compile(
         self, objects: list[ContextObject], *, out_dir: Path
     ) -> CompileResult:
-        raise NotImplementedError("Local compiler is M1; see docs/ROADMAP.md")
+        raise NotImplementedError("Local compiler is M5; see docs/ROADMAP.md")

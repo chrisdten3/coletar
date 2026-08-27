@@ -31,12 +31,24 @@ async def test_search_ranks_higher_confidence_first():
     assert results[0][0].id == strong.id
 
 
-async def test_search_respects_scope():
+async def test_project_scoped_search_includes_global_and_excludes_other_projects():
+    """A conversation inside a project still sees the user's global context; it
+    never sees another project's. Both halves are M1.2 acceptance criteria."""
     store = InMemoryStore()
     scope = Scope(type=ScopeType.PROJECT, id="proj_a")
-    await store.put_object(Memory.from_write("Project A ships in March.", scope=scope))
-    await store.put_object(Memory.from_write("Global fact about March."))
-    assert len(await store.search("march", scope=scope)) == 1
+    mine = await store.put_object(
+        Memory.from_write("Project A ships in March.", scope=scope)
+    )
+    globally = await store.put_object(Memory.from_write("Global fact about March."))
+    await store.put_object(
+        Memory.from_write(
+            "Project B ships in March.", scope=Scope(type=ScopeType.PROJECT, id="proj_b")
+        )
+    )
+
+    found = {obj.id for obj, _ in await store.search("march", scope=scope)}
+
+    assert found == {mine.id, globally.id}
 
 
 async def test_compression_retires_superseded_but_keeps_it_readable():

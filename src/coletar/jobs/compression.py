@@ -7,7 +7,13 @@ retrieval token budget into a real knob instead of a truncation point.
 
 Implemented here: the superseded-chain pass, which needs no model and is exactly
 correct. The low-confidence clustering pass needs embeddings, so it lands with the
-Postgres backend (M2).
+Postgres backend, and lands in M4.
+
+Note what this job is *not* responsible for. Supersession already excludes an object
+from retrieval the moment the correction is written (see the Store protocol), so a
+stale fact is never served in the window before this next runs. What compression adds
+is durability and budget: it marks the retirement explicitly in the event log, and it
+takes the object out of `list_objects` and therefore out of every compile.
 """
 
 from __future__ import annotations
@@ -35,7 +41,11 @@ async def compress(store: Store, *, scope: Scope | None = None) -> CompressionRe
     Retired, not deleted: the object stays readable so the Context Inspector can
     still show a user what a fact used to say and when it changed.
     """
-    objects = await store.list_objects(type=ObjectType.MEMORY, scope=scope, limit=10_000)
+    # include_superseded, because superseded objects are exactly what this job is
+    # here to retire -- the default filter would hide its own work from it.
+    objects = await store.list_objects(
+        type=ObjectType.MEMORY, scope=scope, include_superseded=True, limit=10_000
+    )
     superseded_ids = {o.supersedes for o in objects if o.supersedes}
 
     retired = 0

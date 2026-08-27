@@ -88,7 +88,7 @@ async def chat_completions(request: Request) -> Any:
 
     if body.get("stream"):
         # Streaming path: pass bytes straight through. Extraction on streamed
-        # replies needs the assembled response, so it is deferred to M2 rather
+        # replies needs the assembled response, so it is deferred to M2.2 rather
         # than silently skipped — see docs/ROADMAP.md.
         async def upstream() -> Any:
             async with (

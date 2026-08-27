@@ -31,7 +31,10 @@ class Settings(BaseSettings):
     # is always an HTTP transport, never stdio, outside of local development.
     mcp_port: int = 8788
 
-    # Retrieval.
+    # Retrieval. "hashing" is the default because the in-process store has to work
+    # with nothing installed; "ollama" is what a real deployment runs, against the
+    # user's own model server where inference is free (§4, §11).
+    embedding_backend: Literal["hashing", "ollama"] = "hashing"
     embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 768
     retrieval_token_budget: int = 1500

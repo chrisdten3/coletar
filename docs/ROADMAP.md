@@ -1,92 +1,172 @@
 # Roadmap
 
-Sequencing follows SCOPE §10. The ordering principle: **get the graph, compression and
-compiler logic right where there is no ToS risk and no missing API — then touch other
-people's gardens.**
+Milestone numbering follows the **build plan** (`PORTABLE_AI_WORKSPACE_BUILD_PLAN.md`),
+which slices SCOPE §10 into requirements / deliverables / acceptance criteria. The
+substrate this repo started from was previously labelled "M0"; it is now distributed
+across M1 and M2 below, where the build plan puts it.
 
-Each milestone below states what is *actually implemented* so nobody has to read the
-source to find out.
+The ordering principle is unchanged: **get the graph, compression and compiler logic
+right where there is no ToS risk and no missing API — then touch other people's
+gardens.**
+
+Each milestone states what is *actually implemented* so nobody has to read the source
+to find out. A box is only ticked when its acceptance criteria are pinned by a test.
 
 ---
 
-## M0 — Substrate ✅ done
+## M1 — Canonical schema + storage backend ✅ done
 
-The object model and everything that can be built on it without infrastructure.
+Persistent storage for the §2 object model, with graph relationships, semantic search
+and a full audit trail. Everything else reads and writes against this.
 
-- [x] `ContextObject` / `Memory` schema with scope, provenance, confidence,
-      `extraction_method`, `supersedes`, provider mappings (§2)
-- [x] Confidence defaults derived from `extraction_method` — connector writes outrank
-      export parsing by construction (§3.1)
-- [x] Append-only Event/Revision Log
-- [x] In-process store: graph, edges, events, lexical retrieval
-- [x] Budgeted context assembly and system-prompt rendering
-- [x] Hosted MCP server: `search_context`, `write_memory`, `get_project_state`,
-      `list_open_loops`
-- [x] Local proxy daemon: inject on the way in, extract on the way out
-- [x] Conservative heuristic extraction (precision over recall)
-- [x] Compression job: superseded-chain retirement
-- [x] Continuity Score with published weights + `explain()`
-- [x] CLI, docker-compose, Postgres schema with pgvector
+### M1.1 Schema definition & migrations ✅
 
-## M1 — Local-model wedge, for real
+- [x] One `ContextObject` table with a `type` discriminator — Memory is a subtype,
+      not a special case (§2)
+- [x] Typed edges (`supersedes`, `derived_from`, `belongs_to`, …), idempotent on
+      `(src, dst, type)`
+- [x] Every §2 `Memory` field present, round-tripping exactly through both backends
+      and through the snapshot file
+- [x] Provenance and `extraction_method` are non-optional — an object we cannot
+      explain to a user cannot be constructed
+- [x] "Active" excludes retired **and** superseded objects
+- [x] `migrations/001_init.sql` plus a checksum-ledgered runner (`coletar migrate`)
+- [x] Seed fixture: one object of every type plus a three-link supersedes chain
+      (`coletar seed`, `coletar.seed`)
+
+### M1.2 Vector index ✅
+
+- [x] Embedding on the write path — searchable on the very next call
+- [x] Two embedders: a zero-infrastructure hashing default and Ollama against the
+      user's own model server
+- [x] Hybrid vector + lexical ranking, one formula shared by both backends
+- [x] Project-scoped search includes global objects, excludes other projects'
+- [x] Fixed 20-query relevance set, reused by M4.1 and M6.2
+- [x] **95%** top-5 hit rate (bar: 90%); **~21ms** p95 at 10,000 objects (bar: 300ms)
+
+See [RETRIEVAL.md](RETRIEVAL.md) for the published formula and the measured numbers.
+
+### M1.3 Event / Revision Log ✅
+
+- [x] Append-only, with actor, timestamp and full before/after object state
+- [x] Frozen events; reads hand out copies, so a caller cannot rewrite history
+- [x] Stores hand out **detached** objects — mutating what you read cannot change the
+      graph behind the log's back
+- [x] Replay: `replay_object(store, id, at=T)` reconstructs state as of T from the
+      log alone; `coletar history <id>` is the Inspector timeline in the terminal
+- [x] Exactly one log row per write, pinned per write path; logging overhead well
+      under the 10ms budget
+
+### M1.1b Postgres + pgvector backend ✅
+
+- [x] `PostgresStore`: object, embedding and event commit in one transaction
+- [x] Soft retire only — no DELETE against `context_object` or `event_log` anywhere
+- [x] Hybrid candidate narrowing (HNSW cosine ∪ trigram), re-ranked by the shared
+      formula
+- [x] Integration tests gated on a reachable database, so the suite stays green with
+      no infrastructure: `docker compose up -d && uv run coletar migrate`
+
+---
+
+## M2 — Hosted MCP server + local model proxy
 
 SCOPE §10 step 1. Sellable as a developer tool on its own, fully dogfoodable, and it
 builds the exact hosted MCP server every later step reuses.
 
-- [ ] `PostgresStore` — psycopg wiring against `001_init.sql`; object writes and their
-      events must land in one transaction
-- [ ] Embedding pipeline against the user's own local model (free inference)
-- [ ] Hybrid retrieval: cosine top-k ∪ trigram, re-ranked by confidence and recency
-- [ ] `LocalModelCompiler` — Ollama Modelfile `SYSTEM` block + knowledge directory.
-      First compiler, and where manifest/score semantics get settled
-- [ ] Dedup/merge on write, so the proxy doesn't accumulate near-duplicates
-- [ ] Observability read: TTL, size, access-per-object, activity feed — all of it a
-      straight read of the event log
+### M2.1 MCP server core
 
-## M2 — Claude connector (Live Sync)
+- [x] Four tools registered with typed schemas: `search_context`, `write_memory`,
+      `get_project_state`, `list_open_loops`
+- [x] Streamable HTTP transport (ChatGPT never accepts local/stdio)
+- [ ] Auth layer gating every call — the store is currently single-tenant
+- [ ] Schema-level rejection of a malformed `kind`/`scope` with a clear error rather
+      than a server error
+- [ ] p95 tool round-trip under 500ms; 200-call fuzz run with zero unhandled
+      exceptions
 
-SCOPE §10 step 2. Can ship in parallel with M1; depends on no export-parsing work,
+### M2.2 Local proxy / bridge
+
+- [x] Proxy in front of any OpenAI-compatible endpoint; injects retrieved memory into
+      the system prompt, extracts durable facts on the way out
+- [x] Conservative heuristic extraction — precision over recall
+- [ ] 50-example labelled turn set (durable fact vs. not), and a measured
+      false-positive write rate under 15%
+- [ ] Extraction on streamed responses (the streaming path passes through today)
+- [ ] Documented Ollama setup and a measured added-latency figure
+
+---
+
+## M3 — Claude connector (Live Sync)
+
+SCOPE §10 step 2. Can ship in parallel with M2; depends on no export-parsing work,
 since objects arrive already typed.
 
-- [ ] Deploy the MCP server behind HTTPS (ChatGPT will need remote-only too)
-- [ ] Auth / per-user scoping — the store is currently single-tenant
+- [ ] Deploy behind HTTPS and register as a Claude Custom Connector
+- [ ] Per-user scoped auth; user A's token cannot read user B's objects
 - [ ] Ship the instruction snippets in `CONNECTORS.md` as a copy-paste flow
-- [ ] LLM-assisted typed extraction with confidence scoring and dedup/merge
-- [ ] Extraction on streamed proxy responses (the streaming path skips it today)
+- [ ] Tool-use reliability: ≥85% write-on-statement, ≥80% read-in-first-two-turns,
+      <10% spurious writes
+- [ ] Cross-conversation propagation harness — a fact written in conversation A is
+      retrievable in conversation B within 1s at p95. This is the direct proof of the
+      product's central claim.
 
-## M3 — Claude compiler (True Migration)
+---
+
+## M4 — Table-stakes layer: compression, observability, agentic graph
+
+SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
+
+- [x] Compression job: superseded-chain retirement, schedulable and on-demand
+- [ ] Token budget honoured at retrieval time, with ≥40% token reduction on the
+      seeded corpus and no loss from the M1.2 top-5 set
+- [ ] Low-confidence clustering pass (needs embeddings — now available)
+- [ ] Observability dashboard over the event log: TTL, object size, last access,
+      live activity feed
+- [ ] Agentic graph explorer (entity / fact / episode — a filtered rendering of the
+      same graph, not a second store)
+
+---
+
+## M5 — Claude compiler (True Migration) + Inspector + Continuity Score
 
 SCOPE §10 step 3. The first real True Migration proof point, and the only frontier
 surface built against an *official* format rather than a reverse-engineered one.
 
+- [x] Continuity Score with published weights and `explain()`
+- [ ] Context Inspector: review, edit, merge, re-scope — and no compile action until
+      every compile-eligible object has been shown at least once
 - [ ] `ClaudeCompiler` → native Claude Project: system prompt + project knowledge
 - [ ] Migration Manifest rendering (native / reconstructed / unsupported)
-- [ ] Round-trip check: compile, import, verify the destination stands alone
+- [ ] `object_coverage` ≥95%, `scope_preservation` = 100% (a hard gate — it is the
+      actual differentiator)
+- [ ] `LocalModelCompiler` → Ollama Modelfile `SYSTEM` block + knowledge directory.
+      Build this first: it is the one compiler with no third-party constraint, so it
+      is where manifest and score semantics get settled.
 
-## M4 — ChatGPT → Claude corridor
+---
+
+## M6 — ChatGPT migration corridor
 
 SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is proven.
 
-- [ ] Deep-link + desktop folder-watcher for the user-initiated export ZIP
-- [ ] ZIP parser → typed objects at `account_export_parse` confidence
-- [ ] Context Inspector: review, edit, merge, re-scope before anything compiles
+- [ ] Desktop folder-watcher for the user-initiated export ZIP — detection within
+      10s, zero false positives across 50 unrelated files
+- [ ] ZIP parser → typed objects at `account_export_parse` confidence, ≥85%
+      extraction precision against a hand-labelled 100-object fixture set
+- [ ] Raw archive stored separately from derived objects, so it can be re-parsed as
+      extraction improves
 - [ ] `ChatGPTCompiler` → Custom GPT package the **user** uploads. No UI driving.
 
-## M5 — ChatGPT connector (Live Sync, read first)
+---
 
-SCOPE §10 step 5.
+## M7 — ChatGPT connector + general release + polish
 
-- [ ] Developer Mode remote connector, read path
-- [ ] Lean on the explicit "remember this" confirmed-write flow, which works today
-- [ ] Upgrade to full write when OpenAI extends write-capable custom connectors past
-      Business/Enterprise/Edu
+SCOPE §10 steps 5–6.
 
-## M6 — General release
-
-- [ ] REST API + Python/JS SDKs over the canonical graph
-- [ ] Webhooks on the event log
-- [ ] Agentic graph explorer (entity / fact / episode view — a filtered rendering of
-      the same graph, not a second data model)
+- [ ] Developer Mode remote connector, read path; write attempts rejected
+      server-side, not merely hidden client-side
+- [ ] REST API + Python/JS SDKs over the canonical graph, with rate limiting
+- [ ] Webhooks on the event log, with a documented retry policy
 
 ---
 

@@ -264,3 +264,22 @@ class Memory(ContextObject):
                 confidence=resolved,
             ),
         )
+
+
+#: Subtypes that add fields beyond ContextObject. Everything absent from this map
+#: round-trips through the base class -- which is the §2 discipline showing up in
+#: code: a new object type costs a line here only if it genuinely needs one.
+_SUBTYPES: dict[ObjectType, type[ContextObject]] = {
+    ObjectType.MEMORY: Memory,
+}
+
+
+def object_from_record(record: dict[str, Any]) -> ContextObject:
+    """Rehydrate one object from its serialized form.
+
+    Shared by every deserialization path -- the in-process store's snapshot file,
+    the Postgres row mapper, and event-log replay -- so a subtype gaining fields
+    cannot be handled correctly in one place and wrongly in another.
+    """
+    model = _SUBTYPES.get(ObjectType(record["type"]), ContextObject)
+    return model.model_validate(record)
