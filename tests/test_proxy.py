@@ -8,6 +8,7 @@ takes.
 """
 
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -297,3 +298,42 @@ async def test_added_round_trip_latency_stays_under_two_seconds(store, upstream)
 
     worst = max(latencies)
     assert worst < ADDED_LATENCY_BUDGET_S, f"worst added latency {worst:.2f}s"
+
+
+# -- recorded contract with the real Ollama wire format ------------------------
+#
+# Everything above this line exercises the assembler against frames *this file*
+# writes, which proves it handles the format I imagined, not the format Ollama
+# emits. These bytes were captured verbatim from a live
+# `POST /v1/chat/completions` against Ollama 0.x serving qwen2.5:0.5b, so the
+# contract stays checked without needing a model server in CI.
+OLLAMA_CAPTURE = Path(__file__).parent / "fixtures" / "ollama_sse_stream.txt"
+OLLAMA_CAPTURE_REPLY = "Hello, how are you?"
+
+
+def test_assembler_handles_real_ollama_frames():
+    assembler = SSEAssembler()
+    assembler.feed(OLLAMA_CAPTURE.read_bytes())
+    assembler.close()
+    assert assembler.reply == OLLAMA_CAPTURE_REPLY
+
+
+def test_real_ollama_frames_survive_arbitrary_chunk_boundaries():
+    """The capture is one buffer; the network delivers it in pieces of its own
+    choosing, and a `data:` line split across two reads must still assemble."""
+    raw = OLLAMA_CAPTURE.read_bytes()
+    for size in (1, 7, 64, 512):
+        assembler = SSEAssembler()
+        for i in range(0, len(raw), size):
+            assembler.feed(raw[i : i + size])
+        assembler.close()
+        assert assembler.reply == OLLAMA_CAPTURE_REPLY, f"chunk size {size}"
+
+
+def test_the_capture_still_looks_like_what_was_recorded():
+    """If Ollama's frame shape drifts, re-record — and let this be the thing that
+    says so, rather than an empty `reply` nobody notices."""
+    text = OLLAMA_CAPTURE.read_text()
+    assert text.rstrip().endswith("data: [DONE]")
+    assert '"object":"chat.completion.chunk"' in text
+    assert '"delta":{"role":"assistant"' in text

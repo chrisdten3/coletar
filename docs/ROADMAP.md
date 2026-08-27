@@ -38,7 +38,11 @@ and a full audit trail. Everything else reads and writes against this.
 
 - [x] Embedding on the write path — searchable on the very next call
 - [x] Two embedders: a zero-infrastructure hashing default and Ollama against the
-      user's own model server
+      user's own model server — the latter verified against a live `/api/embed`
+      in gated tests, having previously had no coverage at all
+- [x] Relevance published per backend: **95%** hashing, **100%** nomic-embed-text,
+      asserted against `tests/fixtures/relevance_baselines.json` so the documented
+      numbers cannot drift from the implementation
 - [x] Hybrid vector + lexical ranking, one formula shared by both backends
 - [x] Project-scoped search includes global objects, excludes other projects'
 - [x] Fixed 20-query relevance set, reused by M4.1 and M6.2
@@ -112,10 +116,13 @@ builds the exact hosted MCP server every later step reuses.
 - [x] Proxy writes recorded as connector writes under a `local-proxy` principal
 - [x] Added round-trip latency **~2.4ms p95** at 1,000 objects (budget: 2s)
 - [x] Documented Ollama setup (docs/EXTRACTION.md, README)
-- [ ] Live end-to-end run against a real Ollama model — deferred: the dev machine
-      is an 8GB M1 and could not host a 4.7GB model alongside the rest of its
-      working set. The logic is covered by fake-upstream tests; this is HTTP-shape
-      confirmation only
+- [x] Live end-to-end run against a real Ollama model. Verified on `qwen2.5:0.5b`
+      (a 0.5B model proves the same wire contract as an 8B one, at a tenth of the
+      memory): injection, 41 streamed chunks forwarded, extraction firing on both
+      the streaming and buffered paths, both writes attributed to `local-proxy`.
+      Ollama's real SSE frames are checked in as
+      `tests/fixtures/ollama_sse_stream.txt`, so the contract stays tested without
+      a model server
 
 ### M2.3 Retrieval evaluation and traces
 

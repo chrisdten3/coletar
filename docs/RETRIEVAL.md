@@ -55,7 +55,7 @@ this container".
 | Backend | What it is | When |
 |---|---|---|
 | `hashing` (default) | Signed hashing of word unigrams and character 4-grams into the same 768-dim space, L2-normalized. Reaches morphological variants (`money` ~ `monetary`), **cannot** reach synonymy. | A fresh clone, with nothing installed. The in-process store has to work with no infrastructure, so the default embedder cannot require a model server. |
-| `ollama` | `nomic-embed-text` (or any embedding model) on the user's own server. | Real deployments. §4 and §11: typed extraction and embedding at consumer scale is genuine inference spend, and on the local leg that spend is zero. |
+| `ollama` | `nomic-embed-text` (or any embedding model) on the user's own server. Verified against a live Ollama in `tests/test_embedding_live.py`, gated so the suite stays green without one. | Real deployments. §4 and §11: typed extraction and embedding at consumer scale is genuine inference spend, and on the local leg that spend is zero. |
 
 Embedding happens **on the write path**, so an object is searchable on the very next
 call. The bound on "when does a write become visible" is one embed call, not an
@@ -65,18 +65,39 @@ unspecified background window.
 
 Against [`tests/fixtures/relevance_set.json`](../tests/fixtures/relevance_set.json) —
 30 objects with deliberate near-misses, 20 queries phrased the way a model phrases
-them when calling `search_context`:
+them when calling `search_context`. **Both backends are measured, because both ship:**
+`hashing` is what a fresh clone gets with nothing installed, `ollama` is what a real
+deployment runs.
 
-| | `hashing` (default) |
-|---|---|
-| top-5 hit rate | **95%** (19/20), against a 90% bar |
-| p95 search latency, 10,000 objects | **~21ms**, against a 300ms bar |
-| write path | ~0.2ms/object |
+| | `hashing` (default) | `ollama` / `nomic-embed-text` |
+|---|---|---|
+| top-5 hit rate (bar: 90%) | **95%** (19/20) | **100%** (20/20) |
+| hit@1 | 80% | 90% |
+| MRR@5 | 0.858 | 0.933 |
+| search latency, p50 | 0.2ms | 23.5ms |
+| write path, per object | ~0.2ms | ~34ms (one HTTP round trip) |
 
-The single miss is *"is it ok to book a meeting at 9am"* against *"Do not schedule
-anything before 10am"*. That needs synonymy, and there is no model behind a hash. It
-is kept in the set on purpose: it is the query that should start passing the day
-`COLETAR_EMBEDDING_BACKEND=ollama` becomes the default.
+The numbers live in
+[`tests/fixtures/relevance_baselines.json`](../tests/fixtures/relevance_baselines.json)
+and are asserted by `test_the_published_numbers_still_hold`. A documented figure that
+has drifted from the implementation is worse than no figure, so the table and the test
+move together.
+
+**The hashing default's one miss** is *"is it ok to book a meeting at 9am"* against
+*"Do not schedule anything before 10am"*. That needs synonymy, and there is no model
+behind a hash. It was left in the set deliberately as the canary for this backend —
+and it resolves under `nomic-embed-text`, which is what took 95% to 100%.
+
+**The trade is latency, not accuracy.** Real embeddings cost roughly 100× on search
+(0.2ms → 23.5ms, still an order of magnitude inside the 300ms bar) and roughly 170× on
+write, because every write is an HTTP round trip to the model server. That write cost
+is the one to watch: at 34ms per object, parsing a 500-conversation export (M6.2) would
+spend minutes in the embedder alone. The `Embedder` protocol is batch-shaped for
+exactly this reason, but `put_object` currently embeds one object per call, so bulk
+ingest paths should batch before that milestone.
+
+At 10,000 objects the in-process index answers in **~21ms p95** with the hashing
+backend, against a 300ms bar.
 
 ## Backend parity
 

@@ -1,0 +1,26 @@
+{
+  "_note": [
+    "Published in docs/RETRIEVAL.md. Both backends are measured because both ship:",
+    "hashing is what a fresh clone gets with nothing installed, ollama is what a",
+    "real deployment runs. Re-measure and update both together — a documented",
+    "number that has drifted from the implementation is worse than no number.",
+    "",
+    "Measured against fixtures/relevance_set.json: 30 objects, 20 queries, top_k=5."
+  ],
+  "hashing": {
+    "model": "hashing-768",
+    "top5_hit_rate": 0.95,
+    "hit_at_1": 0.80,
+    "mrr_at_5": 0.858,
+    "search_p50_ms": 0.2,
+    "known_miss": "is it ok to book a meeting at 9am"
+  },
+  "ollama": {
+    "model": "nomic-embed-text",
+    "top5_hit_rate": 1.0,
+    "hit_at_1": 0.90,
+    "mrr_at_5": 0.933,
+    "search_p50_ms": 23.5,
+    "known_miss": null
+  }
+}

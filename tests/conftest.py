@@ -85,15 +85,42 @@ async def relevance_store(relevance_set: RelevanceSet) -> tuple[InMemoryStore, d
     return store, ids
 
 
-def _dsn_reachable(dsn: str) -> bool:
+def _dsn_reachable(dsn: str, *, default_port: int = 5432) -> bool:
     parsed = urlparse(dsn)
     if parsed.hostname is None:
         return False
     try:
-        with socket.create_connection((parsed.hostname, parsed.port or 5432), timeout=1.0):
+        with socket.create_connection(
+            (parsed.hostname, parsed.port or default_port), timeout=1.0
+        ):
             return True
     except OSError:
         return False
+
+
+@pytest.fixture(scope="session")
+def ollama_url() -> str:
+    """A reachable Ollama with the configured embedding model pulled, or a skip.
+
+    Gated for the same reason the Postgres fixture is: the point of these tests is
+    that our assumptions about someone else's API are correct, and a mock would
+    only re-assert the assumptions.
+    """
+    url = os.environ.get("COLETAR_TEST_OLLAMA_URL", "http://localhost:11434")
+    if not _dsn_reachable(url.replace("http://", "//"), default_port=11434):
+        pytest.skip(f"no Ollama reachable at {url}")
+    try:
+        import httpx
+
+        names = {
+            model["name"].split(":")[0]
+            for model in httpx.get(f"{url}/api/tags", timeout=5.0).json().get("models", [])
+        }
+    except Exception:  # pragma: no cover - the skip path
+        pytest.skip(f"could not list models at {url}")
+    if "nomic-embed-text" not in names:
+        pytest.skip("`ollama pull nomic-embed-text` to run the live embedder tests")
+    return url
 
 
 @pytest.fixture(scope="session")
