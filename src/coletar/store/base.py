@@ -25,6 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from coletar.retrieval.ranking import Scored
 from coletar.schema.events import Event
 from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
 
@@ -91,7 +92,13 @@ class Store(Protocol):
         *,
         scope: Scope | None = None,
         top_k: int = 12,
-    ) -> list[tuple[ContextObject, float]]:
+    ) -> list[Scored]:
         """Hybrid vector + lexical retrieval over active objects, scope per the
-        module docstring. Returns (object, score) descending."""
+        module docstring. Returns `Scored` descending.
+
+        Backends narrow candidates however they can -- the in-process store scans,
+        Postgres uses an ANN index unioned with a sparse match -- but all of them
+        blend through `rank_score`, so a backend swap changes performance and not
+        which memory a model sees (§5.1).
+        """
         ...

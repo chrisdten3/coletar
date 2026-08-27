@@ -124,26 +124,52 @@ builds the exact hosted MCP server every later step reuses.
       `tests/fixtures/ollama_sse_stream.txt`, so the contract stays tested without
       a model server
 
-### M2.3 Retrieval evaluation and traces
+### M2.3 Retrieval evaluation and traces ✅
 
 The M1.2 relevance set proves the basic scorer works. This milestone makes candidate
 narrowing and final context assembly observable enough to change safely.
 
-- [ ] Append-only retrieval trace with scope/filter decisions, candidate source,
-      component scores, selected object IDs, token use, component versions and
-      per-stage latency
-- [ ] Raw query text and retrieved content excluded from telemetry by default;
-      content-level debugging is an explicit user opt-in
-- [ ] `explain` mode returns the vector, lexical, confidence and recency contribution
-      for each hit without changing the default MCP response
-- [ ] Expand the fixed set to at least 100 labelled queries covering exact IDs,
-      paraphrase, temporal, correction, negation, scope isolation, multi-hop and
-      deliberate near-miss cases
-- [ ] Measure candidate recall@50, hit@1, hit@5, MRR@5, precision@5, injected tokens
-      and p50/p95 latency; publish the harness and baseline together
-- [ ] Postgres ANN/sparse candidate recall checked against exact in-process search:
-      ≥98% recall@50 on the labelled corpus, with zero cross-scope leaks and zero
-      retired/superseded results
+- [x] Retrieval restructured into §5.1's stages: policy filter and candidate
+      generation in the store, fusion/rerank in `ranking`, deduplication and
+      token-budgeted assembly in `context`. The published formula stays the
+      deterministic default and the backend-parity contract
+- [x] Packing skips an oversized hit rather than terminating, so one long low-ranked
+      memory cannot censor every smaller useful result behind it
+- [x] Near-duplicate results dropped before packing
+- [x] One append-only retrieval trace per search, carrying candidate source,
+      component scores, selected object ids, token use, component versions and
+      per-stage latency. It **replaces** the per-hit access event — twelve rows per
+      search flooded the log the §6 dashboard reads
+- [x] Raw query text and content excluded structurally: the trace holds a truncated
+      digest of the query and object ids only. Content-level debugging is a per-call
+      argument, never a global setting
+- [x] `explain` mode returns the vector, lexical, confidence and recency contribution
+      per hit without changing the default response. Components are carried from the
+      ranking path, never recomputed, so an explanation cannot drift from its score
+- [x] **106 labelled queries over 58 objects** across all eight categories, with the
+      M1.2 twenty carried verbatim so the headline number stays comparable
+- [x] Candidate recall@50, hit@1/@5, MRR@5, precision@5, injected tokens and p50/p95
+      measured and published with the harness (`uv run coletar evaluate`)
+- [ ] Postgres ANN/sparse candidate recall vs exact in-process search, ≥98% recall@50
+      — **test written, not yet run.** It needs a database, and the dev machine could
+      not host Docker alongside the model. Gated like the other Postgres tests
+
+**What the suite found**, and why it was worth building before touching a ranker:
+
+- **Corrections are the weak leg** — 50% on the hashing default, 90% with real
+  embeddings. When a fact is superseded the old object is correctly hidden, but the
+  correction often does not mention the old value, so querying by the stale term
+  finds nothing. The fix is graph-shaped rather than ranking-shaped and lands at M4.
+- **A better embedder is not uniformly better** — `nomic-embed-text` is *worse* at
+  exact identifiers (100% → 93.8%), which is the concrete case for keeping the
+  hybrid's lexical half.
+- **`scope_isolation` is 77.8% on both backends**, so no embedder will move it.
+  Isolation itself is intact (zero leaks); ranking within the correct scope is what
+  fails.
+- **The queued stemmer "fix" was measured and rejected.** Emitting the raw token
+  alongside its stem made every metric worse — hit@5 85.8% → 79.2%, and exact_id
+  100% → 93.8%, worse at the category it was meant to help. Pinned by a test with
+  the reasoning, so it is not "fixed" again unmeasured.
 
 ---
 
@@ -171,6 +197,14 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract
+- [ ] **Supersession-aware candidate generation.** M2.3 measured corrections at 50%
+      on the hashing default: a superseded object is correctly hidden, but the
+      correction rarely repeats the old value, so "is Chris still at Acme?" matches
+      nothing. Match the superseded object for recall, follow its `supersedes` edge,
+      return the replacement — and never the stale object itself
+- [ ] **Ranking within a scope.** `scope_isolation` sits at 77.8% on *both* backends,
+      so it is structural rather than semantic: global and project objects compete
+      and the right one loses. Zero leaks either way — isolation is not the problem
 - [ ] Postgres sparse/full-text candidate path supplements HNSW ANN; trigram matching
       remains an identifier/fuzzy-match signal rather than the lexical retriever
 - [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded

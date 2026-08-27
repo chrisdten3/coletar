@@ -52,6 +52,16 @@ _STOPWORDS: frozenset[str] = frozenset(_STOPWORD_TEXT.split())
 #: the character n-grams below already carry most of the morphological load; this
 #: only has to close the gaps that break an exact-token match outright, like the
 #: possessive in "Ledger's test suite" against a query saying "Ledger".
+#:
+#: It does mangle proper nouns -- `stem("chris")` is `"chri"` -- which looks like a
+#: bug and was queued as one. The obvious fix (emit the raw token *alongside* its
+#: stem, so identifiers match exactly) was measured against the 106-query set in
+#: M2.3 and made every metric worse: hit@5 85.8% -> 79.2%, MRR 0.676 -> 0.632, and
+#: exact_id 100% -> 93.8% -- worse at the category it was meant to help, because
+#: emitting two tokens per word inflates the denominator in `lexical_score` and
+#: dilutes every match. Mangling is harmless as long as it is *symmetric*: query and
+#: content pass through the same function, so "chris" still finds "chris". Left
+#: alone deliberately; `test_stemming_is_symmetric_not_pretty` pins it.
 _SUFFIXES = ("ies", "ing", "ed", "es", "s")
 
 

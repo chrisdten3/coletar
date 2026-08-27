@@ -79,10 +79,27 @@ class ObjectView(BaseModel):
         )
 
 
+class ScoreExplanation(BaseModel):
+    """The arithmetic behind one hit. Present only under `explain=True`, and carried
+    from the ranking path rather than recomputed, so it cannot disagree with the
+    score it explains."""
+
+    vector: float
+    lexical: float
+    confidence_factor: float
+    recency_factor: float
+    relevance: float
+    total: float
+    source: str
+
+
 class SearchContextResponse(BaseModel):
     results: list[ObjectView]
     token_estimate: int
     truncated: bool
+    #: Omitted entirely unless the caller asked to explain, so `explain` adds a
+    #: field rather than changing the default response shape.
+    explanations: list[ScoreExplanation] | None = None
 
 
 class WriteMemoryResponse(BaseModel):

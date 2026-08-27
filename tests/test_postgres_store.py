@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
 
 import pytest
@@ -186,7 +187,7 @@ async def test_replay_works_against_the_postgres_log(store: PostgresStore):
 
 async def test_a_write_is_searchable_on_the_very_next_call(store: PostgresStore):
     memory = await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
-    found = {o.id for o, _ in await store.search("where does ledger deploy")}
+    found = {hit.obj.id for hit in await store.search("where does ledger deploy")}
     assert memory.id in found
 
 
@@ -200,7 +201,8 @@ async def test_project_scoped_search_sees_global_but_not_another_project(store: 
         )
     )
 
-    found = {o.id for o, _ in await store.search("what ships in march", scope=ledger, top_k=20)}
+    results = await store.search("what ships in march", scope=ledger, top_k=20)
+    found = {hit.obj.id for hit in results}
 
     assert found == {mine.id, globally.id}
 
@@ -220,9 +222,54 @@ async def test_ranking_matches_the_in_process_store(
     for query in relevance_set.queries:
         scope = scope_from(query.get("scope"))
         text = str(query["query"])
-        expected = [o.content for o, _ in await reference.search(text, scope=scope, top_k=5)]
-        actual = [o.content for o, _ in await store.search(text, scope=scope, top_k=5)]
+        expected = [hit.obj.content for hit in await reference.search(text, scope=scope, top_k=5)]
+        actual = [hit.obj.content for hit in await store.search(text, scope=scope, top_k=5)]
         if expected[:3] != actual[:3]:
             disagreements.append(f"{query['query']!r}: {expected[:3]} vs {actual[:3]}")
 
     assert not disagreements, "\n".join(disagreements)
+
+
+# -- M2.3: candidate generation must not lose what an exact scan would find -----
+async def test_postgres_candidate_recall_matches_exact_in_process_search(store):
+    """§5.1's candidate-recall boundary, across the backend seam.
+
+    Postgres narrows with an ANN index unioned with a sparse match; the in-process
+    store scans every object exactly. If narrowing drops an object the exact search
+    keeps, no reranker downstream can recover it — so this compares the two directly
+    rather than comparing Postgres to a fixed number.
+    """
+    from coletar.retrieval.evaluation import CANDIDATE_DEPTH, load_eval_set, scope_from, seed_corpus
+
+    data = load_eval_set(Path(__file__).parent / "fixtures" / "retrieval_eval.json")
+    reference = InMemoryStore(embedder=HashingEmbedder(768))
+    ref_ids = await seed_corpus(reference, data["corpus"])
+    pg_ids = await seed_corpus(store, data["corpus"])
+    ref_key = {v: k for k, v in ref_ids.items()}
+    pg_key = {v: k for k, v in pg_ids.items()}
+
+    retained = 0
+    total = 0
+    leaks: list[str] = []
+    for query in data["queries"]:
+        scope = scope_from(query.get("scope"))
+        text = str(query["query"])
+        expected_keys = {
+            ref_key[hit.obj.id]
+            for hit in await reference.search(text, scope=scope, top_k=CANDIDATE_DEPTH)
+        }
+        actual_keys = {
+            pg_key[hit.obj.id]
+            for hit in await store.search(text, scope=scope, top_k=CANDIDATE_DEPTH)
+        }
+        if not expected_keys:
+            continue
+        total += len(expected_keys)
+        retained += len(expected_keys & actual_keys)
+        forbidden = query.get("expect_absent")
+        if forbidden and forbidden in actual_keys:
+            leaks.append(f"{text} -> {forbidden}")
+
+    recall = retained / total if total else 1.0
+    assert not leaks, f"superseded or cross-scope objects surfaced: {leaks[:5]}"
+    assert recall >= 0.98, f"candidate recall@{CANDIDATE_DEPTH} was {recall:.1%}"

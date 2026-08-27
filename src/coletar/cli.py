@@ -135,6 +135,46 @@ def history(object_id: str) -> None:
 
 
 @app.command()
+def evaluate(
+    ollama: bool = typer.Option(
+        False, help="Measure against Ollama instead of the hashing default."
+    ),
+) -> None:
+    """Run the labelled retrieval evaluation and print the baseline (§5.1).
+
+    Published alongside the numbers in docs/RETRIEVAL.md, so anyone can reproduce
+    them rather than take them on trust.
+    """
+    from pathlib import Path
+
+    from coletar.retrieval.embedding import HashingEmbedder, OllamaEmbedder
+    from coletar.retrieval.evaluation import evaluate as run_eval
+    from coletar.retrieval.evaluation import load_eval_set, seed_corpus
+    from coletar.store.memory import InMemoryStore
+
+    async def _run() -> None:
+        settings = get_settings()
+        embedder = (
+            OllamaEmbedder(settings.upstream_base_url, settings.embedding_model,
+                           settings.embedding_dim)
+            if ollama
+            else HashingEmbedder(settings.embedding_dim)
+        )
+        eval_set = load_eval_set(
+            Path(__file__).parent.parent.parent / "tests" / "fixtures" / "retrieval_eval.json"
+        )
+        store = InMemoryStore(embedder=embedder)
+        ids = await seed_corpus(store, eval_set["corpus"])
+        result = await run_eval(store, eval_set, ids)
+        typer.echo(f"embedder: {embedder.model}")
+        typer.echo(result.report())
+        for miss in result.misses:
+            typer.echo(f"  miss: {miss}")
+
+    asyncio.run(_run())
+
+
+@app.command()
 def events(limit: int = 50) -> None:
     """Tail the Event/Revision Log — the raw feed behind the dashboard (§6)."""
 

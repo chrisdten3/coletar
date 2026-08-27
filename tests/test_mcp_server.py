@@ -17,6 +17,8 @@ from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from coletar.mcp import server as mcp_server
 from coletar.mcp.auth import Principal, principal_scope
 from coletar.mcp.schemas import ObjectView, SearchContextResponse
+from coletar.retrieval.ranking import RANKING_VERSION
+from coletar.retrieval.trace import query_digest
 from coletar.schema.events import Actor, EventType
 from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
 from coletar.store.memory import InMemoryStore
@@ -58,7 +60,7 @@ async def test_tool_schemas_declare_the_documented_arguments():
 
     search = by_name["search_context"].input_schema
     assert search["required"] == ["query"]
-    assert set(search["properties"]) == {"query", "project_id", "top_k"}
+    assert set(search["properties"]) == {"query", "project_id", "top_k", "explain"}
 
     write = by_name["write_memory"].input_schema
     assert write["required"] == ["content"]
@@ -212,21 +214,95 @@ async def test_a_connector_write_records_which_principal_made_it(store, caller):
 
 async def test_search_never_records_the_query_or_the_content(store, caller):
     """§11: retrieval telemetry must not become a second copy of the user's private
-    history. Access events carry object ids, never what was asked or returned."""
+    history. A trace carries a hash of the query and the ids of what came back —
+    never what was asked, never what was returned."""
     secret_content = "Chris banks with Ficticious Trust, account 12345."
-    await store.put_object(Memory.from_write(secret_content))
+    stored = await store.put_object(Memory.from_write(secret_content))
     secret_query = "which bank does chris use"
 
     with principal_scope(caller):
         await mcp_server.mcp.call_tool("search_context", {"query": secret_query})
 
-    access = [e for e in await store.list_events() if e.type is EventType.OBJECT_ACCESSED]
-    assert access, "an access should be recorded"
-    for event in access:
-        serialized = event.model_dump_json()
-        assert secret_query not in serialized
-        assert "Ficticious Trust" not in serialized
-        assert event.object_id is not None
+    traces = [e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE]
+    assert len(traces) == 1, "exactly one trace per search"
+    serialized = traces[0].model_dump_json()
+    assert secret_query not in serialized
+    assert "Ficticious Trust" not in serialized
+    assert "12345" not in serialized
+    # What it *does* carry: a stable non-reversible handle, and the object ids.
+    assert traces[0].detail["query_digest"] == query_digest(secret_query)
+    assert stored.id in traces[0].detail["returned_ids"]
+
+
+async def test_one_search_writes_one_trace_not_one_row_per_hit(store, caller):
+    """The reason the trace replaced per-hit access events: twelve rows per search
+    floods the log the §6 dashboard reads."""
+    for i in range(6):
+        await store.put_object(Memory.from_write(f"Ledger fact number {i}."))
+
+    with principal_scope(caller):
+        await mcp_server.mcp.call_tool("search_context", {"query": "ledger fact"})
+
+    events = await store.list_events()
+    assert [e.type for e in events].count(EventType.RETRIEVAL_TRACE) == 1
+    assert EventType.OBJECT_ACCESSED not in {e.type for e in events}
+
+
+async def test_a_trace_records_the_components_that_produced_it(store, caller):
+    """A baseline you cannot attribute is not a baseline."""
+    await store.put_object(Memory.from_write("Chris prefers uv over pip."))
+
+    with principal_scope(caller):
+        await mcp_server.mcp.call_tool("search_context", {"query": "package manager"})
+
+    detail = next(
+        e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE
+    ).detail
+    assert set(detail["versions"]) == {"embedder", "ranking", "backend"}
+    assert detail["versions"]["ranking"] == RANKING_VERSION
+    assert set(detail["stage_ms"]) == {"candidates", "assembly", "total"}
+
+
+async def test_explain_adds_arithmetic_without_changing_the_results(store, caller):
+    await store.put_object(
+        Memory.from_write("Chris prefers fixed-point money.", kind=MemoryKind.PREFERENCE)
+    )
+
+    with principal_scope(caller):
+        plain = await mcp_server.mcp.call_tool("search_context", {"query": "money"})
+        explained = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "money", "explain": True}
+        )
+
+    assert plain.structured_content["explanations"] is None
+    assert [r["id"] for r in plain.structured_content["results"]] == [
+        r["id"] for r in explained.structured_content["results"]
+    ]
+    breakdown = explained.structured_content["explanations"][0]
+    assert set(breakdown) == {
+        "vector", "lexical", "confidence_factor", "recency_factor",
+        "relevance", "total", "source",
+    }
+    assert breakdown["source"] in {"vector", "lexical", "both"}
+
+
+async def test_the_explanation_matches_the_score_it_explains(store, caller):
+    """Recomputing the blend for display is how an explanation drifts from the
+    ranking. The components are carried from the ranking path, not recomputed."""
+    for i in range(4):
+        await store.put_object(Memory.from_write(f"Ledger deploys to region {i}."))
+
+    with principal_scope(caller):
+        result = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "where does ledger deploy", "explain": True}
+        )
+
+    for hit, breakdown in zip(
+        result.structured_content["results"],
+        result.structured_content["explanations"],
+        strict=True,
+    ):
+        assert hit["score"] == pytest.approx(breakdown["total"], abs=1e-4)
 
 
 # -- latency and robustness ---------------------------------------------------

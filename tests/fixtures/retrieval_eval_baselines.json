@@ -1,0 +1,52 @@
+{
+  "_note": [
+    "M2.3 baselines over tests/fixtures/retrieval_eval.json — 58 objects, 106",
+    "labelled queries across eight categories. Published in docs/RETRIEVAL.md and",
+    "asserted by tests/test_retrieval_eval.py, so a documented number cannot drift",
+    "from the implementation that produced it.",
+    "",
+    "Both backends are measured because both ship. `leaks` is a hard zero, not a",
+    "target: a superseded or cross-scope object surfacing at all is a correctness",
+    "failure, and hit rate bought by also returning the stale answer is not a win.",
+    "",
+    "Re-measure with `uv run coletar evaluate` and update this file and the doc",
+    "together."
+  ],
+  "ranking_version": "1.0",
+  "hashing": {
+    "embedder": "hashing-768",
+    "candidate_recall_at_50": 0.915,
+    "hit_at_1": 0.557,
+    "hit_at_5": 0.858,
+    "mrr_at_5": 0.676,
+    "leaks": 0,
+    "by_category": {
+      "exact_id": 1.0,
+      "near_miss": 1.0,
+      "paraphrase": 0.933,
+      "negation": 0.818,
+      "temporal": 0.80,
+      "multi_hop": 0.778,
+      "scope_isolation": 0.778,
+      "correction": 0.50
+    }
+  },
+  "ollama": {
+    "embedder": "nomic-embed-text",
+    "candidate_recall_at_50": 1.0,
+    "hit_at_1": 0.670,
+    "hit_at_5": 0.925,
+    "mrr_at_5": 0.768,
+    "leaks": 0,
+    "by_category": {
+      "near_miss": 1.0,
+      "paraphrase": 0.967,
+      "exact_id": 0.938,
+      "negation": 0.909,
+      "temporal": 0.90,
+      "correction": 0.90,
+      "multi_hop": 0.889,
+      "scope_isolation": 0.778
+    }
+  }
+}

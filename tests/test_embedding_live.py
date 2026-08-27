@@ -85,7 +85,7 @@ async def test_real_embeddings_close_the_synonymy_gap(
 
     results = await store.search(str(gap["query"]), scope=scope_from(gap.get("scope")), top_k=5)
 
-    assert gap["expect"] in [keys[obj.id] for obj, _ in results]
+    assert gap["expect"] in [keys[hit.obj.id] for hit in results]
 
 
 async def test_the_published_numbers_still_hold(ollama_url: str, relevance_set: RelevanceSet):
@@ -109,7 +109,7 @@ async def test_the_published_numbers_still_hold(ollama_url: str, relevance_set: 
             results = await store.search(
                 str(query["query"]), scope=scope_from(query.get("scope")), top_k=5
             )
-            hits += query["expect"] in [keys[obj.id] for obj, _ in results]
+            hits += query["expect"] in [keys[hit.obj.id] for hit in results]
 
         rate = hits / len(relevance_set.queries)
         expected = published[backend]["top5_hit_rate"]

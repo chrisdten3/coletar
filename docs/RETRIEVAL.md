@@ -99,6 +99,75 @@ ingest paths should batch before that milestone.
 At 10,000 objects the in-process index answers in **~21ms p95** with the hashing
 backend, against a 300ms bar.
 
+## The evaluation suite
+
+The 20-query relevance set answers *is retrieval working*. It cannot answer *where is
+it failing*, which is what you need before changing a ranker. So M2.3 expands it to
+**106 labelled queries over 58 objects**, in
+[`tests/fixtures/retrieval_eval.json`](../tests/fixtures/retrieval_eval.json), across
+the eight categories §5.1 names. The original 20 are carried verbatim and tagged, so
+the headline number stays comparable across the expansion.
+
+Measured at **two boundaries**, because they fail differently:
+
+- **Candidate recall@50** — did narrowing keep the relevant object at all? A reranker
+  cannot repair an object that candidate generation discarded, so this says whether a
+  fix belongs in the retriever or the ranker.
+- **Final ranking** — did it land in the context the model actually saw?
+
+Reproduce with `uv run coletar evaluate` (add `--ollama` for the real embedder).
+
+| | `hashing` | `nomic-embed-text` |
+|---|---|---|
+| candidate recall@50 | 91.5% | **100%** |
+| hit@1 | 55.7% | **67.0%** |
+| hit@5 | 85.8% | **92.5%** |
+| MRR@5 | 0.676 | **0.768** |
+| mean injected tokens | 80.2 | 82.4 |
+| latency p50 / p95 | 0.5 / 0.9ms | 32.0 / 76.7ms |
+| **leaks** | **0** | **0** |
+
+`leaks` is a hard zero, not a target. A superseded or cross-scope object surfacing at
+all is a correctness failure, and hit rate bought by *also* returning the stale answer
+is not a retrieval win. Injected tokens sit next to accuracy for the same reason —
+so a future change cannot buy hit rate by flooding the context.
+
+### Where it fails, by category
+
+| Category | `hashing` | `nomic-embed-text` |
+|---|---|---|
+| exact_id | 100% | 93.8% |
+| near_miss | 100% | 100% |
+| paraphrase | 93.3% | 96.7% |
+| negation | 81.8% | 90.9% |
+| temporal | 80.0% | 90.0% |
+| multi_hop | 77.8% | 88.9% |
+| scope_isolation | 77.8% | 77.8% |
+| **correction** | **50.0%** | 90.0% |
+
+Three things fall out of that table that the single headline number hid.
+
+**Corrections are the weak leg, and it is structural.** When a fact is superseded, the
+old object is correctly excluded from retrieval — but the *correction* often does not
+mention the old value. "Chris is independent and consults through his own studio"
+contains no "Acme", so a user asking *"is Chris still at Acme?"* matches nothing, and
+the honest answer ("no, he moved") is unreachable. A real embedder papers over much of
+this (50% → 90%) without fixing it. The fix is graph-shaped, not ranking-shaped:
+match the superseded object for *recall*, then follow its `supersedes` edge and return
+the replacement. That is a candidate-generation strategy, so it belongs at M4 behind
+the strategy interface, evaluated against this suite — which is exactly what having
+the suite is for.
+
+**A better embedder is not uniformly better.** `nomic-embed-text` is *worse* at exact
+identifiers (100% → 93.8%). This is the concrete case for the hybrid: the vector term
+finds paraphrase, and the lexical term stops a project name or a port number being
+smeared into semantic neighbours. Dropping either half would cost real accuracy.
+
+**`scope_isolation` is 77.8% on both backends**, which means it is not a semantic
+problem — no embedder will move it. Isolation itself is intact (zero leaks in both);
+what fails is *ranking within* the correct scope when global and project objects
+compete. Also an M4 concern.
+
 ## Backend parity
 
 Postgres narrows candidates with an HNSW cosine scan unioned with a trigram match —
