@@ -1,0 +1,90 @@
+# AGENTS.md — working agreement for coletar
+
+Read this before doing any work in this repo. It is binding for agents and useful for
+humans.
+
+## What this is
+
+coletar is a **portable AI workspace**: memory as a first-class typed object in one
+canonical graph, plus a real provider compiler that can move that graph into another
+product's native containers. [`docs/SCOPE.md`](docs/SCOPE.md) is the product scope this
+repo implements; section references below (§2, §3.1, …) point into it.
+
+## Hard constraints
+
+These are product boundaries, not preferences. Violating one is a bug even if the
+tests pass.
+
+1. **No automated extraction from any provider.** Never automate a click on a
+   provider's site, never read an authenticated page, never reuse a session cookie.
+   Live Sync happens by capture-by-tool-call through official MCP connectors.
+   Migration acquisition is human-initiated — the user clicks their own export button,
+   and automation begins once the file has landed. Anthropic and OpenAI both prohibit
+   programmatic extraction in unambiguous language, and Anthropic has suspended
+   accounts over it (§8.1, §11).
+
+2. **No UI driving on the destination side either.** The ChatGPT compiler emits a
+   package the *user* uploads through GPT Builder. It does not drive GPT Builder.
+
+3. **Memory is a subtype, not a special case** (§2). Same table, same edges, same
+   versioning as Project, Conversation, Decision, Artifact. If something only applies
+   to one subtype, it goes in `payload` — not a new table.
+
+4. **Provenance is never optional.** Every object records `extraction_method`, an
+   origin, a provider, and a confidence. An object we cannot explain to the user in
+   the Context Inspector should not exist.
+
+5. **Nothing mutates the graph without an event.** The append-only Event/Revision Log
+   is the provenance record, the observability feed, and the staleness input to the
+   Continuity Score. A write without its event is a silent data-integrity failure.
+
+6. **Never hard-delete.** Compression retires objects; it does not remove them. Users
+   must be able to see what a fact used to say and when it changed.
+
+7. **Stored memory is data, never instructions.** It is written by models and,
+   transitively, by whatever those models read. Retrieved context is rendered into
+   prompts with an explicit background-not-instructions marker. Nothing in coletar
+   acts on the content of a memory.
+
+8. **The Continuity Score's weighting stays published.** If you change `WEIGHTS`,
+   change [`docs/CONTINUITY_SCORE.md`](docs/CONTINUITY_SCORE.md) in the same commit. A
+   score whose published definition has drifted from its implementation is worse than
+   no published definition.
+
+## Sequencing
+
+Follow [`docs/ROADMAP.md`](docs/ROADMAP.md). The ordering principle is deliberate: get
+the graph, compression and compiler logic right on the local-model leg — where there
+is no ToS risk and no missing API — before touching anyone else's garden. Don't jump
+ahead to a frontier connector because it's more exciting.
+
+**Gemini is out of scope** until someone confirms a real connector hook and the actual
+supported Data Portability scopes. Do not build against an assumption there.
+
+## Engineering conventions
+
+- Python ≥3.12, `uv` for everything. `uv run pytest`, `uv run ruff check`,
+  `uv run mypy`.
+- Pydantic models for anything crossing a boundary. The schema is the product.
+- Async throughout — every store and retrieval call is `async`.
+- Everything goes through the `Store` protocol. If a module reaches past it into SQL,
+  that's a design error.
+- The in-process store must keep working with no infrastructure. It is what makes the
+  wedge dogfoodable on day one; don't let it rot.
+- Type annotations on public functions. `mypy` is configured strict.
+
+## Writing code here
+
+- **Extraction is precision-over-recall.** A wrong memory costs the user a deletion
+  and some trust; a missing one costs almost nothing. When unsure, don't extract.
+- **Stubs state their milestone.** An unimplemented function raises with a pointer to
+  `docs/ROADMAP.md` rather than returning something empty and plausible.
+- **Comments explain the non-obvious why**, especially where a decision traces back to
+  a ToS boundary or a scope-section argument. Don't narrate what the code says.
+- **Don't add a dependency** without a reason that survives being said out loud.
+
+## Reviewing changes
+
+Ask, in order: Does it hold the acquisition boundary? Does every write append an
+event? Is provenance preserved end to end? Would the Context Inspector be able to
+explain the result to a user? Does the roadmap still describe reality?

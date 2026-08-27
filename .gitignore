@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Local data
+data/
+*.db
+*.sqlite3
+
+# Provider exports — never commit anyone's AI history
+exports/
+*.zip
+conversations.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

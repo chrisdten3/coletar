@@ -1,0 +1,47 @@
+"""Canonical object model and event log — the substrate both surfaces read/write."""
+
+from coletar.schema.events import Actor, Event, EventType
+from coletar.schema.objects import (
+    DEFAULT_CONFIDENCE,
+    GLOBAL_SCOPE,
+    ContextObject,
+    Edge,
+    EdgeType,
+    ExtractionMethod,
+    Memory,
+    MemoryKind,
+    ObjectType,
+    OriginType,
+    Provenance,
+    Provider,
+    ProviderMapping,
+    Scope,
+    ScopeType,
+    Sensitivity,
+    default_confidence,
+    new_id,
+)
+
+__all__ = [
+    "DEFAULT_CONFIDENCE",
+    "GLOBAL_SCOPE",
+    "Actor",
+    "ContextObject",
+    "Edge",
+    "EdgeType",
+    "Event",
+    "EventType",
+    "ExtractionMethod",
+    "Memory",
+    "MemoryKind",
+    "ObjectType",
+    "OriginType",
+    "Provenance",
+    "Provider",
+    "ProviderMapping",
+    "Scope",
+    "ScopeType",
+    "Sensitivity",
+    "default_confidence",
+    "new_id",
+]
