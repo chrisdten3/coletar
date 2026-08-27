@@ -134,7 +134,7 @@ Local Proxy Daemon          ─┘                            │
                               ┌─────────────────────────────┼───────────────────┐
                               ▼                              ▼                   ▼
                      Canonical Context Graph        Event/Revision Log     Search/Retrieval Index
-                     (typed, versioned, scoped)      (audit, TTL, access)   (vector + graph hybrid)
+                     (typed, versioned, scoped)      (audit, TTL, access)   (ANN + sparse + graph)
                               │
                               ▼
                      Provider Compiler ──→ Migration Manifest + Continuity Score
@@ -148,6 +148,53 @@ The Extraction Layer is where most of the real engineering risk lives — turnin
 
 Worth stating plainly since it's easy to read past a box diagram: this requires a real persistent backend, not just the MCP server. At minimum, a graph-capable store for the canonical objects and their edges (the Memory schema from §2), plus a vector index alongside it for semantic retrieval (what `search_context` actually queries), plus the append-only Event/Revision Log. The MCP server is the interface in front of all three, not a replacement for them. Specific tech (Postgres with a graph extension vs. a dedicated graph DB, pgvector vs. a standalone vector store) is an implementation choice, not a scope decision — pick what you're fastest with for the local-model wedge in §10 step 1, since that's where this gets built first.
 
+### 5.1 Retrieval is a measured pipeline, not a vector-store feature
+
+The retrieval boundary has to remain independent of the storage backend. Its logical
+stages are:
+
+```
+scope / activity / sensitivity policy filter
+                    ↓
+       ANN candidates ∪ sparse candidates
+                    ↓
+       rank fusion + policy-aware reranker
+                    ↓
+          diversity / deduplication
+                    ↓
+       token-budgeted context assembly
+```
+
+The existing confidence- and recency-aware formula is the deterministic default
+reranker and remains the parity contract between the in-process and Postgres stores.
+Other rerankers are optional strategies behind the same interface: reciprocal-rank
+fusion for differently-scaled candidate sources, maximal marginal relevance for
+diversity, and a bounded local cross-encoder where its measured precision gain pays
+for the added latency. No model-based reranker may bypass scope, sensitivity,
+retirement or supersession policy.
+
+Postgres should narrow with HNSW ANN plus a real sparse/full-text candidate path;
+trigram similarity remains useful for approximate identifiers but is not a substitute
+for keyword relevance. Entity overlap, graph distance and temporal validity become
+additional signals only after labelled tests show that they improve the queries
+coletar actually receives. They operate over the Canonical Context Graph, never a
+second graph-shaped source of truth.
+
+Every retrieval strategy is evaluated at two boundaries. Candidate recall measures
+whether narrowing retained the relevant object; final ranking measures whether it
+landed in the context actually shown to the model. The checked-in suite must cover
+exact identifiers, paraphrases, temporal questions, corrections, negation, scope
+isolation, multi-hop questions and deliberate near-misses. Track candidate recall,
+hit rate, reciprocal rank, precision, token cost and p50/p95 latency. A reranker
+cannot repair an object that candidate generation discarded, and a high hit rate
+obtained by flooding the context is not a retrieval win.
+
+One append-only retrieval trace records component scores, candidate source, selected
+object IDs, model/index/reranker versions, token use and stage timings. Raw queries
+and retrieved content are not telemetry by default: store a redacted representation
+or hash unless the user explicitly enables content-level debugging. This is product
+observability over the existing log, not outbound analytics hidden in an SDK.
+
 ---
 
 ## 6. Folding In the Table-Stakes Features (from the screenshots)
@@ -155,10 +202,21 @@ Worth stating plainly since it's easy to read past a box diagram: this requires 
 You're right that compression, observability, and the agentic graph have to be in scope — a product without them looks primitive next to Mem0/Zep today. The key move is treating them as **views over the same substrate**, not separate subsystems:
 
 - **Memory Compression Engine** (Mem0's pitch) → a background job that walks the graph and collapses low-confidence or superseded nodes into condensed bundles per scope, exposed as a token-budget knob at retrieval time. It's "free" once the graph has `supersedes` and `confidence` fields — you're not building a second thing, you're running a job against the first thing.
-- **Observability & Tracking** (Mem0's dashboard) → a straight read of the Event/Revision Log that's already in the architecture for provenance reasons. TTL, size, access-per-object, live activity feed — all of it falls out of fields you needed anyway for migration fidelity.
+- **Observability & Tracking** (Mem0's dashboard) → a straight read of the Event/Revision Log that's already in the architecture for provenance reasons. TTL, size, access-per-object, live activity feed and retrieval traces — candidate sources, score components, latency and token use — all fall out of data needed to explain and tune the product anyway.
 - **Agentic memory graph** (the Zep/Graphiti-style entity/fact/episode view in your fourth screenshot) → a filtered rendering of the Canonical Context Graph scoped to `origin_type: agent` or a given agent's project. Entities, Facts, Episodes are just three more `ContextObject` types with edges, not a parallel data model.
 
-The point: none of this is a separate roadmap track. It's UI on top of the same graph you're already building for the compiler. If you build them as separate systems (which is what most funded competitors have done, bolting a dashboard onto a vector store), you'll end up maintaining two sources of truth.
+The point: none of this is a separate roadmap track. It's UI and policy over the same
+graph you're already building for the compiler. If you build compression, telemetry
+or an agentic graph as separate systems, you'll end up maintaining multiple sources
+of truth.
+
+The competitive boundary is equally explicit. Mem0 is the reference for SDK
+ergonomics, filtering, score explanations and retrieval evaluation; Zep/Graphiti is
+the reference for temporal and graph-aware retrieval; Letta is the reference for
+working-context budgeting. Those are techniques to integrate where measurement
+justifies them, not product identities to copy. coletar remains the portable,
+inspectable, provenance-preserving graph and provider compiler. Better retrieval is
+how that moat reaches the model; it is not the moat by itself.
 
 ---
 
@@ -186,13 +244,19 @@ Publish the weighting. If it's a black-box percentage, it's not a differentiator
 Concretely, this means:
 
 1. **Connect** — for Migration mode: OAuth-style flow where the provider supports it (Claude's memory export/import), a deep-link-then-desktop-folder-watcher flow for ChatGPT (point the user to the export button, they click it once, everything after that — detecting, validating, parsing the ZIP — is automated), one-click for local models if a supported runtime (Ollama, LM Studio) is detected on the machine. For Live Sync mode: a connector setup flow per §3.1 (add-connector link for Claude, Developer Mode instructions for ChatGPT). The one thing that should never appear anywhere in this flow: automating a click on a provider's own site, or reading an authenticated page. That's the acquisition boundary, not a temporary MVP shortcut.
-2. **Context Inspector** — review extracted objects before anything is compiled anywhere. Edit, merge, delete, adjust scope. This is the trust-building screen; skip it and you're just another "give us your ChatGPT history" product.
+2. **Context Inspector** — review extracted objects before anything is compiled anywhere. Edit, merge, retire, adjust scope. Retirement removes an object from retrieval and compilation without erasing its history. This is the trust-building screen; skip it and you're just another "give us your ChatGPT history" product.
 3. **Compile** — pick a destination, get a Migration Manifest + Continuity Score, get a real native artifact (a Claude Project link, a ChatGPT Custom GPT config, a local model's profile file) — not a zip of markdown.
 4. **Dashboard** — the Mem0-style observability/compression view, but framed as "your memory," not "your API usage."
 
 ## 9. Developer Surface
 
-- REST API + Python/JS SDKs for read/write against the canonical graph.
+- REST API + thin async Python/JS SDKs for read/write against the canonical graph,
+  released only after authentication and tenant isolation are enforced. Match the
+  low-friction shape developers expect (`remember`, `search`, `inspect`, `history`,
+  `supersede`, `retire`, `compile`) without flattening the canonical schema into a
+  generic memory document. There is no hard-delete convenience method. Search can
+  return score explanations and provenance, and every write still goes through the
+  same event-producing Store path.
 - A single hosted, remote MCP server exposing the graph as tools (`search_context`, `get_project_state`, `write_memory`, `list_open_loops`) — see §3.1 for the full per-provider connector picture. This is the same server every consumer connects to via the Connect flow in §8; developers just get raw API/SDK access to the identical tools instead of a connector UI.
 - Webhooks on the Event Log for teams building their own agents that need to react to memory changes.
 
@@ -200,7 +264,7 @@ Concretely, this means:
 
 ## 10. MVP Sequencing
 
-1. **Local-model wedge first.** Canonical schema + local proxy for Ollama/LM Studio + hosted MCP server + compression/observability/graph views. No ToS risk, no missing-API risk, fully dogfoodable, and it's a sellable developer tool on its own. This also builds the exact hosted MCP server every later step reuses.
+1. **Local-model wedge first.** Canonical schema + local proxy for Ollama/LM Studio + hosted MCP server + measured hybrid retrieval + compression/observability/graph views. Instrument candidate generation and ranking before adding sophisticated rerankers; ship the deterministic scorer first, then enable optional strategies only when the labelled suite shows a gain. No ToS risk, no missing-API risk, fully dogfoodable, and it's a sellable developer tool on its own. This also builds the exact hosted MCP server every later step reuses.
 2. **Claude connector (Live Sync).** Point that same hosted MCP server at Claude as a Custom Connector, ship the default instruction snippets. Zero ToS risk, no extraction pipeline needed — the object arrives already typed. This can ship in parallel with step 1, not strictly after it, since it doesn't depend on any export-parsing work.
 3. **Claude compiler (True Migration).** Build against Anthropic's official import/export format — the one frontier surface that isn't reverse-engineered. First real "True Migration" proof point.
 4. **ChatGPT → Claude corridor**, consumer-facing: human-initiated export + desktop folder-watcher + Context Inspector + Compile button. This is the single highest-demand direction from your earlier research (TechCabal, MemoryLake's own guides), and it's also the hardest — ship it once the compiler logic is proven on the local + Claude legs.
@@ -216,4 +280,8 @@ Concretely, this means:
 - **Gemini's consumer-app connector story is unvalidated.** Don't commit engineering time to a Gemini connector, or to the Data Portability API for Gemini specifically, until you've confirmed the real supported scopes.
 - **Platform risk cuts both ways.** Interoperability regulation could be a tailwind; a lab shipping native portability itself (which would be trivial for them) erases the wedge overnight. Worth monitoring, not worth blocking on.
 - **Extraction cost at consumer scale.** LLM-assisted typed extraction on every export is real inference spend — model this before pricing the consumer tier.
+- **Retrieval telemetry can become a second copy of the user's private history.** Do
+  not persist raw queries or returned content by default, and do not turn SDK
+  instrumentation into undisclosed outbound analytics. Redacted traces must still be
+  sufficient to reproduce ranking decisions by object ID and component version.
 - **Trust is the actual product, not a feature.** You're asking people to hand over their entire AI history to a third party. Anuma and Echo lead with encryption-at-rest messaging for a reason — the Context Inspector and a legible ownership story matter more here than in most infra products.

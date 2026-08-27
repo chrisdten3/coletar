@@ -94,6 +94,27 @@ builds the exact hosted MCP server every later step reuses.
 - [ ] Extraction on streamed responses (the streaming path passes through today)
 - [ ] Documented Ollama setup and a measured added-latency figure
 
+### M2.3 Retrieval evaluation and traces
+
+The M1.2 relevance set proves the basic scorer works. This milestone makes candidate
+narrowing and final context assembly observable enough to change safely.
+
+- [ ] Append-only retrieval trace with scope/filter decisions, candidate source,
+      component scores, selected object IDs, token use, component versions and
+      per-stage latency
+- [ ] Raw query text and retrieved content excluded from telemetry by default;
+      content-level debugging is an explicit user opt-in
+- [ ] `explain` mode returns the vector, lexical, confidence and recency contribution
+      for each hit without changing the default MCP response
+- [ ] Expand the fixed set to at least 100 labelled queries covering exact IDs,
+      paraphrase, temporal, correction, negation, scope isolation, multi-hop and
+      deliberate near-miss cases
+- [ ] Measure candidate recall@50, hit@1, hit@5, MRR@5, precision@5, injected tokens
+      and p50/p95 latency; publish the harness and baseline together
+- [ ] Postgres ANN/sparse candidate recall checked against exact in-process search:
+      ≥98% recall@50 on the labelled corpus, with zero cross-scope leaks and zero
+      retired/superseded results
+
 ---
 
 ## M3 — Claude connector (Live Sync)
@@ -117,13 +138,26 @@ since objects arrive already typed.
 SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
 
 - [x] Compression job: superseded-chain retirement, schedulable and on-demand
+- [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
+      and context assembly; the current published formula remains the deterministic
+      default and backend-parity contract
+- [ ] Postgres sparse/full-text candidate path supplements HNSW ANN; trigram matching
+      remains an identifier/fuzzy-match signal rather than the lexical retriever
+- [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded
+      local cross-encoder only if it improves the labelled suite within the latency
+      budget. No reranker may bypass scope, sensitivity, retirement or supersession
+- [ ] Context assembly deduplicates near-identical results and skips an oversized hit
+      when a later useful hit still fits, instead of terminating packing immediately
 - [ ] Token budget honoured at retrieval time, with ≥40% token reduction on the
       seeded corpus and no loss from the M1.2 top-5 set
 - [ ] Low-confidence clustering pass (needs embeddings — now available)
 - [ ] Observability dashboard over the event log: TTL, object size, last access,
-      live activity feed
+      live activity feed, retrieval score explanation, token use and latency
 - [ ] Agentic graph explorer (entity / fact / episode — a filtered rendering of the
       same graph, not a second store)
+- [ ] Evaluate entity overlap, graph-distance and temporal-validity signals against
+      the labelled suite before enabling them; preserve episode-to-derived-object
+      lineage and never introduce a parallel graph store
 
 ---
 
@@ -165,7 +199,14 @@ SCOPE §10 steps 5–6.
 
 - [ ] Developer Mode remote connector, read path; write attempts rejected
       server-side, not merely hidden client-side
-- [ ] REST API + Python/JS SDKs over the canonical graph, with rate limiting
+- [ ] REST API + thin async Python/JS SDKs over the canonical graph, released only
+      after auth and tenant isolation, with rate limiting
+- [ ] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
+      and `compile`; it preserves canonical IDs, provenance and event semantics and
+      deliberately exposes no hard-delete shortcut
+- [ ] `search(..., explain=True)` exposes component scores and component versions;
+      SDK telemetry is private/redacted by default and never undisclosed outbound
+      analytics
 - [ ] Webhooks on the event log, with a documented retry policy
 
 ---
@@ -179,3 +220,9 @@ on it.
 
 **Anything that automates a provider's UI or reads an authenticated page.** Not a
 sequencing question. See the acquisition boundary in the README.
+
+**A second memory or graph source of truth.** Mem0-style SDK ergonomics,
+Zep/Graphiti-style temporal retrieval and Letta-style context budgeting may be
+implemented as interfaces, ranking signals and views over the canonical graph. They
+do not justify a parallel flat memory store, graph database model or agent-owned
+write path that bypasses the Store and Event Log.
