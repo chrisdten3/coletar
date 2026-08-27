@@ -22,6 +22,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+import numpy as np
+from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
@@ -55,12 +57,6 @@ _ACTIVE_PREDICATE = """
     o.retired_at IS NULL
     AND NOT EXISTS (SELECT 1 FROM context_object s WHERE s.supersedes = o.id)
 """
-
-
-def _vector_literal(vector: list[float]) -> str:
-    """pgvector's text input form. Passing the literal with an explicit cast keeps
-    numpy off the dependency list for one call site."""
-    return "[" + ",".join(f"{v:.7g}" for v in vector) + "]"
 
 
 def _to_record(row: dict[str, Any]) -> ContextObject:
@@ -102,7 +98,12 @@ class PostgresStore:
 
     async def _get_pool(self) -> AsyncConnectionPool:
         if self._pool is None:
-            pool = AsyncConnectionPool(self.dsn, open=False)
+            # `configure` runs on every pooled connection, registering pgvector's
+            # type adapters so embeddings cross the wire in binary as `vector`
+            # rather than as a hand-formatted decimal string. It reads the type OID
+            # from the database, so the `vector` extension must already exist --
+            # run `coletar migrate` before pointing a store at a fresh database.
+            pool = AsyncConnectionPool(self.dsn, open=False, configure=register_vector_async)
             await pool.open(wait=True)
             self._pool = pool
         return self._pool
@@ -163,13 +164,13 @@ class PostgresStore:
             await cur.execute(
                 """
                 INSERT INTO object_embedding (object_id, model, embedding)
-                VALUES (%s, %s, %s::vector)
+                VALUES (%s, %s, %s)
                 ON CONFLICT (object_id) DO UPDATE SET
                     model = EXCLUDED.model,
                     embedding = EXCLUDED.embedding,
                     created_at = now()
                 """,
-                (obj.id, self._embedder.model, _vector_literal(vector)),
+                (obj.id, self._embedder.model, np.asarray(vector, dtype=np.float32)),
             )
 
             base = event or Event(
@@ -349,7 +350,7 @@ class PostgresStore:
         top_k: int = 12,
     ) -> list[tuple[ContextObject, float]]:
         query_vector = (await self._embedder.embed([query]))[0]
-        literal = _vector_literal(query_vector)
+        query_array = np.asarray(query_vector, dtype=np.float32)
 
         scope_clause = ""
         scope_params: list[Any] = []
@@ -371,7 +372,7 @@ class PostgresStore:
                 SELECT o.id FROM context_object o
                 JOIN object_embedding e ON e.object_id = o.id
                 WHERE {_ACTIVE_PREDICATE} {scope_clause}
-                ORDER BY e.embedding <=> %s::vector
+                ORDER BY e.embedding <=> %s
                 LIMIT %s
             )
             UNION
@@ -382,12 +383,12 @@ class PostgresStore:
                 LIMIT %s
             )
         )
-        SELECT {_OBJECT_COLUMNS}, e.embedding::text AS embedding
+        SELECT {_OBJECT_COLUMNS}, e.embedding AS embedding
         FROM context_object o
         JOIN candidates c ON c.id = o.id
         LEFT JOIN object_embedding e ON e.object_id = o.id
         """
-        params = [*scope_params, literal, fetch, *scope_params, query, fetch]
+        params = [*scope_params, query_array, fetch, *scope_params, query, fetch]
 
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -398,7 +399,10 @@ class PostgresStore:
         scored: list[tuple[ContextObject, float]] = []
         for row in rows:
             obj = _to_record(row)
-            vector = _parse_vector(row.get("embedding"))
+            # pgvector hands back its own `Vector` wrapper; `to_list()` is its
+            # accessor, and the ranking blend below wants plain floats.
+            embedding = row.get("embedding")
+            vector = [] if embedding is None else embedding.to_list()
             lexical = lexical_score(query_tokens, set(tokenize(obj.content)))
             similarity = cosine(query_vector, vector)
             if lexical <= 0.0 and similarity <= 0.0:
@@ -489,8 +493,3 @@ def _event_from_row(row: dict[str, Any]) -> Event:
         detail=detail,
     )
 
-
-def _parse_vector(raw: str | None) -> list[float]:
-    if not raw:
-        return []
-    return [float(part) for part in raw.strip("[]").split(",") if part]
