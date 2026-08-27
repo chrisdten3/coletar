@@ -28,6 +28,57 @@ person next open another model," not by anything on a schedule.
 A useful side effect of ChatGPT's confirmed-write flow: every ChatGPT-sourced write is
 naturally an explicit user statement, which is the highest-confidence tier.
 
+## Running the server: authentication
+
+Every call is gated. The auth layer is ASGI middleware in front of the whole MCP app,
+not a check inside each tool — a check inside each tool is a check the next tool can
+forget to add.
+
+```bash
+COLETAR_MCP_API_KEYS="alice:sk-live-abc123" uv run coletar serve-mcp
+```
+
+Keys are `id:secret`, comma-separated. Append `:read` for a read-only key:
+
+```bash
+COLETAR_MCP_API_KEYS="alice:sk-live-abc123,chatgpt:sk-ro-def456:read"
+```
+
+The `id` is not decoration — it is recorded as the principal on every event the
+connector produces, which is how the dashboard (§6) answers "who wrote this".
+
+**The server fails closed.** With no keys configured it refuses to start. There is no
+flag to disable auth, because "unauthenticated requests are rejected" must not quietly
+become "everything is allowed" when someone forgets an environment variable.
+
+**Exactly one path is exempt:** `GET /healthz`, because a liveness probe cannot carry
+a credential. It reports liveness and nothing else — no counts, no ids, no config.
+
+Clients send the key as a bearer token (`X-API-Key` is also accepted, since several
+MCP clients send that instead):
+
+```
+Authorization: Bearer sk-live-abc123
+```
+
+### Scopes
+
+| Scope | Grants |
+|---|---|
+| `read` | `search_context`, `get_project_state`, `list_open_loops` |
+| `write` | `write_memory` |
+
+A key without `write` is rejected **server-side** when it calls `write_memory`. That
+is deliberate rather than cosmetic: the ChatGPT leg is read-plus-confirmed-write until
+OpenAI extends write-capable custom connectors past Business/Enterprise/Edu, and a
+restriction enforced only in the client is not a restriction.
+
+### Still single-tenant
+
+Scopes are enforced; **tenancy is not**. Any valid key today reaches the whole graph.
+Per-user isolation — a tenant column and the query-level filtering that goes with it —
+is M3.1. Do not deploy this for more than one person before that lands.
+
 ## Instruction snippets
 
 Ship these with the connector or tool use will be inconsistent — model behavior

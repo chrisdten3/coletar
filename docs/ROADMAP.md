@@ -73,16 +73,27 @@ See [RETRIEVAL.md](RETRIEVAL.md) for the published formula and the measured numb
 SCOPE §10 step 1. Sellable as a developer tool on its own, fully dogfoodable, and it
 builds the exact hosted MCP server every later step reuses.
 
-### M2.1 MCP server core
+### M2.1 MCP server core ✅
 
 - [x] Four tools registered with typed schemas: `search_context`, `write_memory`,
       `get_project_state`, `list_open_loops`
 - [x] Streamable HTTP transport (ChatGPT never accepts local/stdio)
-- [ ] Auth layer gating every call — the store is currently single-tenant
-- [ ] Schema-level rejection of a malformed `kind`/`scope` with a clear error rather
-      than a server error
-- [ ] p95 tool round-trip under 500ms; 200-call fuzz run with zero unhandled
-      exceptions
+- [x] Auth layer gating every call — ASGI middleware in front of the whole app, so
+      it cannot be forgotten by a future tool. Fails closed with no keys configured
+- [x] Read/write scopes enforced server-side, which M7.1's ChatGPT leg requires
+- [x] The authenticated principal is recorded on every event the connector produces,
+      so §6's dashboard can answer "who wrote this"
+- [x] Malformed `kind`, `sensitivity`, `scope`, `top_k`, `content` and `supersedes`
+      rejected with a message that names the field and enumerates the legal values —
+      recoverable by a model that can retry, not a bare "Error executing tool"
+- [x] Typed Pydantic response models, so §2 conformance is enforced rather than
+      hand-assembled
+- [x] Access events record object ids only — never the query text or the retrieved
+      content (§11)
+- [x] p95 tool round-trip well under 500ms over 500 objects; 200-call fuzz run with
+      zero unhandled exceptions
+- [ ] **Still single-tenant.** Scopes are enforced, tenancy is not — any valid key
+      reaches the whole graph. Per-user isolation is M3.1
 
 ### M2.2 Local proxy / bridge
 
