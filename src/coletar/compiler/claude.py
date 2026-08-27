@@ -1,6 +1,6 @@
 """Claude compiler — native Claude Project (SCOPE §4, §10 step 3).
 
-M3. The best surface by a wide margin: Anthropic ships an official memory
+M5. The best surface by a wide margin: Anthropic ships an official memory
 import/export format, so this compiler targets an existing spec instead of
 reverse-engineering one, and it is the first real True Migration proof point.
 
@@ -23,4 +23,4 @@ class ClaudeCompiler:
     async def compile(
         self, objects: list[ContextObject], *, out_dir: Path
     ) -> CompileResult:
-        raise NotImplementedError("Claude compiler is M3; see docs/ROADMAP.md")
+        raise NotImplementedError("Claude compiler is M5; see docs/ROADMAP.md")

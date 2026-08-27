@@ -18,11 +18,19 @@ Live Sync is "Plaid for memory." True Migration is closer to actually switching 
 
 ## Status
 
-**M0 — substrate.** The object model, the in-process store, retrieval, the MCP server,
-the local proxy, the compression job and the Continuity Score are implemented and
-tested. The Postgres/pgvector backend and every provider compiler are scaffolded with
-their contracts fixed and their bodies unwritten. See [docs/ROADMAP.md](docs/ROADMAP.md)
-for exactly what is real and what is not.
+**M1 done — canonical schema + storage backend.** The §2 object model, both store
+backends (zero-infrastructure in-process and Postgres/pgvector), the hybrid vector +
+lexical retrieval index, and the append-only Event/Revision Log with full replay are
+implemented, and every M1 acceptance criterion is pinned by a test — including the
+measured ones: **95%** top-5 relevance against a 90% bar, **~21ms** p95 search at
+10,000 objects against a 300ms bar.
+
+The MCP server, the local proxy, the compression job and the Continuity Score exist
+and work; their remaining acceptance criteria (auth, labelled extraction sets, token
+budgeting) are M2 and M4. Every provider compiler is still scaffolding with its
+contract fixed and its body unwritten. See [docs/ROADMAP.md](docs/ROADMAP.md) for
+exactly what is real and what is not, and [docs/RETRIEVAL.md](docs/RETRIEVAL.md) for
+the published ranking formula.
 
 ## Quickstart
 
@@ -36,9 +44,18 @@ Everything runs against the in-process store by default, so there is no database
 stand up before you can try it:
 
 ```bash
+uv run coletar seed          # one object of every type, plus a supersedes chain
 uv run coletar remember "I prefer fixed-point integers over doubles for money" --kind preference
 uv run coletar search "how should I represent money"
-uv run coletar events
+uv run coletar events        # the append-only Event/Revision Log
+uv run coletar history mem_… # what one object used to say, and when it changed
+```
+
+For the real backend, stand Postgres up and migrate into it:
+
+```bash
+docker compose up -d
+COLETAR_STORE_BACKEND=postgres uv run coletar migrate
 ```
 
 ### The local-model wedge

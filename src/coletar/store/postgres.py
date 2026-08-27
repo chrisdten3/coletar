@@ -1,43 +1,198 @@
-"""Postgres + pgvector backend.
+"""Postgres + pgvector backend (SCOPE §5).
 
-NOT YET IMPLEMENTED — this is M1 work (see docs/ROADMAP.md). The table shape it
-will target is fully specified in `migrations/001_init.sql`; what's missing is the
-psycopg wiring and the embedding call behind `search`. Until then
-`COLETAR_STORE_BACKEND=memory` runs the entire stack, which is enough to build and
-dogfood the local-model wedge.
+The table shape is `migrations/001_init.sql`; this is the psycopg wiring over it.
+Three invariants this module exists to hold, all of them from AGENTS.md rather than
+from taste:
 
-Implementation notes for whoever picks this up:
-  * `put_object` must write the row and its event in one transaction. The event
-    log is the provenance record; a row that exists without its event is a bug we
-    cannot detect later.
-  * `search` is a hybrid: cosine top-k over `object_embedding`, unioned with a
-    trigram match on `content`, then re-ranked by confidence and recency the same
-    way `InMemoryStore.search` does.
-  * `retire_object` sets `retired_at`. Nothing in this package ever issues DELETE
-    against `context_object` or `event_log`.
+  * **One transaction per write.** The object row, its embedding and its event row
+    commit together. The event log is the provenance record -- a row that exists
+    without its event is a data-integrity failure we cannot detect later, so it must
+    not be possible to produce one, not merely discouraged.
+  * **No DELETE, ever.** `retire_object` sets `retired_at`. Nothing in this package
+    issues DELETE or UPDATE against `event_log` at all.
+  * **Identical ranking to the in-process store.** Postgres narrows the candidate
+    set (cosine top-k unioned with a trigram match, which is the part a database is
+    genuinely better at); the final blend runs through
+    `coletar.retrieval.ranking.rank_score`, the same call `InMemoryStore` makes. A
+    backend swap must not change which memory a model sees.
 """
 
 from __future__ import annotations
 
-from coletar.schema.events import Event
-from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
+from datetime import datetime
+from typing import Any
+
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+
+from coletar.retrieval.embedding import Embedder, build_embedder, cosine, tokenize
+from coletar.retrieval.ranking import lexical_score, rank_score
+from coletar.schema.events import Actor, Event, EventType
+from coletar.schema.objects import (
+    ContextObject,
+    Edge,
+    ObjectType,
+    Scope,
+    ScopeType,
+    object_from_record,
+)
+
+#: Always qualified, and every query below aliases `context_object` as `o`. The
+#: search query joins against a candidate CTE that also has an `id`, so an
+#: unqualified list is ambiguous there and nowhere else -- which is exactly the kind
+#: of difference that is better removed than remembered.
+_OBJECT_COLUMNS = """
+    o.id, o.type, o.content, o.scope_type, o.scope_id, o.kind, o.confidence,
+    o.extraction_method, o.sensitivity, o.supersedes, o.provenance,
+    o.provider_mappings, o.payload, o.version, o.created_at, o.updated_at,
+    o.retired_at, o.ttl_days
+"""
+
+#: An object is active when nothing retired it and nothing supersedes it. The second
+#: half matters between a correction being written and compression next running --
+#: retrieval must not serve the stale fact in that window (§6).
+_ACTIVE_PREDICATE = """
+    o.retired_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM context_object s WHERE s.supersedes = o.id)
+"""
+
+
+def _vector_literal(vector: list[float]) -> str:
+    """pgvector's text input form. Passing the literal with an explicit cast keeps
+    numpy off the dependency list for one call site."""
+    return "[" + ",".join(f"{v:.7g}" for v in vector) + "]"
+
+
+def _to_record(row: dict[str, Any]) -> ContextObject:
+    record: dict[str, Any] = {
+        "id": row["id"],
+        "type": row["type"],
+        "content": row["content"],
+        "scope": {"type": row["scope_type"], "id": row["scope_id"]},
+        "confidence": row["confidence"],
+        "extraction_method": row["extraction_method"],
+        "sensitivity": row["sensitivity"],
+        "supersedes": row["supersedes"],
+        "provenance": row["provenance"],
+        "provider_mappings": row["provider_mappings"],
+        "payload": row["payload"],
+        "version": row["version"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "retired_at": row["retired_at"],
+        "ttl_days": row["ttl_days"],
+    }
+    if row.get("kind") is not None:
+        record["kind"] = row["kind"]
+    return object_from_record(record)
 
 
 class PostgresStore:
-    def __init__(self, dsn: str, *, embedding_dim: int = 768) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        embedding_dim: int = 768,
+        embedder: Embedder | None = None,
+    ) -> None:
         self.dsn = dsn
         self.embedding_dim = embedding_dim
+        self._embedder = embedder or build_embedder()
+        self._pool: AsyncConnectionPool | None = None
 
-    def _todo(self, method: str) -> NotImplementedError:
-        return NotImplementedError(
-            f"PostgresStore.{method} is M1 work; run with COLETAR_STORE_BACKEND=memory"
-        )
+    async def _get_pool(self) -> AsyncConnectionPool:
+        if self._pool is None:
+            pool = AsyncConnectionPool(self.dsn, open=False)
+            await pool.open(wait=True)
+            self._pool = pool
+        return self._pool
 
+    async def close(self) -> None:
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
+
+    # -- objects ------------------------------------------------------------
     async def put_object(self, obj: ContextObject, *, event: Event | None = None) -> ContextObject:
-        raise self._todo("put_object")
+        vector = (await self._embedder.embed([obj.content]))[0]
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s",
+                              (obj.id,))
+            existing_row = await cur.fetchone()
+            before = _to_record(existing_row).model_dump(mode="json") if existing_row else None
+            # Detached copy, for the same reason InMemoryStore keeps one: put_object
+            # does not mutate what it was handed.
+            obj = obj.model_copy(deep=True)
+            if existing_row is not None:
+                obj.touch()
+
+            dump = obj.model_dump(mode="json")
+            await cur.execute(
+                """
+                INSERT INTO context_object (
+                    id, type, content, scope_type, scope_id, kind, confidence,
+                    extraction_method, sensitivity, supersedes, provenance,
+                    provider_mappings, payload, version, created_at, updated_at,
+                    retired_at, ttl_days
+                ) VALUES (
+                    %(id)s, %(type)s, %(content)s, %(scope_type)s, %(scope_id)s, %(kind)s,
+                    %(confidence)s, %(extraction_method)s, %(sensitivity)s, %(supersedes)s,
+                    %(provenance)s, %(provider_mappings)s, %(payload)s, %(version)s,
+                    %(created_at)s, %(updated_at)s, %(retired_at)s, %(ttl_days)s
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    scope_type = EXCLUDED.scope_type,
+                    scope_id = EXCLUDED.scope_id,
+                    kind = EXCLUDED.kind,
+                    confidence = EXCLUDED.confidence,
+                    extraction_method = EXCLUDED.extraction_method,
+                    sensitivity = EXCLUDED.sensitivity,
+                    supersedes = EXCLUDED.supersedes,
+                    provenance = EXCLUDED.provenance,
+                    provider_mappings = EXCLUDED.provider_mappings,
+                    payload = EXCLUDED.payload,
+                    version = EXCLUDED.version,
+                    updated_at = EXCLUDED.updated_at,
+                    retired_at = EXCLUDED.retired_at,
+                    ttl_days = EXCLUDED.ttl_days
+                """,
+                _object_params(obj, dump),
+            )
+            await cur.execute(
+                """
+                INSERT INTO object_embedding (object_id, model, embedding)
+                VALUES (%s, %s, %s::vector)
+                ON CONFLICT (object_id) DO UPDATE SET
+                    model = EXCLUDED.model,
+                    embedding = EXCLUDED.embedding,
+                    created_at = now()
+                """,
+                (obj.id, self._embedder.model, _vector_literal(vector)),
+            )
+
+            base = event or Event(
+                type=EventType.OBJECT_UPDATED if existing_row else EventType.OBJECT_CREATED,
+                object_id=obj.id,
+                actor=Actor.SYSTEM,
+                provider=obj.provenance.provider,
+                detail={"type": obj.type, "scope": str(obj.scope)},
+            )
+            await _insert_event(
+                cur, base.model_copy(update={"before": before, "after": dump})
+            )
+            # The `async with` commits: object, embedding and event land together.
+        return obj
 
     async def get_object(self, object_id: str) -> ContextObject | None:
-        raise self._todo("get_object")
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s", (object_id,)
+            )
+            row = await cur.fetchone()
+        return _to_record(row) if row else None
 
     async def list_objects(
         self,
@@ -45,25 +200,147 @@ class PostgresStore:
         type: ObjectType | None = None,
         scope: Scope | None = None,
         include_retired: bool = False,
+        include_superseded: bool = False,
         limit: int = 200,
     ) -> list[ContextObject]:
-        raise self._todo("list_objects")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if type is not None:
+            clauses.append("o.type = %s")
+            params.append(str(type))
+        if scope is not None:
+            clauses.append("o.scope_type = %s AND o.scope_id IS NOT DISTINCT FROM %s")
+            params.extend([str(scope.type), scope.id])
+        if not include_retired:
+            clauses.append("o.retired_at IS NULL")
+        if not include_superseded:
+            clauses.append(
+                "NOT EXISTS (SELECT 1 FROM context_object s WHERE s.supersedes = o.id)"
+            )
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o {where} "
+                f"ORDER BY o.updated_at DESC LIMIT %s",
+                (*params, limit),
+            )
+            rows = await cur.fetchall()
+        return [_to_record(row) for row in rows]
 
     async def retire_object(self, object_id: str, *, reason: str) -> None:
-        raise self._todo("retire_object")
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s "
+                f"AND o.retired_at IS NULL FOR UPDATE",
+                (object_id,),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return
+            before = _to_record(row).model_dump(mode="json")
+            # Soft retire. There is no code path in this package that DELETEs.
+            await cur.execute(
+                f"UPDATE context_object AS o SET retired_at = now() WHERE o.id = %s "
+                f"RETURNING {_OBJECT_COLUMNS}",
+                (object_id,),
+            )
+            after_row = await cur.fetchone()
+            assert after_row is not None
+            await _insert_event(
+                cur,
+                Event(
+                    type=EventType.OBJECT_RETIRED,
+                    object_id=object_id,
+                    actor=Actor.JOB,
+                    before=before,
+                    after=_to_record(after_row).model_dump(mode="json"),
+                    detail={"reason": reason},
+                ),
+            )
 
+    # -- edges --------------------------------------------------------------
     async def add_edge(self, edge: Edge) -> None:
-        raise self._todo("add_edge")
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # The primary key is (src_id, dst_id, type), so this is idempotent in the
+            # schema rather than in a check the caller could forget.
+            await cur.execute(
+                """
+                INSERT INTO context_edge (src_id, dst_id, type, confidence, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (src_id, dst_id, type) DO NOTHING
+                """,
+                (edge.src_id, edge.dst_id, str(edge.type), edge.confidence, edge.created_at),
+            )
+            if cur.rowcount == 0:
+                return  # already asserted; no second row and no second event
+            await _insert_event(
+                cur,
+                Event(
+                    type=EventType.EDGE_CREATED,
+                    object_id=edge.src_id,
+                    detail={"dst": edge.dst_id, "edge_type": edge.type},
+                ),
+            )
 
     async def edges_from(self, object_id: str) -> list[Edge]:
-        raise self._todo("edges_from")
+        return await self._edges("src_id", object_id)
 
+    async def edges_to(self, object_id: str) -> list[Edge]:
+        return await self._edges("dst_id", object_id)
+
+    async def _edges(self, column: str, object_id: str) -> list[Edge]:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT src_id, dst_id, type, confidence, created_at "
+                f"FROM context_edge WHERE {column} = %s",
+                (object_id,),
+            )
+            rows = await cur.fetchall()
+        return [Edge.model_validate(row) for row in rows]
+
+    # -- event log ----------------------------------------------------------
     async def append_event(self, event: Event) -> None:
-        raise self._todo("append_event")
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await _insert_event(cur, event)
 
-    async def list_events(self, *, object_id: str | None = None, limit: int = 200) -> list[Event]:
-        raise self._todo("list_events")
+    async def list_events(
+        self,
+        *,
+        object_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        limit: int = 200,
+    ) -> list[Event]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if object_id is not None:
+            clauses.append("object_id = %s")
+            params.append(object_id)
+        if since is not None:
+            clauses.append("at >= %s")
+            params.append(since)
+        if until is not None:
+            clauses.append("at <= %s")
+            params.append(until)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                f"SELECT id, type, object_id, actor, provider, at, detail "
+                f"FROM event_log {where} ORDER BY at DESC, id DESC LIMIT %s",
+                (*params, limit),
+            )
+            rows = await cur.fetchall()
+        return [_event_from_row(row) for row in rows]
+
+    # -- retrieval ----------------------------------------------------------
     async def search(
         self,
         query: str,
@@ -71,4 +348,149 @@ class PostgresStore:
         scope: Scope | None = None,
         top_k: int = 12,
     ) -> list[tuple[ContextObject, float]]:
-        raise self._todo("search")
+        query_vector = (await self._embedder.embed([query]))[0]
+        literal = _vector_literal(query_vector)
+
+        scope_clause = ""
+        scope_params: list[Any] = []
+        if scope is not None:
+            # A conversation inside a project still sees global context; it never
+            # sees another project's. See the Store protocol docstring.
+            if scope.type is ScopeType.PROJECT:
+                scope_clause = "AND (o.scope_type = 'global' OR o.scope_id = %s)"
+                scope_params.append(scope.id)
+            else:
+                scope_clause = "AND o.scope_type = 'global'"
+
+        # Over-fetch from each half: the final ordering is the blend below, so the
+        # candidate pool has to be wider than the number of rows we return.
+        fetch = max(top_k * 4, 50)
+        sql = f"""
+        WITH candidates AS (
+            (
+                SELECT o.id FROM context_object o
+                JOIN object_embedding e ON e.object_id = o.id
+                WHERE {_ACTIVE_PREDICATE} {scope_clause}
+                ORDER BY e.embedding <=> %s::vector
+                LIMIT %s
+            )
+            UNION
+            (
+                SELECT o.id FROM context_object o
+                WHERE {_ACTIVE_PREDICATE} {scope_clause}
+                  AND o.content %% %s
+                LIMIT %s
+            )
+        )
+        SELECT {_OBJECT_COLUMNS}, e.embedding::text AS embedding
+        FROM context_object o
+        JOIN candidates c ON c.id = o.id
+        LEFT JOIN object_embedding e ON e.object_id = o.id
+        """
+        params = [*scope_params, literal, fetch, *scope_params, query, fetch]
+
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
+
+        query_tokens = set(tokenize(query))
+        scored: list[tuple[ContextObject, float]] = []
+        for row in rows:
+            obj = _to_record(row)
+            vector = _parse_vector(row.get("embedding"))
+            lexical = lexical_score(query_tokens, set(tokenize(obj.content)))
+            similarity = cosine(query_vector, vector)
+            if lexical <= 0.0 and similarity <= 0.0:
+                continue
+            scored.append(
+                (
+                    obj,
+                    rank_score(
+                        lexical=lexical,
+                        vector=similarity,
+                        confidence=obj.confidence,
+                        updated_at=obj.updated_at,
+                    ),
+                )
+            )
+        scored.sort(key=lambda pair: (pair[1], pair[0].id), reverse=True)
+        return scored[:top_k]
+
+
+def _object_params(obj: ContextObject, dump: dict[str, Any]) -> dict[str, Any]:
+    from psycopg.types.json import Jsonb
+
+    return {
+        "id": obj.id,
+        "type": str(obj.type),
+        "content": obj.content,
+        "scope_type": str(obj.scope.type),
+        "scope_id": obj.scope.id,
+        "kind": str(kind) if (kind := getattr(obj, "kind", None)) is not None else None,
+        "confidence": obj.confidence,
+        "extraction_method": str(obj.extraction_method),
+        "sensitivity": str(obj.sensitivity),
+        "supersedes": obj.supersedes,
+        "provenance": Jsonb(dump["provenance"]),
+        "provider_mappings": Jsonb(dump["provider_mappings"]),
+        "payload": Jsonb(dump["payload"]),
+        "version": obj.version,
+        "created_at": obj.created_at,
+        "updated_at": obj.updated_at,
+        "retired_at": obj.retired_at,
+        "ttl_days": obj.ttl_days,
+    }
+
+
+async def _insert_event(cur: Any, event: Event) -> None:
+    """The only INSERT into `event_log`, and there is no UPDATE or DELETE anywhere.
+
+    before/after ride inside `detail` so the log stays a single append-only table
+    with a stable shape; `_event_from_row` lifts them back out.
+    """
+    from psycopg.types.json import Jsonb
+
+    detail = dict(event.detail)
+    if event.before is not None:
+        detail["__before"] = event.before
+    if event.after is not None:
+        detail["__after"] = event.after
+    await cur.execute(
+        """
+        INSERT INTO event_log (id, type, object_id, actor, provider, at, detail)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            event.id,
+            str(event.type),
+            event.object_id,
+            str(event.actor),
+            str(event.provider),
+            event.at,
+            Jsonb(detail),
+        ),
+    )
+
+
+def _event_from_row(row: dict[str, Any]) -> Event:
+    detail = dict(row["detail"] or {})
+    before = detail.pop("__before", None)
+    after = detail.pop("__after", None)
+    return Event(
+        id=row["id"],
+        type=row["type"],
+        object_id=row["object_id"],
+        actor=row["actor"],
+        provider=row["provider"],
+        at=row["at"],
+        before=before,
+        after=after,
+        detail=detail,
+    )
+
+
+def _parse_vector(raw: str | None) -> list[float]:
+    if not raw:
+        return []
+    return [float(part) for part in raw.strip("[]").split(",") if part]
