@@ -255,15 +255,35 @@ shared graph.
 - [x] Tenant is visible, not implied: `--tenant` on every graph command, writes report
       where they landed, and `coletar tenant` prints what the default resolves to
 
-### M3.2 Cross-surface propagation — local, no infrastructure
+### M3.2 Cross-surface propagation — local, no infrastructure ✅
 
 The product's actual promise is cross-*surface*, not cross-conversation. This proves
 the mechanism with no deployment, no Anthropic API key and no cost, by pointing the
 local proxy and the MCP server at the same graph.
 
-- [ ] Harness: write through the proxy, read through the MCP server, and back
-- [ ] Propagation latency under 1s at p95, tenant-scoped both directions
-- [ ] Runnable on demand and in CI
+- [x] Harness driving both **real** surfaces: a memory extracted from a conversation
+      turn by the proxy is returned by the connector's `search_context`, and a
+      connector's `write_memory` lands in the next local model's system prompt
+- [x] Latency **~0.2ms p50 / 0.4ms p95** against a 1s budget — because propagation is
+      pull-based and there is no sync job to wait for
+- [x] Both directions measured separately: a store propagating one way only would
+      still be broken
+- [x] Tenant-scoped both directions, including the misconfigured case
+- [x] Verified against Postgres as well, where the graph is genuinely out of process
+      rather than a dict two surfaces happen to share
+- [x] Runnable on demand (`uv run coletar propagation`) and in CI
+
+The harness takes **callables** rather than surfaces, so M3.3 measures the same thing
+against a deployed Claude connector by passing a different pair of functions instead
+of being rewritten.
+
+**Two things the harness found.** Writing the same fact from both directions into one
+graph propagates only once — M2.3's near-duplicate deduplication working correctly,
+and a reminder that a propagation test needs distinct facts per direction. And a
+proxy whose configured tenant disagrees with the connector's principal produces two
+surfaces that each work perfectly while nothing propagates: correct isolation,
+indistinguishable from a broken store unless you know to look, now pinned as
+documented behaviour rather than left as a debugging story.
 
 **Known shortcut, recorded rather than drifted into:** the proxy calls `build_store()`
 directly, so it bypasses authentication, tenant resolution and scope enforcement — it

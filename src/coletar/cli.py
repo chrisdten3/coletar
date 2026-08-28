@@ -215,6 +215,76 @@ def evaluate(
 
 
 @app.command()
+def propagation(
+    tenant: str | None = TENANT_OPTION,
+    trials: int = typer.Option(5, help="Facts to send in each direction."),
+) -> None:
+    """Prove the central claim: a memory written on one surface is readable on the
+    other (§3.1). Writes through the local proxy's extraction path and reads through
+    the MCP retrieval path, and back.
+
+    Runnable on demand as well as in CI, because "memory is portable across models"
+    is the one property worth being able to re-check at any moment.
+    """
+    from coletar.propagation import Direction, measure_round_trip
+    from coletar.retrieval import retrieve
+    from coletar.retrieval.embedding import tokenize
+
+    outbound = [
+        "I prefer fixed-point integers over doubles for money.",
+        "From now on, always use uv instead of pip.",
+        "Remember that Ledger deploys to Fly.io on every merge.",
+        "I never use an ORM in this project.",
+        "My name is Christopher, but everyone calls me Chris.",
+    ][:trials]
+    inbound = [
+        "Priya owns the invoicing module and reviews its pull requests.",
+        "Standups happen at 09:30 Lisbon time on Tuesdays.",
+        "The staging database is restored from production every Sunday night.",
+        "Design documents live in Notion, not in the repository.",
+        "Chris bills hourly rather than per project.",
+    ][:trials]
+
+    async def _run() -> None:
+        from coletar.extraction import extract_memories
+        from coletar.schema.objects import ExtractionMethod, Memory, MemoryKind, OriginType
+
+        resolved = _tenant(tenant)
+        store = build_store()
+
+        async def local_write(content: str) -> str:
+            extracted = await extract_memories(user_text=content)
+            memory = extracted[0] if extracted else Memory.from_write(content)
+            return (await store.put_object(resolved, memory)).id
+
+        async def connector_write(content: str) -> str:
+            memory = Memory.from_write(
+                content,
+                kind=MemoryKind.FACT,
+                extraction_method=ExtractionMethod.MCP_LIVE_WRITE,
+                origin_type=OriginType.AGENT,
+            )
+            return (await store.put_object(resolved, memory)).id
+
+        async def read(query: str) -> set[str]:
+            context = await retrieve(store, resolved, query, top_k=25, trace=False)
+            return {obj.id for obj in context.objects}
+
+        report = await measure_round_trip(
+            directions=[
+                Direction("local->connector", local_write, read, outbound),
+                Direction("connector->local", connector_write, read, inbound),
+            ],
+            query_for=lambda content: " ".join(tokenize(content)[:6]),
+        )
+        typer.echo(f"tenant {resolved}")
+        typer.echo(report.report())
+        raise typer.Exit(0 if report.propagated == report.total else 1)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def tenant() -> None:
     """Show which tenant the CLI and proxy resolve to, and what the store holds.
 
