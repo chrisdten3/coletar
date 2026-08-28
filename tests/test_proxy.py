@@ -343,3 +343,79 @@ def test_the_capture_still_looks_like_what_was_recorded():
     assert text.rstrip().endswith("data: [DONE]")
     assert '"object":"chat.completion.chunk"' in text
     assert '"delta":{"role":"assistant"' in text
+
+
+# -- M4: extraction runs behind the response, not in front of it ---------------
+async def test_extraction_does_not_delay_the_response(store, upstream, monkeypatch):
+    """0.1ms today because extraction is regular expressions. It will not stay that
+    way — model-assisted extraction puts an inference call here, and a user should
+    not wait on the proxy learning something to receive the answer they asked for.
+
+    A slow extractor is simulated so the test measures the property rather than the
+    current implementation's speed.
+    """
+    import asyncio
+
+    from coletar.extraction import extract_memories as real_extract
+
+    async def slow_extract(**kwargs):
+        await asyncio.sleep(0.4)
+        return await real_extract(**kwargs)
+
+    monkeypatch.setattr(proxy_module, "extract_memories", slow_extract)
+
+    with TestClient(proxy_module.app) as client:
+        started = time.perf_counter()
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+        # TestClient waits for background tasks, so measure the *response* itself
+        # rather than the whole call.
+        elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    # The extraction still happened — just not before the reply was produced.
+    assert [o.content for o in await store.list_objects(PROXY_TENANT)] == [
+        "I prefer spaces over tabs"
+    ]
+    assert elapsed >= 0.4, "the background task should still have run"
+
+
+async def test_a_failing_extractor_never_breaks_the_chat(store, upstream, monkeypatch):
+    """The reply has already left. A proxy that fails a chat because it could not
+    extract a memory is worse than one that quietly learns nothing from that turn."""
+    async def exploding_extract(**kwargs):
+        raise RuntimeError("extractor is down")
+
+    monkeypatch.setattr(proxy_module, "extract_memories", exploding_extract)
+
+    warns = pytest.warns(UserWarning, match="extraction failed")
+    with TestClient(proxy_module.app) as client, warns:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Understood."
+    assert await store.list_objects(PROXY_TENANT) == []
+
+
+async def test_the_proxy_deduplicates_across_conversations(store, upstream):
+    """The same preference stated in three separate chats is one object, not three —
+    which is what the compiler will read."""
+    with TestClient(proxy_module.app) as client:
+        for _ in range(3):
+            client.post(
+                "/v1/chat/completions",
+                json={"model": "llama3", "messages": [
+                    {"role": "user", "content": "I prefer fixed-point integers for money."}
+                ]},
+            )
+
+    assert len(await store.list_objects(PROXY_TENANT, limit=100)) == 1

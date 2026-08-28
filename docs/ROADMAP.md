@@ -388,15 +388,22 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       Fine for a single-user local daemon, wrong for anything else: both surfaces
       should pass through the same auth, tenancy and event semantics rather than one
       of them holding database credentials
-- [ ] **Dedup/merge on write.** Restored here after being dropped when this roadmap
-      was renumbered onto the build plan — it was an open M1 item and vanished in the
-      rewrite. Near-duplicates are currently dropped at *assembly* time, which
-      protects retrieval and not the compiler: `list_objects` is what a compile
-      reads, so True Migration would faithfully emit every duplicate the proxy ever
-      wrote. Mem0 does its context lookup *before* extraction for this reason
-- [ ] **Extraction off the response path.** The proxy awaits extraction before
-      returning, which costs 0.1ms with the regex extractor and would cost seconds
-      once model-assisted extraction lands. Mem0 writes after the response, async
+- [x] **Dedup/merge on write** (`coletar.ingest`). Near-duplicates used to be dropped
+      only at *assembly* time, which protects retrieval and not the compiler:
+      `list_objects` is what a compile reads, so True Migration would have emitted
+      every duplicate the proxy ever wrote. Ten restatements are now one object.
+      A duplicate **corroborates** — the existing object gets an
+      `object.corroborated` event, because "the user said it again in a different
+      session" is real provenance — and confidence is deliberately *not* inflated,
+      since repetition is weak evidence. Corrections are never folded into what they
+      correct, which would discard the correction and leave the stale fact standing.
+      Lives at the ingest boundary rather than in `Store`, so a compiler or replay
+      can still write exact objects
+- [x] **Extraction off the response path.** The proxy queues extraction as a
+      background task; the streaming path already had this property. 0.1ms today
+      with the regex extractor, seconds once M6.2's model does the extracting — and
+      a failing extractor can no longer break a chat, since the reply has already
+      left
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract

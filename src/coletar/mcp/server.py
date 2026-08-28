@@ -30,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from coletar.config import get_settings
+from coletar.ingest import remember
 from coletar.mcp.auth import (
     SCOPE_READ,
     SCOPE_WRITE,
@@ -230,7 +231,8 @@ async def write_memory(
         sensitivity=memory_sensitivity,
         supersedes=supersedes,
     )
-    await store.put_object(
+    result = await remember(
+        store,
         principal.tenant_id,
         memory,
         event=Event(
@@ -248,9 +250,13 @@ async def write_memory(
     )
     # Propagation is pull-based: the next search_context from any other surface
     # sees this immediately. There is no sync job (§3.1).
+    #
+    # `stored` is false when this restated something already known — the model gets
+    # told the memory exists rather than being led to believe it created a second
+    # copy of it.
     return WriteMemoryResponse(
-        id=memory.id,
-        stored=True,
+        id=result.object_id,
+        stored=result.created,
         confidence=round(memory.confidence, 3),
         scope=str(scope),
         kind=memory_kind,

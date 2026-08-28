@@ -15,14 +15,16 @@ model called write_memory".
 from __future__ import annotations
 
 import json
+import warnings
 from typing import Any
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from coletar.config import get_settings
 from coletar.extraction import extract_memories
+from coletar.ingest import remember
 from coletar.retrieval import retrieve
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import GLOBAL_SCOPE, Memory, Scope, ScopeType
@@ -123,7 +125,11 @@ class SSEAssembler:
 
 
 async def _record(store: Store, tenant: TenantId, memory: Memory, scope: Scope) -> None:
-    await store.put_object(
+    # Through the ingest boundary, so a preference the user restates in a later
+    # conversation corroborates the object that already says it rather than growing
+    # the graph a copy the compiler would later emit twice.
+    await remember(
+        store,
         tenant,
         memory,
         event=Event(
@@ -143,12 +149,26 @@ async def _record(store: Store, tenant: TenantId, memory: Memory, scope: Scope) 
 async def _extract_and_store(
     store: Store, tenant: TenantId, *, user_text: str, assistant_text: str, scope: Scope
 ) -> None:
+    """Runs *after* the response has been delivered — never in front of it.
+
+    Extraction is 0.1ms today because it is regular expressions, so blocking would be
+    invisible. It will not stay that way: model-assisted extraction (M6.2) puts an
+    inference call here, and a user should not wait on the proxy learning something
+    in order to receive the answer they asked for.
+
+    Nothing raised here may reach the user, for the same reason: the reply already
+    left. A proxy that fails a chat because it could not extract a memory is worse
+    than one that quietly learns nothing from that turn.
+    """
     if not user_text.strip():
         return
-    for memory in await extract_memories(
-        user_text=user_text, assistant_text=assistant_text, scope=scope
-    ):
-        await _record(store, tenant, memory, scope)
+    try:
+        for memory in await extract_memories(
+            user_text=user_text, assistant_text=assistant_text, scope=scope
+        ):
+            await _record(store, tenant, memory, scope)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        warnings.warn(f"coletar: extraction failed for this turn: {exc!r}", stacklevel=2)
 
 
 @app.get("/healthz")
@@ -157,7 +177,7 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: Request) -> Any:
+async def chat_completions(request: Request, background: BackgroundTasks) -> Any:
     settings = get_settings()
     store = build_store()
     tenant = proxy_tenant()
@@ -229,7 +249,12 @@ async def chat_completions(request: Request) -> Any:
 
     payload = response.json()
     reply = payload.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-    await _extract_and_store(store, tenant, user_text=query, assistant_text=reply, scope=scope)
+    # Queued, not awaited: the response goes out first and extraction happens behind
+    # it. The streaming path below already has this property, because its extraction
+    # runs once the stream has finished being forwarded.
+    background.add_task(
+        _extract_and_store, store, tenant, user_text=query, assistant_text=reply, scope=scope
+    )
 
     return JSONResponse(content=payload)
 
