@@ -292,6 +292,22 @@ unacceptable for anything else. See the M4 item.
 
 ### M3.3 Deployment and the real Claude connector
 
+**What live testing showed (Aug 2026):** the connector works — a `write_memory` call
+from a Claude conversation landed in Postgres with the right tenant, principal,
+`mcp_live_write` provenance and embedding. But Claude used its **own** native memory
+first, and only called the connector when named explicitly. Our tool descriptions are
+the reason: `write_memory` reads as *"Record one durable fact, preference,
+instruction, goal or correction"*, which describes native memory exactly and gives a
+model no reason to prefer ours. They need to say *why* coletar — portability — since
+that is both true and the only actual differentiator (§3 correction).
+
+The consequence for sequencing: **on this surface, reads matter more than writes.**
+Writing competes with a free first-party feature and losing is cheap, because the
+fact still exists in Claude's memory. Reading has no competitor — Claude's memory
+cannot contain what a local model learned or what an import carried in. The graph
+fills from tier-1 surfaces (§4.1) regardless.
+
+
 - [x] Deployment artifacts: `Dockerfile` (multi-stage, `uv sync --frozen`, non-root,
       ~93MB), `fly.toml` with migrations as a release command and `/healthz` as the
       check, `.dockerignore`, and [DEPLOYMENT.md](DEPLOYMENT.md) with the exact
@@ -318,7 +334,24 @@ unacceptable for anything else. See the M4 item.
 No Anthropic API key is needed for any of this. Claude's cloud calls *our* endpoint;
 the credential that matters is a coletar token.
 
-### M3.4 Tool-use reliability harness
+### M3.4 Claude Code acquisition — guaranteed capture
+
+Added Aug 2026, and placed ahead of the reliability harness deliberately: guaranteed
+capture on a surface the user works in daily is worth more than tuning the odds on a
+surface where we are a guest. This is the largest unclaimed row in §4.1's tier-1
+table, and OpenAI's Import feature validates the approach by doing the same thing.
+
+- [ ] Read Claude Code's own artifacts — `~/.claude` session `.jsonl`, project files,
+      `CLAUDE.md` — through the same extractor the proxy uses
+- [ ] Hooks in `settings.json` for live capture, since they fire on session events
+      regardless of what the model decides to call
+- [ ] Raw transcripts retained separately from derived objects, so extraction can
+      improve and be re-run (the same rule as M6's export parsing)
+- [ ] **Scope boundary, from §4.1:** documented user-facing artifacts only. Not a
+      desktop client's Electron cache — undocumented, unstable, and adjacent to
+      session tokens. Never the rendered page.
+
+### M3.5 Tool-use reliability harness
 
 A different kind of measurement from anything so far. Every bar to date is
 deterministic — same input, same output. This measures whether a *model chooses* to
@@ -355,6 +388,15 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       Fine for a single-user local daemon, wrong for anything else: both surfaces
       should pass through the same auth, tenancy and event semantics rather than one
       of them holding database credentials
+- [ ] **Dedup/merge on write.** Restored here after being dropped when this roadmap
+      was renumbered onto the build plan — it was an open M1 item and vanished in the
+      rewrite. Near-duplicates are currently dropped at *assembly* time, which
+      protects retrieval and not the compiler: `list_objects` is what a compile
+      reads, so True Migration would faithfully emit every duplicate the proxy ever
+      wrote. Mem0 does its context lookup *before* extraction for this reason
+- [ ] **Extraction off the response path.** The proxy awaits extraction before
+      returning, which costs 0.1ms with the regex extractor and would cost seconds
+      once model-assisted extraction lands. Mem0 writes after the response, async
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract
