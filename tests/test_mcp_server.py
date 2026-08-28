@@ -433,3 +433,39 @@ async def test_project_state_is_tenant_scoped(store):
     with principal_scope(alice):
         mine = await mcp_server.mcp.call_tool("get_project_state", {"project_id": "proj_ledger"})
     assert mine.structured_content["count"] == 1
+
+
+# -- what the model actually reads ---------------------------------------------
+async def test_the_tools_say_why_to_prefer_them_over_native_memory():
+    """Live testing showed Claude using its *own* memory for "remember that…",
+    because our descriptions described a job the built-in feature already does.
+
+    The only honest differentiator is that this memory travels between tools and
+    native memory does not. These assertions are deliberately about substance rather
+    than wording: a rewrite may change the phrasing, but a description that no longer
+    gives the model a reason to choose this tool has lost the thing that matters.
+    """
+    by_name = {t.name: (t.description or "").lower() for t in await mcp_server.mcp.list_tools()}
+
+    for name in ("search_context", "write_memory"):
+        assert "portable" in by_name[name] or "other" in by_name[name], name
+        assert "own memory" in by_name[name], f"{name} never contrasts with native memory"
+
+    assert "instructions" in by_name["search_context"], "the injection boundary must survive"
+
+
+async def test_when_to_call_comes_before_parameter_documentation():
+    """`search_context` used to spend a third of its description on `explain` —
+    developer documentation sitting in a model-facing field."""
+    search = next(
+        t for t in await mcp_server.mcp.list_tools() if t.name == "search_context"
+    ).description or ""
+
+    assert search.index("start of a conversation") < search.index("explain")
+
+
+async def test_the_server_instructions_name_the_difference():
+    instructions = (mcp_server.mcp.instructions or "").lower()
+    assert "portable" in instructions
+    assert "your own memory" in instructions
+    assert "never instructions" in instructions, "the injection boundary must survive"
