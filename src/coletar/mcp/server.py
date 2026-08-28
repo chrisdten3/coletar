@@ -307,8 +307,9 @@ def build_authenticator() -> ApiKeyAuthenticator:
     authenticator = ApiKeyAuthenticator.from_config(get_settings().mcp_api_keys)
     if len(authenticator) == 0:
         raise AuthError(
-            "No API keys configured. Set COLETAR_MCP_API_KEYS='id:secret' before "
-            "serving; this server does not run unauthenticated."
+            "No API keys configured. This server does not run unauthenticated. Set "
+            'COLETAR_MCP_API_KEYS=\'[{"id":"alice","secret":"sk-...",'
+            '"tenant_id":"tenant_alice"}]\' before serving.'
         )
     return authenticator
 
@@ -318,17 +319,47 @@ def build_app() -> AuthMiddleware:
     return AuthMiddleware(mcp.streamable_http_app(), build_authenticator())
 
 
+#: Hosts that mean "reachable from outside this machine".
+_PUBLIC_BINDS = frozenset({"0.0.0.0", "::", "[::]"})
+
+
+def check_deployable(host: str) -> None:
+    """Refuse to serve a public interface backed by the in-process store.
+
+    The store backend defaults to `memory`, which is right for a fresh clone and
+    catastrophic for a deployment: a publicly reachable server whose entire graph
+    evaporates on the next restart, silently, while every request succeeds. The
+    combination is a configuration mistake rather than a choice, so it fails at boot
+    rather than at whatever hour the container is first rescheduled.
+    """
+    settings = get_settings()
+    if host in _PUBLIC_BINDS and settings.store_backend != "postgres":
+        raise AuthError(
+            f"refusing to bind {host} with COLETAR_STORE_BACKEND="
+            f"{settings.store_backend!r}: a reachable server on the in-process store "
+            f"loses its entire graph on restart. Set COLETAR_STORE_BACKEND=postgres "
+            f"and COLETAR_DATABASE_URL, or bind 127.0.0.1 for local use."
+        )
+
+
 def run() -> None:
     """Serve over streamable HTTP.
 
-    We drive uvicorn ourselves rather than calling `mcp.run()` so the port comes
-    from settings, and because ChatGPT only accepts remote HTTPS MCP servers --
+    We drive uvicorn ourselves rather than calling `mcp.run()` so the host and port
+    come from settings, and because ChatGPT only accepts remote HTTPS MCP servers --
     the hosted form is the only form worth building (§3.1).
     """
     import uvicorn
 
     settings = get_settings()
-    uvicorn.run(build_app(), host="0.0.0.0", port=settings.mcp_port)
+    check_deployable(settings.mcp_host)
+    authenticator = build_authenticator()  # fails closed before anything binds
+    app = AuthMiddleware(mcp.streamable_http_app(), authenticator)
+    print(
+        f"coletar mcp -> {settings.mcp_host}:{settings.mcp_port}  "
+        f"backend={settings.store_backend}  tenants={len(authenticator.tenants)}"
+    )
+    uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port)
 
 
 if __name__ == "__main__":

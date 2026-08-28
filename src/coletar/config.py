@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     # Hosted MCP server (§9). ChatGPT only accepts remote HTTPS servers, so this
     # is always an HTTP transport, never stdio, outside of local development.
     mcp_port: int = 8788
+    # Loopback by default. A container sets 0.0.0.0 explicitly, and binding a public
+    # interface is gated on a real backend — see `coletar.mcp.server.run`.
+    mcp_host: str = "127.0.0.1"
     # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""

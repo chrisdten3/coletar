@@ -215,3 +215,48 @@ async def test_auth_validation_stays_under_fifty_milliseconds(benchmark_keys=Non
     durations.sort()
     p95 = durations[int(0.95 * len(durations)) - 1]
     assert p95 < 50.0, f"auth p95 {p95:.2f}ms across {len(entries)} keys"
+
+
+# -- M3.3: the deployment guard ------------------------------------------------
+@pytest.mark.parametrize("host", ["0.0.0.0", "::", "[::]"])
+def test_a_public_bind_on_the_in_process_store_is_refused(host, monkeypatch):
+    """A reachable server on the in-process store loses its whole graph on restart,
+    silently, while every request succeeds. That is a configuration mistake rather
+    than a choice, so it fails at boot instead of at whatever hour the container is
+    first rescheduled."""
+    from coletar.config import get_settings
+    from coletar.mcp.server import check_deployable
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    try:
+        with pytest.raises(AuthError, match="refusing to bind"):
+            check_deployable(host)
+    finally:
+        get_settings.cache_clear()
+
+
+def test_a_public_bind_on_postgres_is_allowed(monkeypatch):
+    from coletar.config import get_settings
+    from coletar.mcp.server import check_deployable
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "postgres")
+    try:
+        check_deployable("0.0.0.0")
+    finally:
+        get_settings.cache_clear()
+
+
+def test_loopback_on_the_in_process_store_stays_fine(monkeypatch):
+    """The zero-infrastructure path must keep working — it is only *public* exposure
+    that the guard is about."""
+    from coletar.config import get_settings
+    from coletar.mcp.server import check_deployable
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    try:
+        check_deployable("127.0.0.1")
+    finally:
+        get_settings.cache_clear()

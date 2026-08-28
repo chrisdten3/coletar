@@ -292,7 +292,19 @@ unacceptable for anything else. See the M4 item.
 
 ### M3.3 Deployment and the real Claude connector
 
-- [ ] Fly.io deployment of the MCP service, managed Postgres, secrets, migrations
+- [x] Deployment artifacts: `Dockerfile` (multi-stage, `uv sync --frozen`, non-root,
+      ~93MB), `fly.toml` with migrations as a release command and `/healthz` as the
+      check, `.dockerignore`, and [DEPLOYMENT.md](DEPLOYMENT.md) with the exact
+      command sequence
+- [x] Two boot-time guards, verified in the container rather than asserted: no API
+      keys means no server, and a public bind on the in-process store is refused —
+      a reachable endpoint whose graph evaporates on restart is a configuration
+      mistake, not a choice
+- [x] Image verified end to end against Postgres over real HTTP: migrations ran as
+      the release command, `/healthz` open, `/mcp` 401 without a token, four tools
+      discovered by a real MCP client, and two keys in two tenants each blind to the
+      other
+- [ ] `fly deploy` itself — needs Fly credentials, which are the user's to enter
 - [ ] Registered as a Claude Custom Connector, completed from Claude's own settings
 - [ ] A simulated OAuth handshake issues a token scoped to one tenant
 - [ ] Ship the instruction snippets in `CONNECTORS.md` as a copy-paste flow
