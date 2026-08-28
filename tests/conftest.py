@@ -90,6 +90,26 @@ async def relevance_store(relevance_set: RelevanceSet) -> tuple[InMemoryStore, d
     return store, ids
 
 
+def _test_dsn() -> str:
+    """Where the gated Postgres tests look for a database.
+
+    The environment wins, then `.env`, then the compose default. Reading `.env` here
+    is deliberate: it is where this project already keeps configuration, and without
+    it every Postgres test skips silently while the developer believes they ran —
+    which is worse than failing, because a green run means nothing.
+    """
+    from_env = os.environ.get("COLETAR_TEST_DATABASE_URL")
+    if from_env:
+        return from_env
+    dotenv = Path(__file__).parent.parent / ".env"
+    if dotenv.exists():
+        for line in dotenv.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "COLETAR_TEST_DATABASE_URL" and value.strip():
+                return value.strip()
+    return "postgresql://coletar:coletar@localhost:5433/coletar"
+
+
 def _dsn_reachable(dsn: str, *, default_port: int = 5432) -> bool:
     parsed = urlparse(dsn)
     if parsed.hostname is None:
@@ -136,9 +156,7 @@ def postgres_dsn() -> str:
     stays green on a machine with no Docker, and these tests actually run in CI and
     anywhere `docker compose up` has been run.
     """
-    dsn = os.environ.get(
-        "COLETAR_TEST_DATABASE_URL", "postgresql://coletar:coletar@localhost:5433/coletar"
-    )
+    dsn = _test_dsn()
     if not _dsn_reachable(dsn):
         pytest.skip(f"no Postgres reachable at {dsn} — run `docker compose up -d`")
     return dsn

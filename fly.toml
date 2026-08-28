@@ -1,45 +1,36 @@
-# coletar MCP service. `fly launch --no-deploy` will offer to rewrite this; decline.
+# fly.toml app configuration file generated for coletar-mcp on 2026-08-27T23:16:07-04:00
 #
-# Nothing secret lives here. COLETAR_DATABASE_URL and COLETAR_MCP_API_KEYS are set
-# with `fly secrets set`, which keeps them out of the repository and out of the
-# image. See docs/DEPLOYMENT.md.
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
 
-app = "coletar-mcp"
-primary_region = "iad"
+app = 'coletar-mcp'
+primary_region = 'iad'
 
 [build]
+[deploy]
+  release_command = 'coletar migrate'
 
 [env]
-  COLETAR_MCP_HOST = "0.0.0.0"
-  COLETAR_MCP_PORT = "8788"
-  COLETAR_STORE_BACKEND = "postgres"
-  COLETAR_EMBEDDING_BACKEND = "hashing"
-  COLETAR_EMBEDDING_DIM = "768"
-
-# Migrations run once per release, before the new version takes traffic. Running them
-# at boot instead would mean every instance racing every other instance for the same
-# ALTER TABLE.
-[deploy]
-  release_command = "coletar migrate"
+  COLETAR_EMBEDDING_BACKEND = 'hashing'
+  COLETAR_EMBEDDING_DIM = '768'
+  COLETAR_MCP_HOST = '0.0.0.0'
+  COLETAR_MCP_PORT = '8788'
+  COLETAR_STORE_BACKEND = 'postgres'
 
 [http_service]
   internal_port = 8788
   force_https = true
-  # Claude's connector requests come from Anthropic's cloud, and MCP sessions are
-  # stateful over streamable HTTP — so instances must not be stopped between
-  # requests, and there is at least one running at all times.
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
 
   [[http_service.checks]]
-    grace_period = "10s"
-    interval = "30s"
-    method = "GET"
-    timeout = "5s"
-    # The one unauthenticated path. It reports liveness and nothing about the graph.
-    path = "/healthz"
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    path = '/healthz'
 
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = 'shared-cpu-1x'
+  memory = '512mb'

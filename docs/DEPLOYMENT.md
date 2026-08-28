@@ -58,19 +58,56 @@ fly launch --no-deploy --name coletar-mcp   # decline its offer to rewrite fly.t
 
 ### 1. A database
 
-Fly's own Postgres colocates with the app and is the shortest path. Any managed
-Postgres works, as long as **`pgvector` is available** — the schema needs the `vector`
-and `pg_trgm` extensions.
+The requirement is narrower than "managed Postgres": the schema runs
+`CREATE EXTENSION vector`, so the database must have pgvector **available *and*
+installable by the user you connect as**. Those are different things, and the
+difference is where an afternoon goes.
+
+| Option | Verdict |
+|---|---|
+| **Supabase** | ✅ What this project uses. `CREATE EXTENSION vector` succeeds; `vector` 0.8.2, `pg_trgm` 1.6. |
+| Neon | ✅ Also supports pgvector. A second account, but Postgres and nothing else. |
+| Fly Managed Postgres (`fly mpg`) | ❌ **Tried and rejected.** pgvector 0.8.2 is present on the server, but `CREATE EXTENSION vector` fails with *"Must be superuser"*, and the exposed `fly-user` is only `schema_admin`. The CLI has `--enable-postgis-support` and no vector equivalent, so extensions are curated at creation and pgvector is not in the set. Also $38/month on the Basic plan. |
+| Fly unmanaged Postgres (`fly postgres`) | ❌ Fly explicitly disclaims support for it. |
+
+**Verify before building on it.** One query is cheaper than a failed release:
 
 ```bash
-fly postgres create --name coletar-db --region iad
-fly postgres attach coletar-db --app coletar-mcp
+psql "$COLETAR_DEPLOY_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql "$COLETAR_DEPLOY_DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 ```
 
-`attach` sets `DATABASE_URL`. coletar reads `COLETAR_DATABASE_URL`, so set that too:
+#### Creating it with the Supabase CLI
 
 ```bash
-fly secrets set COLETAR_DATABASE_URL="postgres://…"   # the value attach printed
+brew install supabase/tap/supabase
+supabase login                       # yours to run — it is a credential
+supabase orgs list
+supabase projects create coletar \
+  --org-id <org> --region us-east-1 \
+  --db-password "$(openssl rand -base64 36 | tr -d '/+=' | cut -c1-32)"
+```
+
+`us-east-1` puts it beside Fly's `iad`.
+
+#### Which connection string
+
+This one matters, and the obvious choice is wrong.
+
+| Endpoint | Use it? |
+|---|---|
+| Session pooler, port **5432** (`aws-0-<region>.pooler.supabase.com`) | ✅ |
+| Direct (`db.<ref>.supabase.co:5432`) | ✅ if it resolves — new projects may not publish it |
+| Transaction pooler, port **6543** | ❌ **breaks the server** |
+
+psycopg3 auto-prepares a statement after a few executions, and transaction-mode
+pooling cannot serve prepared statements. We also bring our own
+`AsyncConnectionPool`, so a transaction pooler buys nothing and costs correctness.
+
+Then:
+
+```bash
+fly secrets set COLETAR_DATABASE_URL="postgresql://postgres.<ref>:…@aws-0-us-east-1.pooler.supabase.com:5432/postgres"
 ```
 
 ### 2. Keys
@@ -149,6 +186,25 @@ against the newer schema. `002_tenancy.sql` adds columns and constraints; it doe
 drop or rewrite data, so an older image will fail on the missing tenant argument
 rather than corrupt anything. If a migration ever needs to be destructive, that is a
 conversation, not a script.
+
+## Testing against a hosted database
+
+The gated Postgres suite creates and drops a database **per test**, so that each
+assertion about what a tenant can see is not polluted by the last one. A pooled
+endpoint holds connections open, so `DROP DATABASE` fails with `ObjectInUse` — which
+is a property of pooled access, not a defect.
+
+So the split is deliberate:
+
+- **`COLETAR_TEST_DATABASE_URL`** → a direct Postgres. The compose container is the
+  default, and `docker compose up -d` is all the suite needs.
+- **`COLETAR_DEPLOY_DATABASE_URL`** → the hosted database, used only as the source
+  for `fly secrets set`.
+
+A hosted database can still be verified functionally without the per-test isolation —
+migrations, writes, hybrid search, tenant isolation by id and by event log,
+cross-tenant `supersedes`, and repeat queries to prove prepared statements survive the
+pooler. That is what was run against Supabase before deploying.
 
 ## Local equivalence
 
