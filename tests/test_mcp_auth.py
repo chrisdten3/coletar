@@ -260,3 +260,41 @@ def test_loopback_on_the_in_process_store_stays_fine(monkeypatch):
         check_deployable("127.0.0.1")
     finally:
         get_settings.cache_clear()
+
+
+# -- M3.3: DNS-rebinding protection --------------------------------------------
+def test_localhost_only_by_default(monkeypatch):
+    """Unconfigured means the SDK's own default: localhost only. Right for local
+    development, and the reason a deployment must declare itself."""
+    from coletar.config import get_settings
+    from coletar.mcp.server import transport_security
+
+    get_settings.cache_clear()
+    monkeypatch.delenv("COLETAR_MCP_ALLOWED_HOSTS", raising=False)
+    monkeypatch.setenv("COLETAR_MCP_ALLOWED_HOSTS", "")
+    try:
+        assert transport_security() is None
+    finally:
+        get_settings.cache_clear()
+
+
+def test_configured_hosts_are_declared_to_the_transport(monkeypatch):
+    """The bug this pins: a deployment on a real domain refused every request with
+    421 Misdirected Request *after* authentication succeeded, because the SDK trusts
+    only localhost unless told otherwise. It looked like anything but a host check."""
+    from coletar.config import get_settings
+    from coletar.mcp.server import transport_security
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("COLETAR_MCP_ALLOWED_HOSTS", "coletar-mcp.fly.dev, example.test")
+    try:
+        settings = transport_security()
+        assert settings is not None
+        assert settings.allowed_hosts == ["coletar-mcp.fly.dev", "example.test"]
+        assert settings.allowed_origins == [
+            "https://coletar-mcp.fly.dev",
+            "https://example.test",
+        ]
+        assert settings.enable_dns_rebinding_protection is True
+    finally:
+        get_settings.cache_clear()

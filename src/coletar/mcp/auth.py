@@ -102,6 +102,15 @@ class AuthError(RuntimeError):
 
 @runtime_checkable
 class Authenticator(Protocol):
+    @property
+    def tenants(self) -> set[TenantId]:
+        """Every tenant this authenticator can issue a principal for.
+
+        Reported at startup so a misconfigured deployment is visible in the first log
+        line rather than at the first request.
+        """
+        ...
+
     def authenticate(self, credential: str | None) -> Principal | None:
         """Return the principal, or None to reject. Must not raise on bad input."""
         ...

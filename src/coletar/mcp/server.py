@@ -25,6 +25,7 @@ from enum import StrEnum
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -314,9 +315,35 @@ def build_authenticator() -> ApiKeyAuthenticator:
     return authenticator
 
 
+def transport_security() -> TransportSecuritySettings | None:
+    """DNS-rebinding protection, configured for wherever this is actually served.
+
+    The SDK enables this by default and trusts only localhost, so a deployment on a
+    real domain refuses every request with 421 Misdirected Request unless its
+    hostnames are declared. The failure is genuinely confusing: it happens *after*
+    authentication succeeds, so the logs show a valid session being created and then
+    the request rejected, which looks like anything except a host check.
+
+    Returning None keeps the SDK's localhost-only default, which is right for local
+    development and wrong for anything else.
+    """
+    configured = [h.strip() for h in get_settings().mcp_allowed_hosts.split(",") if h.strip()]
+    if not configured:
+        return None
+    return TransportSecuritySettings(
+        allowed_hosts=configured,
+        # Browsers send Origin; Claude's connector does not, but a future web client
+        # will, and an allowed host with a disallowed origin is the same request.
+        allowed_origins=[f"https://{h}" for h in configured],
+    )
+
+
 def build_app() -> AuthMiddleware:
     """The served ASGI app: the MCP streamable-HTTP app behind the auth gate."""
-    return AuthMiddleware(mcp.streamable_http_app(), build_authenticator())
+    return AuthMiddleware(
+        mcp.streamable_http_app(transport_security=transport_security()),
+        build_authenticator(),
+    )
 
 
 #: Hosts that mean "reachable from outside this machine".
@@ -353,11 +380,12 @@ def run() -> None:
 
     settings = get_settings()
     check_deployable(settings.mcp_host)
-    authenticator = build_authenticator()  # fails closed before anything binds
-    app = AuthMiddleware(mcp.streamable_http_app(), authenticator)
+    app = build_app()  # fails closed before anything binds
     print(
         f"coletar mcp -> {settings.mcp_host}:{settings.mcp_port}  "
-        f"backend={settings.store_backend}  tenants={len(authenticator.tenants)}"
+        f"backend={settings.store_backend}  "
+        f"tenants={len(app.authenticator.tenants)}  "
+        f"allowed_hosts={settings.mcp_allowed_hosts or '(localhost only)'}"
     )
     uvicorn.run(app, host=settings.mcp_host, port=settings.mcp_port)
 

@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # Loopback by default. A container sets 0.0.0.0 explicitly, and binding a public
     # interface is gated on a real backend — see `coletar.mcp.server.run`.
     mcp_host: str = "127.0.0.1"
+    # Public hostnames this service answers on, comma-separated. The MCP SDK enforces
+    # DNS-rebinding protection and trusts only localhost by default, so a deployment
+    # behind a real domain must name itself here or every request is refused with
+    # 421 Misdirected Request — after passing authentication, which makes it look
+    # like anything but a host check.
+    mcp_allowed_hosts: str = ""
     # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""
