@@ -32,6 +32,15 @@ from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
 
 @runtime_checkable
 class Store(Protocol):
+    @property
+    def embedder_model(self) -> str:
+        """Which embedder produced this store's vectors.
+
+        The retrieval trace records it, because a measured result that cannot be
+        attributed to the model that produced it is not reproducible.
+        """
+        ...
+
     async def put_object(self, obj: ContextObject, *, event: Event | None = None) -> ContextObject:
         """Insert or update one object and append the matching event, atomically.
 

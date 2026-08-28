@@ -137,9 +137,16 @@ narrowing and final context assembly observable enough to change safely.
       memory cannot censor every smaller useful result behind it
 - [x] Near-duplicate results dropped before packing
 - [x] One append-only retrieval trace per search, carrying candidate source,
-      component scores, selected object ids, token use, component versions and
-      per-stage latency. It **replaces** the per-hit access event — twelve rows per
-      search flooded the log the §6 dashboard reads
+      component scores, selected object ids, token use, component versions,
+      per-stage latency, the calling surface and the calling principal. It
+      **replaces** the per-hit access event — twelve rows per search flooded the log
+      the §6 dashboard reads
+- [x] Tracing lives at the retrieval boundary, not in each caller, so the proxy and
+      the CLI are covered by the same guarantee as the MCP tool. A surface that has
+      to remember to trace is one that eventually does not
+- [x] Traces carry the calling principal, matching write attribution. Anonymising the
+      actor is not a privacy measure — the content being absent is; an unattributed
+      trace still holds a query-shaped record while being useless to §6 and M3.1
 - [x] Raw query text and content excluded structurally: the trace holds a truncated
       digest of the query and object ids only. Content-level debugging is a per-call
       argument, never a global setting
@@ -150,9 +157,9 @@ narrowing and final context assembly observable enough to change safely.
       M1.2 twenty carried verbatim so the headline number stays comparable
 - [x] Candidate recall@50, hit@1/@5, MRR@5, precision@5, injected tokens and p50/p95
       measured and published with the harness (`uv run coletar evaluate`)
-- [ ] Postgres ANN/sparse candidate recall vs exact in-process search, ≥98% recall@50
-      — **test written, not yet run.** It needs a database, and the dev machine could
-      not host Docker alongside the model. Gated like the other Postgres tests
+- [x] Postgres ANN/sparse candidate recall vs exact in-process search: **99.54%
+      recall@50** against a 98% bar, with **zero** cross-scope leaks and zero
+      retired or superseded results. Verified against pgvector/pgvector:pg17
 
 **What the suite found**, and why it was worth building before touching a ranker:
 
@@ -210,8 +217,11 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
 - [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded
       local cross-encoder only if it improves the labelled suite within the latency
       budget. No reranker may bypass scope, sensitivity, retirement or supersession
-- [ ] Context assembly deduplicates near-identical results and skips an oversized hit
+- [x] Context assembly deduplicates near-identical results and skips an oversized hit
       when a later useful hit still fits, instead of terminating packing immediately
+      — **delivered in M2.3**, since the retrieval trace could not report
+      `deduplicated` and `skipped_oversized` without the assembly stage that produces
+      them
 - [ ] Token budget honoured at retrieval time, with ≥40% token reduction on the
       seeded corpus and no loss from the M1.2 top-5 set
 - [ ] Low-confidence clustering pass (needs embeddings — now available)

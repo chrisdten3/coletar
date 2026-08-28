@@ -17,6 +17,14 @@ records a *hash* of the query and the *ids* of what was returned -- never the qu
 text, never the content. Content-level debugging is an explicit per-call argument,
 never a global setting, because a global setting is how this gets switched on once
 and left on.
+
+**Traces carry the calling principal**, the same identity a connector write records.
+Attributing reads was considered and initially skipped as a privacy measure; it is
+not one. What protects the user is that the *content* is absent, not that the actor
+is anonymous -- and an unattributed trace is the worst of both, since it still holds
+a query-shaped record while making it impossible to show a user their own retrieval
+history (§6) or to scope traces per tenant when M3.1 lands. Read and write
+attribution now agree.
 """
 
 from __future__ import annotations
@@ -63,6 +71,11 @@ class ComponentVersions:
 class RetrievalTrace:
     query_digest: str
     scope: str
+    #: Which door the search came through: mcp, proxy, cli. §6's dashboard groups by
+    #: it, and it is how "the local bridge injected this" is told from "Claude asked".
+    surface: str
+    #: The authenticated caller, or None for an unauthenticated local surface.
+    principal: str | None
     top_k: int
     token_budget: int
     versions: ComponentVersions
@@ -80,6 +93,8 @@ class RetrievalTrace:
         detail: dict[str, Any] = {
             "query_digest": self.query_digest,
             "scope": self.scope,
+            "surface": self.surface,
+            "principal": self.principal,
             "top_k": self.top_k,
             "token_budget": self.token_budget,
             "versions": self.versions.as_dict(),
@@ -106,11 +121,15 @@ def build_trace(
     context: RetrievedContext,
     embedder_model: str,
     backend: str = "unknown",
+    surface: str = "unknown",
+    principal: str | None = None,
     record_query_text: bool = False,
 ) -> RetrievalTrace:
     return RetrievalTrace(
         query_digest=query_digest(query),
         scope=str(scope) if scope is not None else "any",
+        surface=surface,
+        principal=principal,
         top_k=top_k,
         token_budget=token_budget,
         versions=ComponentVersions(embedder=embedder_model, backend=backend),

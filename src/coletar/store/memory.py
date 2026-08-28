@@ -50,6 +50,10 @@ class InMemoryStore:
         if path is not None and path.exists():
             self._load()
 
+    @property
+    def embedder_model(self) -> str:
+        return self._embedder.model
+
     # -- snapshot -----------------------------------------------------------
     def _load(self) -> None:
         assert self._path is not None

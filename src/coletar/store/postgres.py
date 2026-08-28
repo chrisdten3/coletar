@@ -96,6 +96,10 @@ class PostgresStore:
         self._embedder = embedder or build_embedder()
         self._pool: AsyncConnectionPool | None = None
 
+    @property
+    def embedder_model(self) -> str:
+        return self._embedder.model
+
     async def _get_pool(self) -> AsyncConnectionPool:
         if self._pool is None:
             # `configure` runs on every pooled connection, registering pgvector's

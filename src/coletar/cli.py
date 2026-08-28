@@ -70,6 +70,7 @@ def search(query: str, project: str | None = typer.Option(None)) -> None:
             query,
             scope=_scope(project),
             token_budget=settings.retrieval_token_budget,
+            surface="cli",
         )
         for obj, s in zip(result.objects, result.scores, strict=True):
             typer.echo(f"{s:.3f}  [{obj.confidence:.2f}] {obj.content}")

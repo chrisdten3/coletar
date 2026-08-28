@@ -5,8 +5,14 @@ system-prompt injection (§4). Both need the same thing -- the most relevant act
 objects for a query, packed under a token budget, with provenance attached so the
 Context Inspector can explain any line the model saw.
 
-This module owns the tail of the §5.1 pipeline. The store owns the policy filter and
-candidate generation; everything from deduplication onwards happens here:
+This module owns the tail of the §5.1 pipeline *and the trace*. Every retrieval in
+the product goes through `retrieve`, so recording the trace here rather than in each
+caller is what makes "one trace per search" true of the proxy and the CLI and not
+only of the MCP tool. A surface that has to remember to trace is a surface that
+eventually does not.
+
+The store owns the policy filter and candidate generation; everything from
+deduplication onwards happens here:
 
     scope / activity / sensitivity policy filter   <- Store.search
                         ↓
@@ -139,29 +145,61 @@ async def retrieve(
     scope: Scope | None = None,
     top_k: int = 12,
     token_budget: int = 1500,
+    surface: str = "unknown",
+    principal: str | None = None,
+    record_query_text: bool = False,
+    trace: bool = True,
 ) -> RetrievedContext:
+    """Retrieve, assemble, and record one trace.
+
+    `trace=False` exists for the evaluation harness and for callers replaying a
+    corpus, where a trace per query would be noise rather than observability. It is
+    deliberately not the default: every real retrieval should leave a record.
+    """
     started = time.perf_counter()
     hits = await store.search(query, scope=scope, top_k=top_k)
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     assembly_started = time.perf_counter()
-    context = _assemble(hits, token_budget=token_budget)
+    assembled = _assemble(hits, token_budget=token_budget)
     assembly_ms = (time.perf_counter() - assembly_started) * 1000.0
 
-    return RetrievedContext(
-        objects=context.objects,
-        scores=context.scores,
-        components=context.components,
-        token_estimate=context.token_estimate,
-        truncated=context.truncated,
-        deduplicated=context.deduplicated,
-        skipped_oversized=context.skipped_oversized,
+    context = RetrievedContext(
+        objects=assembled.objects,
+        scores=assembled.scores,
+        components=assembled.components,
+        token_estimate=assembled.token_estimate,
+        truncated=assembled.truncated,
+        deduplicated=assembled.deduplicated,
+        skipped_oversized=assembled.skipped_oversized,
         stage_ms={
             "candidates": round(candidates_ms, 3),
             "assembly": round(assembly_ms, 3),
             "total": round(candidates_ms + assembly_ms, 3),
         },
     )
+
+    if trace:
+        # Imported here: `trace` reads `RetrievedContext` from this module, and a
+        # top-level import would close the loop.
+        from coletar.retrieval.trace import build_trace, record_trace
+
+        await record_trace(
+            store,
+            build_trace(
+                query=query,
+                scope=scope,
+                top_k=top_k,
+                token_budget=token_budget,
+                context=context,
+                embedder_model=store.embedder_model,
+                surface=surface,
+                principal=principal,
+                record_query_text=record_query_text,
+            ),
+        )
+
+    return context
 
 
 #: Re-exported so callers recording a trace do not have to import from two modules.

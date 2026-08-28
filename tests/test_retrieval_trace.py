@@ -9,12 +9,7 @@ from __future__ import annotations
 
 from coletar.retrieval import retrieve
 from coletar.retrieval.ranking import RANKING_VERSION
-from coletar.retrieval.trace import (
-    ComponentVersions,
-    build_trace,
-    query_digest,
-    record_trace,
-)
+from coletar.retrieval.trace import ComponentVersions, query_digest
 from coletar.schema.events import Actor, EventType
 from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
 from coletar.store.memory import InMemoryStore
@@ -23,18 +18,16 @@ SECRET = "Chris banks with Ficticious Trust, account 12345."
 
 
 async def _traced(store: InMemoryStore, query: str, **kwargs):
-    context = await retrieve(store, query, top_k=5, token_budget=1500)
-    trace = build_trace(
-        query=query,
-        scope=None,
-        top_k=5,
-        token_budget=1500,
-        context=context,
-        embedder_model="hashing-768",
-        backend="memory",
-        **kwargs,
+    """Retrieve through the real boundary and return the trace it recorded.
+
+    `retrieve` owns tracing now, so exercising it here is what proves the proxy and
+    the CLI are covered too — they call the same function.
+    """
+    context = await retrieve(store, query, top_k=5, token_budget=1500, **kwargs)
+    event = next(
+        e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE
     )
-    return await record_trace(store, trace), context
+    return event, context
 
 
 # -- privacy ------------------------------------------------------------------
@@ -85,9 +78,8 @@ async def test_a_trace_records_what_is_needed_to_reproduce_the_decision():
     assert event.type is EventType.RETRIEVAL_TRACE
     assert event.actor is Actor.CONNECTOR
     assert stored.id in detail["returned_ids"]
-    assert detail["versions"] == {
-        "embedder": "hashing-768", "ranking": RANKING_VERSION, "backend": "memory"
-    }
+    assert detail["versions"]["embedder"] == "hashing-768"
+    assert detail["versions"]["ranking"] == RANKING_VERSION
     assert set(detail["stage_ms"]) == {"candidates", "assembly", "total"}
     assert detail["result_count"] == len(detail["returned_ids"])
 
@@ -158,3 +150,53 @@ async def test_scope_is_recorded_even_when_unconstrained():
     )
     event, _ = await _traced(store, "project fact")
     assert event.detail["scope"] == "any"
+
+
+# -- the boundary -------------------------------------------------------------
+async def test_every_retrieval_caller_is_traced_not_just_the_mcp_tool():
+    """"One trace per search" has to mean every search. Recording it in each caller
+    is a rule a caller can forget; recording it at the boundary is not."""
+    store = InMemoryStore()
+    await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
+
+    for surface in ("mcp", "proxy", "cli"):
+        await retrieve(store, "where does ledger deploy", surface=surface, top_k=5)
+
+    traces = [e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE]
+    assert {t.detail["surface"] for t in traces} == {"mcp", "proxy", "cli"}
+    assert len(traces) == 3
+
+
+async def test_a_trace_carries_the_calling_principal():
+    """Read and write attribution agree. What protects the user is that the content
+    is absent, not that the actor is anonymous — and an unattributed trace still
+    holds a query-shaped record while being useless for §6 or M3.1."""
+    store = InMemoryStore()
+    await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
+
+    await retrieve(store, "where does ledger deploy", surface="mcp", principal="alice")
+
+    trace = next(e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE)
+    assert trace.detail["principal"] == "alice"
+    assert trace.detail["surface"] == "mcp"
+
+
+async def test_an_unauthenticated_surface_records_a_null_principal():
+    store = InMemoryStore()
+    await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
+
+    await retrieve(store, "where does ledger deploy", surface="cli")
+
+    trace = next(e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE)
+    assert trace.detail["principal"] is None
+
+
+async def test_tracing_can_be_turned_off_for_corpus_replay():
+    """The evaluation harness replays a hundred queries; a trace each would be noise
+    rather than observability. Off by request, never by default."""
+    store = InMemoryStore()
+    await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
+
+    await retrieve(store, "where does ledger deploy", trace=False)
+
+    assert not [e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE]

@@ -47,7 +47,6 @@ from coletar.mcp.schemas import (
     WriteMemoryResponse,
 )
 from coletar.retrieval import retrieve
-from coletar.retrieval.trace import build_trace, record_trace
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
@@ -149,34 +148,19 @@ async def search_context(
 
     settings = get_settings()
     store = build_store()
+    # `retrieve` records the trace: one per search, carrying a hash of the query and
+    # the ids of what came back — never the query text, never the content (§11).
+    # It lives at the retrieval boundary rather than here so the proxy and the CLI
+    # are covered by the same guarantee.
     result = await retrieve(
         store,
         query,
         scope=_parse_scope(project_id),
         top_k=top_k,
         token_budget=settings.retrieval_token_budget,
+        surface="mcp",
+        principal=principal.id,
     )
-
-    # One trace per search, carrying a hash of the query and the ids of what came
-    # back — never the query text, never the content (§11). This replaces the
-    # per-hit access event: twelve rows per search flooded the log the §6 dashboard
-    # reads, and a single trace answers strictly more.
-    await record_trace(
-        store,
-        build_trace(
-            query=query,
-            scope=_parse_scope(project_id),
-            top_k=top_k,
-            token_budget=settings.retrieval_token_budget,
-            context=result,
-            embedder_model=settings.embedding_model
-            if settings.embedding_backend == "ollama"
-            else f"hashing-{settings.embedding_dim}",
-            backend=settings.store_backend,
-        ),
-        actor=Actor.CONNECTOR,
-    )
-    del principal  # authorization only; the trace deliberately carries no identity
 
     return SearchContextResponse(
         results=[

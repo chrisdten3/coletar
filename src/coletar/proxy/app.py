@@ -162,6 +162,10 @@ async def chat_completions(request: Request) -> Any:
             scope=scope,
             top_k=settings.retrieval_top_k,
             token_budget=settings.retrieval_token_budget,
+            # Injecting memory into a local model's prompt is as consequential as an
+            # MCP search, so it leaves the same record.
+            surface="proxy",
+            principal=PROXY_PRINCIPAL,
         )
         body["messages"] = _inject(messages, context.as_prompt_block())
 
