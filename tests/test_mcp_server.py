@@ -22,6 +22,7 @@ from coletar.retrieval.trace import query_digest
 from coletar.schema.events import Actor, EventType
 from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
 from coletar.store.memory import InMemoryStore
+from conftest import TENANT
 
 EXPECTED_TOOLS = {"search_context", "write_memory", "get_project_state", "list_open_loops"}
 LATENCY_BUDGET_MS = 500.0
@@ -40,7 +41,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> InMemoryStore:
 @pytest.fixture
 def caller():
     """A fully-scoped principal, bound the way AuthMiddleware binds one."""
-    return Principal(id="test-connector")
+    return Principal(tenant_id=TENANT, id="test-connector")
 
 
 # -- tool discovery -----------------------------------------------------------
@@ -126,7 +127,7 @@ async def test_a_tool_called_without_a_principal_fails_closed(store):
 
 async def test_a_read_only_key_cannot_write(store):
     """M7.1 needs this server-side, not hidden in a client."""
-    read_only = Principal(id="chatgpt", scopes=frozenset({"read"}))
+    read_only = Principal(tenant_id=TENANT, id="chatgpt", scopes=frozenset({"read"}))
 
     with principal_scope(read_only):
         await mcp_server.mcp.call_tool("search_context", {"query": "fine"})
@@ -136,7 +137,7 @@ async def test_a_read_only_key_cannot_write(store):
 
 # -- responses conform to the M1.1 schema -------------------------------------
 async def test_search_results_conform_to_the_memory_schema(store, caller):
-    await store.put_object(
+    await store.put_object(TENANT, 
         Memory.from_write("Chris prefers fixed-point money.", kind=MemoryKind.PREFERENCE)
     )
 
@@ -173,8 +174,8 @@ async def test_write_then_read_round_trips_through_the_tools(store, caller):
 
 async def test_get_project_state_groups_by_type(store, caller):
     scope = Scope(type=ScopeType.PROJECT, id="proj_ledger")
-    await store.put_object(Memory.from_write("A project fact.", scope=scope))
-    await store.put_object(Memory.from_write("A global fact."))
+    await store.put_object(TENANT, Memory.from_write("A project fact.", scope=scope))
+    await store.put_object(TENANT, Memory.from_write("A global fact."))
 
     with principal_scope(caller):
         result = await mcp_server.mcp.call_tool(
@@ -186,13 +187,13 @@ async def test_get_project_state_groups_by_type(store, caller):
 
 
 async def test_list_open_loops_excludes_superseded_goals(store, caller):
-    old = await store.put_object(
+    old = await store.put_object(TENANT, 
         Memory.from_write("Ship invoicing by March.", kind=MemoryKind.GOAL)
     )
-    await store.put_object(
+    await store.put_object(TENANT, 
         Memory.from_write("Ship invoicing by June.", kind=MemoryKind.GOAL, supersedes=old.id)
     )
-    await store.put_object(Memory.from_write("An ordinary fact.", kind=MemoryKind.FACT))
+    await store.put_object(TENANT, Memory.from_write("An ordinary fact.", kind=MemoryKind.FACT))
 
     with principal_scope(caller):
         result = await mcp_server.mcp.call_tool("list_open_loops", {})
@@ -206,7 +207,7 @@ async def test_a_connector_write_records_which_principal_made_it(store, caller):
     with principal_scope(caller):
         await mcp_server.mcp.call_tool("write_memory", {"content": "A durable fact."})
 
-    event = (await store.list_events())[0]
+    event = (await store.list_events(TENANT))[0]
     assert event.type is EventType.CONNECTOR_WRITE
     assert event.actor is Actor.CONNECTOR
     assert event.detail["principal"] == "test-connector"
@@ -217,13 +218,13 @@ async def test_search_never_records_the_query_or_the_content(store, caller):
     history. A trace carries a hash of the query and the ids of what came back —
     never what was asked, never what was returned."""
     secret_content = "Chris banks with Ficticious Trust, account 12345."
-    stored = await store.put_object(Memory.from_write(secret_content))
+    stored = await store.put_object(TENANT, Memory.from_write(secret_content))
     secret_query = "which bank does chris use"
 
     with principal_scope(caller):
         await mcp_server.mcp.call_tool("search_context", {"query": secret_query})
 
-    traces = [e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE]
+    traces = [e for e in await store.list_events(TENANT) if e.type is EventType.RETRIEVAL_TRACE]
     assert len(traces) == 1, "exactly one trace per search"
     serialized = traces[0].model_dump_json()
     assert secret_query not in serialized
@@ -238,25 +239,25 @@ async def test_one_search_writes_one_trace_not_one_row_per_hit(store, caller):
     """The reason the trace replaced per-hit access events: twelve rows per search
     floods the log the §6 dashboard reads."""
     for i in range(6):
-        await store.put_object(Memory.from_write(f"Ledger fact number {i}."))
+        await store.put_object(TENANT, Memory.from_write(f"Ledger fact number {i}."))
 
     with principal_scope(caller):
         await mcp_server.mcp.call_tool("search_context", {"query": "ledger fact"})
 
-    events = await store.list_events()
+    events = await store.list_events(TENANT)
     assert [e.type for e in events].count(EventType.RETRIEVAL_TRACE) == 1
     assert EventType.OBJECT_ACCESSED not in {e.type for e in events}
 
 
 async def test_a_trace_records_the_components_that_produced_it(store, caller):
     """A baseline you cannot attribute is not a baseline."""
-    await store.put_object(Memory.from_write("Chris prefers uv over pip."))
+    await store.put_object(TENANT, Memory.from_write("Chris prefers uv over pip."))
 
     with principal_scope(caller):
         await mcp_server.mcp.call_tool("search_context", {"query": "package manager"})
 
     detail = next(
-        e for e in await store.list_events() if e.type is EventType.RETRIEVAL_TRACE
+        e for e in await store.list_events(TENANT) if e.type is EventType.RETRIEVAL_TRACE
     ).detail
     assert set(detail["versions"]) == {"embedder", "ranking", "backend"}
     assert detail["versions"]["ranking"] == RANKING_VERSION
@@ -264,7 +265,7 @@ async def test_a_trace_records_the_components_that_produced_it(store, caller):
 
 
 async def test_explain_adds_arithmetic_without_changing_the_results(store, caller):
-    await store.put_object(
+    await store.put_object(TENANT, 
         Memory.from_write("Chris prefers fixed-point money.", kind=MemoryKind.PREFERENCE)
     )
 
@@ -290,7 +291,7 @@ async def test_the_explanation_matches_the_score_it_explains(store, caller):
     """Recomputing the blend for display is how an explanation drifts from the
     ranking. The components are carried from the ranking path, not recomputed."""
     for i in range(4):
-        await store.put_object(Memory.from_write(f"Ledger deploys to region {i}."))
+        await store.put_object(TENANT, Memory.from_write(f"Ledger deploys to region {i}."))
 
     with principal_scope(caller):
         result = await mcp_server.mcp.call_tool(
@@ -308,7 +309,7 @@ async def test_the_explanation_matches_the_score_it_explains(store, caller):
 # -- latency and robustness ---------------------------------------------------
 async def test_tool_round_trip_p95_stays_under_500ms(store, caller):
     for i in range(500):
-        await store.put_object(Memory.from_write(f"Seeded fact number {i} about ledgers."))
+        await store.put_object(TENANT, Memory.from_write(f"Seeded fact number {i} about ledgers."))
 
     latencies: list[float] = []
     with principal_scope(caller):
@@ -370,3 +371,65 @@ async def test_fuzzing_the_tools_produces_no_unhandled_exceptions(store, caller)
                 crashes.append(f"{tool}({arguments}) -> {type(unexpected).__name__}: {unexpected}")
 
     assert not crashes, "\n".join(crashes[:10])
+
+
+# -- M3.1: isolation at the tool boundary --------------------------------------
+async def test_one_users_token_cannot_read_or_write_anothers_objects(store):
+    """The M3.1 acceptance criterion, asserted where a connector actually stands.
+
+    The store-level contract is proved in test_tenancy.py; this proves the tools
+    honour it — that the tenant genuinely comes from the principal, and that there is
+    no argument on any tool that could redirect it.
+    """
+    from coletar.schema.tenancy import tenant_id
+
+    alice = Principal(id="alice-claude", tenant_id=tenant_id("tenant_alice"))
+    bob = Principal(id="bob-claude", tenant_id=tenant_id("tenant_bob"))
+
+    with principal_scope(alice):
+        written = await mcp_server.mcp.call_tool(
+            "write_memory", {"content": "Alice banks with Ficticious Trust."}
+        )
+        alice_id = written.structured_content["id"]
+
+    with principal_scope(bob):
+        found = await mcp_server.mcp.call_tool("search_context", {"query": "bank"})
+        assert found.structured_content["results"] == []
+
+        loops = await mcp_server.mcp.call_tool("list_open_loops", {})
+        assert loops.structured_content["count"] == 0
+
+        # Bob writing a correction against Alice's id must not silently work either.
+        with pytest.raises(ToolError, match="id of an object that exists"):
+            await mcp_server.mcp.call_tool(
+                "write_memory", {"content": "Correcting Alice.", "supersedes": alice_id}
+            )
+
+    with principal_scope(alice):
+        mine = await mcp_server.mcp.call_tool("search_context", {"query": "bank"})
+        assert alice_id in {r["id"] for r in mine.structured_content["results"]}
+
+
+async def test_no_tool_accepts_a_caller_supplied_tenant():
+    """A connector that could be *told* which graph to read is not isolated."""
+    for tool in await mcp_server.mcp.list_tools():
+        assert "tenant" not in " ".join(tool.input_schema["properties"]), tool.name
+
+
+async def test_project_state_is_tenant_scoped(store):
+    from coletar.schema.tenancy import tenant_id
+
+    alice = Principal(id="alice", tenant_id=tenant_id("tenant_alice"))
+    bob = Principal(id="bob", tenant_id=tenant_id("tenant_bob"))
+    scope = Scope(type=ScopeType.PROJECT, id="proj_ledger")
+
+    await store.put_object(tenant_id("tenant_alice"),
+                           Memory.from_write("Alice's ledger fact.", scope=scope))
+
+    with principal_scope(bob):
+        theirs = await mcp_server.mcp.call_tool("get_project_state", {"project_id": "proj_ledger"})
+    assert theirs.structured_content["count"] == 0
+
+    with principal_scope(alice):
+        mine = await mcp_server.mcp.call_tool("get_project_state", {"project_id": "proj_ledger"})
+    assert mine.structured_content["count"] == 1

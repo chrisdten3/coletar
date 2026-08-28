@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import ObjectType, Scope
+from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
 
@@ -35,7 +36,9 @@ class CompressionReport:
         return {"scanned": self.scanned, "retired": self.retired, "bundled": self.bundled}
 
 
-async def compress(store: Store, *, scope: Scope | None = None) -> CompressionReport:
+async def compress(
+    store: Store, tenant_id: TenantId, *, scope: Scope | None = None
+) -> CompressionReport:
     """Retire every object that something newer supersedes.
 
     Retired, not deleted: the object stays readable so the Context Inspector can
@@ -44,18 +47,19 @@ async def compress(store: Store, *, scope: Scope | None = None) -> CompressionRe
     # include_superseded, because superseded objects are exactly what this job is
     # here to retire -- the default filter would hide its own work from it.
     objects = await store.list_objects(
-        type=ObjectType.MEMORY, scope=scope, include_superseded=True, limit=10_000
+        tenant_id, type=ObjectType.MEMORY, scope=scope, include_superseded=True, limit=10_000
     )
     superseded_ids = {o.supersedes for o in objects if o.supersedes}
 
     retired = 0
     for obj in objects:
         if obj.id in superseded_ids and obj.is_active:
-            await store.retire_object(obj.id, reason="superseded")
+            await store.retire_object(tenant_id, obj.id, reason="superseded")
             retired += 1
 
     report = CompressionReport(scanned=len(objects), retired=retired, bundled=0)
     await store.append_event(
-        Event(type=EventType.COMPRESSION_RUN, actor=Actor.JOB, detail=report.as_dict())
+        tenant_id,
+        Event(type=EventType.COMPRESSION_RUN, actor=Actor.JOB, detail=report.as_dict()),
     )
     return report

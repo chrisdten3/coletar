@@ -4,8 +4,22 @@ Deliberately narrow: the MCP server, the local proxy, the compression job and th
 compiler all go through this and nothing else. Swapping Postgres+pgvector for
 something else is then an implementation choice, not a scope change (§5).
 
-Two vocabulary points every implementation has to honour identically, because the
+**Every method takes `tenant_id`, and none of them defaults it.** The Store never
+assumes a tenant; only application boundaries resolve one. A default here is how a
+future tool or background job falls into a shared graph without anyone noticing, and
+in a product whose premise is that you own your context, that failure is silent. The
+call sites are noisier for it, and the noise is the feature: every one of them names
+the tenant out loud.
+
+Three vocabulary points every implementation has to honour identically, because the
 whole product reads through this interface:
+
+**Tenant.** Object ids stay globally unique as generated, so logs and migration
+manifests are unambiguous, but identity is the pair `(tenant_id, id)`. Knowing an id
+grants nothing. Every read path filters, including the ones it is easy to forget:
+`get_object`, `edges_from`/`edges_to`, and `list_events` -- the last of which is the
+worst leak available, since event rows carry full before/after object state and so
+would leak *content* rather than merely ids.
 
 **Active.** An object is active when nothing has retired it *and* nothing newer
 supersedes it. Both halves matter. Compression (§6) retires superseded objects
@@ -15,9 +29,11 @@ is written, not the moment the job next happens to run.
 
 **Scope.** `search` takes the scope a *conversation* is happening in, so a project
 scope means "this project's objects and everything global", never "this project's
-objects only" -- a user's global preferences do not stop applying because they
-opened a project. `list_objects` is the opposite: an exact filter, because
-`get_project_state` has to be able to answer "what is in this container".
+objects only" -- a user's global preferences do not stop applying because they opened
+a project. `list_objects` is the opposite: an exact filter, because
+`get_project_state` has to be able to answer "what is in this container". Scopes live
+*inside* a tenant, so two tenants may both hold a project called `proj_ledger`
+without any relationship between them.
 """
 
 from __future__ import annotations
@@ -28,6 +44,7 @@ from typing import Protocol, runtime_checkable
 from coletar.retrieval.ranking import Scored
 from coletar.schema.events import Event
 from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
+from coletar.schema.tenancy import TenantId
 
 
 @runtime_checkable
@@ -41,7 +58,9 @@ class Store(Protocol):
         """
         ...
 
-    async def put_object(self, obj: ContextObject, *, event: Event | None = None) -> ContextObject:
+    async def put_object(
+        self, tenant_id: TenantId, obj: ContextObject, *, event: Event | None = None
+    ) -> ContextObject:
         """Insert or update one object and append the matching event, atomically.
 
         The event carries the full before/after state. Implementations must not
@@ -49,14 +68,19 @@ class Store(Protocol):
         with no event is a provenance failure we cannot detect after the fact.
 
         Embedding happens here, on the write path, so an object is searchable as
-        soon as it is stored.
+        soon as it is stored. A `supersedes` pointing outside `tenant_id` is
+        rejected: a correction may only correct something its own tenant owns.
         """
         ...
 
-    async def get_object(self, object_id: str) -> ContextObject | None: ...
+    async def get_object(self, tenant_id: TenantId, object_id: str) -> ContextObject | None:
+        """None when the object does not exist *or* belongs to another tenant. The
+        two are deliberately indistinguishable to the caller."""
+        ...
 
     async def list_objects(
         self,
+        tenant_id: TenantId,
         *,
         type: ObjectType | None = None,
         scope: Scope | None = None,
@@ -67,24 +91,27 @@ class Store(Protocol):
         """Exact-scope listing. Defaults to active objects only."""
         ...
 
-    async def retire_object(self, object_id: str, *, reason: str) -> None:
+    async def retire_object(self, tenant_id: TenantId, object_id: str, *, reason: str) -> None:
         """Soft-retire: excluded from retrieval and compile, still readable for
-        provenance. The graph never hard-deletes on its own."""
+        provenance. The graph never hard-deletes on its own. A no-op when the object
+        belongs to another tenant."""
         ...
 
-    async def add_edge(self, edge: Edge) -> None:
-        """Idempotent on (src_id, dst_id, type). Re-asserting an edge is not a
-        second edge, and does not append a second event."""
+    async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
+        """Idempotent on (src_id, dst_id, type) within a tenant. Re-asserting an edge
+        is not a second edge and does not append a second event. Both endpoints must
+        belong to `tenant_id`."""
         ...
 
-    async def edges_from(self, object_id: str) -> list[Edge]: ...
+    async def edges_from(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
 
-    async def edges_to(self, object_id: str) -> list[Edge]: ...
+    async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
 
-    async def append_event(self, event: Event) -> None: ...
+    async def append_event(self, tenant_id: TenantId, event: Event) -> None: ...
 
     async def list_events(
         self,
+        tenant_id: TenantId,
         *,
         object_id: str | None = None,
         since: datetime | None = None,
@@ -97,17 +124,18 @@ class Store(Protocol):
 
     async def search(
         self,
+        tenant_id: TenantId,
         query: str,
         *,
         scope: Scope | None = None,
         top_k: int = 12,
     ) -> list[Scored]:
-        """Hybrid vector + lexical retrieval over active objects, scope per the
-        module docstring. Returns `Scored` descending.
+        """Hybrid vector + lexical retrieval over one tenant's active objects, scope
+        per the module docstring. Returns `Scored` descending.
 
-        Backends narrow candidates however they can -- the in-process store scans,
-        Postgres uses an ANN index unioned with a sparse match -- but all of them
-        blend through `rank_score`, so a backend swap changes performance and not
-        which memory a model sees (§5.1).
+        Backends narrow candidates however they can -- the in-process store keeps a
+        vector index per tenant, Postgres filters on `tenant_id` before the ANN scan
+        -- but all of them blend through `rank_score`, so a backend swap changes
+        performance and not which memory a model sees (§5.1).
         """
         ...

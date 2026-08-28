@@ -106,10 +106,11 @@ def _parse_scope(project_id: str | None, *, field: str = "project_id") -> Scope:
 
 
 def _require(scope: str) -> Principal:
-    """Every tool starts here.
+    """Every tool starts here, and it returns the tenant as well as the permission.
 
-    The store is single-tenant today (see `coletar.mcp.auth`), so this authorizes
-    the *action*, not the data. Per-user isolation is M3.1.
+    The tenant comes from the authenticated principal and from nowhere else. There is
+    deliberately no configuration fallback and no caller-supplied tenant argument on
+    any tool: a connector that could be *told* which graph to read is not isolated.
     """
     principal = current_principal()
     if principal is None:
@@ -154,6 +155,7 @@ async def search_context(
     # are covered by the same guarantee.
     result = await retrieve(
         store,
+        principal.tenant_id,
         query,
         scope=_parse_scope(project_id),
         top_k=top_k,
@@ -209,7 +211,7 @@ async def write_memory(
     store = build_store()
     # A dangling supersedes would silently hide nothing and corrupt the correction
     # chain the Inspector renders, so it is checked, not trusted.
-    if supersedes is not None and await store.get_object(supersedes) is None:
+    if supersedes is not None and await store.get_object(principal.tenant_id, supersedes) is None:
         raise ToolError(
             f"supersedes must be the id of an object that exists. "
             f"No object {supersedes!r} is stored."
@@ -228,6 +230,7 @@ async def write_memory(
         supersedes=supersedes,
     )
     await store.put_object(
+        principal.tenant_id,
         memory,
         event=Event(
             type=EventType.CONNECTOR_WRITE,
@@ -257,11 +260,11 @@ async def write_memory(
 async def get_project_state(project_id: str) -> ProjectStateResponse:
     """Everything coletar holds for one project: decisions, artifacts, and
     project-scoped memory. Use when the user resumes work on a named project."""
-    _require(SCOPE_READ)
+    principal = _require(SCOPE_READ)
     scope = _parse_scope(project_id)
 
     store = build_store()
-    objects = await store.list_objects(scope=scope, limit=200)
+    objects = await store.list_objects(principal.tenant_id, scope=scope, limit=200)
     grouped: dict[str, list[ObjectView]] = {}
     for obj in objects:
         grouped.setdefault(str(obj.type), []).append(ObjectView.of(obj))
@@ -273,12 +276,12 @@ async def get_project_state(project_id: str) -> ProjectStateResponse:
 @mcp.tool()
 async def list_open_loops(project_id: str | None = None) -> OpenLoopsResponse:
     """Unfinished business: goals and instructions that nothing has superseded."""
-    _require(SCOPE_READ)
+    principal = _require(SCOPE_READ)
     store = build_store()
     # list_objects already excludes superseded and retired objects, so "nothing has
     # superseded it" is the store's definition of active rather than a second one.
     memories = await store.list_objects(
-        type=ObjectType.MEMORY, scope=_parse_scope(project_id)
+        principal.tenant_id, type=ObjectType.MEMORY, scope=_parse_scope(project_id)
     )
     open_loops = [
         m

@@ -40,6 +40,7 @@ from coletar.schema.objects import (
     Scope,
     ScopeType,
 )
+from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
 #: §5.1's candidate-recall boundary is measured at this depth.
@@ -167,21 +168,28 @@ def load_eval_set(path: Path) -> dict[str, Any]:
     return loaded
 
 
-async def seed_corpus(store: Store, corpus: list[dict[str, Any]]) -> dict[str, str]:
+async def seed_corpus(
+    store: Store, tenant_id: TenantId, corpus: list[dict[str, Any]]
+) -> dict[str, str]:
     """Load the corpus, resolving `supersedes` by key. Returns key -> object id."""
     ids: dict[str, str] = {}
     # Two passes: a correction can only point at an object that already exists.
     for item in [c for c in corpus if not c.get("supersedes")]:
-        ids[str(item["key"])] = (await store.put_object(build_object(item))).id
+        ids[str(item["key"])] = (await store.put_object(tenant_id, build_object(item))).id
     for item in [c for c in corpus if c.get("supersedes")]:
         obj = build_object(item)
         obj.supersedes = ids[str(item["supersedes"])]
-        ids[str(item["key"])] = (await store.put_object(obj)).id
+        ids[str(item["key"])] = (await store.put_object(tenant_id, obj)).id
     return ids
 
 
 async def evaluate(
-    store: Store, eval_set: dict[str, Any], ids: dict[str, str], *, top_k: int = 5
+    store: Store,
+    tenant_id: TenantId,
+    eval_set: dict[str, Any],
+    ids: dict[str, str],
+    *,
+    top_k: int = 5,
 ) -> EvaluationResult:
     by_id = {object_id: key for key, object_id in ids.items()}
     result = EvaluationResult()
@@ -192,7 +200,9 @@ async def evaluate(
         forbidden = query.get("expect_absent")
 
         started = time.perf_counter()
-        candidates = await store.search(str(query["query"]), scope=scope, top_k=CANDIDATE_DEPTH)
+        candidates = await store.search(
+            tenant_id, str(query["query"]), scope=scope, top_k=CANDIDATE_DEPTH
+        )
         result.latencies_ms.append((time.perf_counter() - started) * 1000.0)
 
         candidate_keys = [by_id.get(hit.obj.id, "?") for hit in candidates]

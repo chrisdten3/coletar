@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from coletar.retrieval.embedding import tokenize
 from coletar.retrieval.ranking import RANKING_VERSION, ScoreComponents, Scored
 from coletar.schema.objects import ContextObject, Scope
+from coletar.schema.tenancy import TenantId
 
 if TYPE_CHECKING:  # `Store` is needed for annotations only, and importing it at
     # runtime would close the cycle store.base -> retrieval -> context -> store.base.
@@ -140,6 +141,7 @@ def _assemble(hits: list[Scored], *, token_budget: int) -> RetrievedContext:
 
 async def retrieve(
     store: Store,
+    tenant_id: TenantId,
     query: str,
     *,
     scope: Scope | None = None,
@@ -157,7 +159,7 @@ async def retrieve(
     deliberately not the default: every real retrieval should leave a record.
     """
     started = time.perf_counter()
-    hits = await store.search(query, scope=scope, top_k=top_k)
+    hits = await store.search(tenant_id, query, scope=scope, top_k=top_k)
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     assembly_started = time.perf_counter()
@@ -186,6 +188,7 @@ async def retrieve(
 
         await record_trace(
             store,
+            tenant_id,
             build_trace(
                 query=query,
                 scope=scope,

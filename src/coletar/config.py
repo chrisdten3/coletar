@@ -15,6 +15,12 @@ class Settings(BaseSettings):
         env_prefix="COLETAR_", env_file=".env", extra="ignore"
     )
 
+    # Tenant resolved by *application boundaries* only — the CLI and the local
+    # proxy. The MCP server never reads this: it derives the tenant from the
+    # authenticated principal, because a connector falling back to a configured
+    # tenant is a connector serving someone else's graph.
+    default_tenant_id: str = "tenant_local"
+
     # Canonical store. "memory" runs the full stack with no Postgres (tests, demos).
     store_backend: Literal["postgres", "memory"] = "memory"
     database_url: str = "postgresql://coletar:coletar@localhost:5433/coletar"

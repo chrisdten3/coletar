@@ -30,7 +30,12 @@ from coletar.schema.objects import (
     Scope,
     ScopeType,
 )
+from coletar.schema.tenancy import tenant_id
 from coletar.store.memory import InMemoryStore
+
+#: The tenant every non-tenancy test acts in. Isolation itself is proved in
+#: test_tenancy.py; everything else simply has to name a tenant.
+TENANT = tenant_id("tenant_test")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -80,7 +85,7 @@ async def relevance_store(relevance_set: RelevanceSet) -> tuple[InMemoryStore, d
     store = InMemoryStore()
     ids: dict[str, str] = {}
     for item in relevance_set.corpus:
-        stored = await store.put_object(build_corpus_object(item))
+        stored = await store.put_object(TENANT, build_corpus_object(item))
         ids[str(item["key"])] = stored.id
     return store, ids
 
@@ -137,3 +142,4 @@ def postgres_dsn() -> str:
     if not _dsn_reachable(dsn):
         pytest.skip(f"no Postgres reachable at {dsn} — run `docker compose up -d`")
     return dsn
+

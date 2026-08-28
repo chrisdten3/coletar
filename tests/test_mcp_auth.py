@@ -8,6 +8,8 @@ and lets everything through, a key whose scope is checked in one tool and not an
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 
@@ -23,6 +25,7 @@ from coletar.mcp.auth import (
     current_principal,
     principal_scope,
 )
+from conftest import TENANT
 
 
 async def _ok_app(scope, receive, send):
@@ -46,8 +49,21 @@ def _client(authenticator: ApiKeyAuthenticator) -> httpx.AsyncClient:
 
 
 # -- key parsing --------------------------------------------------------------
+def _keys(*entries: dict) -> str:
+    return json.dumps(list(entries))
+
+
+ALICE_KEY = _keys({"id": "alice", "secret": "sk-alice", "tenant_id": "tenant_alice"})
+
+
 def test_keys_parse_with_and_without_explicit_scopes():
-    auth = ApiKeyAuthenticator.from_config("alice:sk-alice,dash:sk-dash:read")
+    auth = ApiKeyAuthenticator.from_config(
+        _keys(
+            {"id": "alice", "secret": "sk-alice", "tenant_id": "tenant_alice"},
+            {"id": "dash", "secret": "sk-dash", "tenant_id": "tenant_alice",
+             "scopes": ["read"]},
+        )
+    )
     assert len(auth) == 2
 
     alice = auth.authenticate("sk-alice")
@@ -58,20 +74,50 @@ def test_keys_parse_with_and_without_explicit_scopes():
     assert not dashboard.can(SCOPE_WRITE)
 
 
+def test_every_principal_belongs_to_exactly_one_tenant():
+    """The tenant comes from the key and from nowhere else — there is no
+    configuration fallback reachable from the MCP server."""
+    auth = ApiKeyAuthenticator.from_config(
+        _keys(
+            {"id": "alice", "secret": "sk-alice", "tenant_id": "tenant_alice"},
+            {"id": "bob", "secret": "sk-bob", "tenant_id": "tenant_bob"},
+        )
+    )
+    assert auth.authenticate("sk-alice").tenant_id == "tenant_alice"
+    assert auth.authenticate("sk-bob").tenant_id == "tenant_bob"
+    assert auth.tenants == {"tenant_alice", "tenant_bob"}
+
+
 def test_empty_configuration_yields_no_keys():
     """Which means the middleware rejects everything — fail closed, not fail open."""
     assert len(ApiKeyAuthenticator.from_config("")) == 0
-    assert len(ApiKeyAuthenticator.from_config("  ,  ")) == 0
+    assert len(ApiKeyAuthenticator.from_config("   ")) == 0
+    assert len(ApiKeyAuthenticator.from_config("[]")) == 0
 
 
-@pytest.mark.parametrize("raw", ["nosecret", ":secret", "id:", "id:secret:admin"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "alice:sk-alice",  # the old colon-delimited form is no longer accepted
+        "{}",
+        "[1, 2]",
+        '[{"id": "a", "secret": "s"}]',                              # no tenant
+        '[{"id": "a", "tenant_id": "tenant_a"}]',                    # no secret
+        '[{"secret": "s", "tenant_id": "tenant_a"}]',                # no id
+        '[{"id": "a", "secret": "s", "tenant_id": "UPPER"}]',        # invalid tenant
+        '[{"id": "a", "secret": "s", "tenant_id": "tenant_a", "scopes": ["admin"]}]',
+        "not json at all",
+    ],
+)
 def test_malformed_key_configuration_is_refused_at_startup(raw: str):
+    """A misconfigured server should fail to boot rather than fail closed silently on
+    every call — and a key entry whose tenant is wrong reaches the wrong graph."""
     with pytest.raises(AuthError):
         ApiKeyAuthenticator.from_config(raw)
 
 
 def test_unknown_credential_is_rejected():
-    auth = ApiKeyAuthenticator.from_config("alice:sk-alice")
+    auth = ApiKeyAuthenticator.from_config(ALICE_KEY)
     assert auth.authenticate("sk-wrong") is None
     assert auth.authenticate("") is None
     assert auth.authenticate(None) is None
@@ -94,7 +140,7 @@ def test_bearer_token_extraction(headers, expected):
 
 # -- the gate -----------------------------------------------------------------
 async def test_unauthenticated_requests_are_rejected():
-    async with _client(ApiKeyAuthenticator.from_config("alice:sk-alice")) as client:
+    async with _client(ApiKeyAuthenticator.from_config(ALICE_KEY)) as client:
         response = await client.post("/mcp", json={})
 
     assert response.status_code == 401
@@ -104,7 +150,7 @@ async def test_unauthenticated_requests_are_rejected():
 
 
 async def test_a_valid_key_reaches_the_application_as_a_named_principal():
-    async with _client(ApiKeyAuthenticator.from_config("alice:sk-alice")) as client:
+    async with _client(ApiKeyAuthenticator.from_config(ALICE_KEY)) as client:
         response = await client.post("/mcp", headers={"Authorization": "Bearer sk-alice"})
 
     assert response.status_code == 200
@@ -121,23 +167,51 @@ async def test_health_check_is_the_only_exemption():
     """A liveness probe cannot carry a credential. Nothing else may claim that."""
     assert set(EXEMPT_PATHS) == {"/healthz"}
 
-    async with _client(ApiKeyAuthenticator.from_config("alice:sk-alice")) as client:
+    async with _client(ApiKeyAuthenticator.from_config(ALICE_KEY)) as client:
         assert (await client.get("/healthz")).status_code == 200
         for path in ("/mcp", "/", "/healthz/../mcp", "/metrics"):
             assert (await client.get(path)).status_code == 401, path
 
 
 async def test_the_principal_does_not_leak_between_requests():
-    async with _client(ApiKeyAuthenticator.from_config("alice:sk-alice")) as client:
+    async with _client(ApiKeyAuthenticator.from_config(ALICE_KEY)) as client:
         await client.post("/mcp", headers={"Authorization": "Bearer sk-alice"})
     assert current_principal() is None
 
 
 def test_principal_scope_restores_the_previous_binding():
     assert current_principal() is None
-    with principal_scope(Principal(id="outer")):
+    with principal_scope(Principal(tenant_id=TENANT, id="outer")):
         assert current_principal() is not None
-        with principal_scope(Principal(id="inner")):
+        with principal_scope(Principal(tenant_id=TENANT, id="inner")):
             assert current_principal().id == "inner"
         assert current_principal().id == "outer"
     assert current_principal() is None
+
+
+async def test_auth_validation_stays_under_fifty_milliseconds(benchmark_keys=None):
+    """M3.1's budget. Constant-time comparison runs against every configured secret,
+    so the cost grows with the key count — measured at a realistic fleet size."""
+    import time
+
+    entries = [
+        {"id": f"user-{i}", "secret": f"sk-{i:04d}", "tenant_id": f"tenant_{i:04d}"}
+        for i in range(500)
+    ]
+    auth = ApiKeyAuthenticator.from_config(json.dumps(entries))
+
+    durations: list[float] = []
+    for i in (0, 250, 499):
+        for _ in range(50):
+            started = time.perf_counter()
+            assert auth.authenticate(f"sk-{i:04d}") is not None
+            durations.append((time.perf_counter() - started) * 1000)
+    # And the miss path, which compares against every key before giving up.
+    for _ in range(50):
+        started = time.perf_counter()
+        assert auth.authenticate("sk-nope") is None
+        durations.append((time.perf_counter() - started) * 1000)
+
+    durations.sort()
+    p95 = durations[int(0.95 * len(durations)) - 1]
+    assert p95 < 50.0, f"auth p95 {p95:.2f}ms across {len(entries)} keys"

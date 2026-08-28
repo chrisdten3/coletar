@@ -26,12 +26,25 @@ from coletar.extraction import extract_memories
 from coletar.retrieval import retrieve
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import GLOBAL_SCOPE, Memory, Scope, ScopeType
+from coletar.schema.tenancy import TenantId
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
 from coletar.store.base import Store
 
 #: The proxy holds no bearer token -- it is a local daemon, not a remote connector --
 #: so it names itself explicitly rather than writing anonymously.
 PROXY_PRINCIPAL = "local-proxy"
+
+
+def proxy_tenant() -> TenantId:
+    """The proxy is an application boundary, so it may resolve a configured tenant.
+
+    Unlike the MCP server, which derives the tenant from an authenticated principal,
+    this daemon has no caller identity -- it is the trusted local process. The tenant
+    is therefore configuration, and `run()` prints it at startup so the operator can
+    see which graph they are about to write into.
+    """
+    return parse_tenant_id(get_settings().default_tenant_id)
 
 app = FastAPI(title="coletar local proxy", version="0.1.0")
 
@@ -109,8 +122,9 @@ class SSEAssembler:
             return
 
 
-async def _record(store: Store, memory: Memory, scope: Scope) -> None:
+async def _record(store: Store, tenant: TenantId, memory: Memory, scope: Scope) -> None:
     await store.put_object(
+        tenant,
         memory,
         event=Event(
             type=EventType.CONNECTOR_WRITE,
@@ -127,14 +141,14 @@ async def _record(store: Store, memory: Memory, scope: Scope) -> None:
 
 
 async def _extract_and_store(
-    store: Store, *, user_text: str, assistant_text: str, scope: Scope
+    store: Store, tenant: TenantId, *, user_text: str, assistant_text: str, scope: Scope
 ) -> None:
     if not user_text.strip():
         return
     for memory in await extract_memories(
         user_text=user_text, assistant_text=assistant_text, scope=scope
     ):
-        await _record(store, memory, scope)
+        await _record(store, tenant, memory, scope)
 
 
 @app.get("/healthz")
@@ -146,6 +160,7 @@ async def healthz() -> dict[str, str]:
 async def chat_completions(request: Request) -> Any:
     settings = get_settings()
     store = build_store()
+    tenant = proxy_tenant()
     body: dict[str, Any] = await request.json()
 
     messages: list[dict[str, Any]] = body.get("messages", [])
@@ -158,6 +173,7 @@ async def chat_completions(request: Request) -> Any:
     if query:
         context = await retrieve(
             store,
+            tenant,
             query,
             scope=scope,
             top_k=settings.retrieval_top_k,
@@ -197,6 +213,7 @@ async def chat_completions(request: Request) -> Any:
             if delivered_cleanly:
                 await _extract_and_store(
                     store,
+                    tenant,
                     user_text=query,
                     assistant_text=assembler.reply,
                     scope=scope,
@@ -212,7 +229,7 @@ async def chat_completions(request: Request) -> Any:
 
     payload = response.json()
     reply = payload.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-    await _extract_and_store(store, user_text=query, assistant_text=reply, scope=scope)
+    await _extract_and_store(store, tenant, user_text=query, assistant_text=reply, scope=scope)
 
     return JSONResponse(content=payload)
 
@@ -221,6 +238,9 @@ def run() -> None:
     import uvicorn
 
     settings = get_settings()
+    # Visible rather than implied: the operator should not have to read .env to
+    # find out whose graph this daemon is about to write into.
+    print(f"coletar proxy -> tenant {proxy_tenant()}, upstream {settings.upstream_base_url}")
     uvicorn.run(app, host="127.0.0.1", port=settings.proxy_port)
 
 

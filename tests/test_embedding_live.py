@@ -18,7 +18,7 @@ import pytest
 
 from coletar.retrieval.embedding import HashingEmbedder, OllamaEmbedder, cosine
 from coletar.store.memory import InMemoryStore
-from conftest import RelevanceSet, build_corpus_object, scope_from
+from conftest import TENANT, RelevanceSet, build_corpus_object, scope_from
 
 EMBEDDING_DIM = 768
 
@@ -80,10 +80,11 @@ async def test_real_embeddings_close_the_synonymy_gap(
     store = InMemoryStore(embedder=OllamaEmbedder(ollama_url, "nomic-embed-text", EMBEDDING_DIM))
     keys: dict[str, str] = {}
     for item in relevance_set.corpus:
-        stored = await store.put_object(build_corpus_object(item))
+        stored = await store.put_object(TENANT, build_corpus_object(item))
         keys[stored.id] = str(item["key"])
 
-    results = await store.search(str(gap["query"]), scope=scope_from(gap.get("scope")), top_k=5)
+    results = await store.search(
+        TENANT, str(gap["query"]), scope=scope_from(gap.get("scope")), top_k=5)
 
     assert gap["expect"] in [keys[hit.obj.id] for hit in results]
 
@@ -101,12 +102,12 @@ async def test_the_published_numbers_still_hold(ollama_url: str, relevance_set: 
         store = InMemoryStore(embedder=embedder)
         keys: dict[str, str] = {}
         for item in relevance_set.corpus:
-            stored = await store.put_object(build_corpus_object(item))
+            stored = await store.put_object(TENANT, build_corpus_object(item))
             keys[stored.id] = str(item["key"])
 
         hits = 0
         for query in relevance_set.queries:
-            results = await store.search(
+            results = await store.search(TENANT, 
                 str(query["query"]), scope=scope_from(query.get("scope")), top_k=5
             )
             hits += query["expect"] in [keys[hit.obj.id] for hit in results]

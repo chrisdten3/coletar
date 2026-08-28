@@ -1,4 +1,12 @@
-"""coletar CLI. Thin — every command is a few lines over the same substrate."""
+"""coletar CLI. Thin — every command is a few lines over the same substrate.
+
+The CLI is an *application boundary*, so it is allowed to resolve a configured
+tenant — but never silently. `--tenant` is on every command that touches the graph,
+writes report where they landed, and `coletar tenant` prints what the configured
+default currently resolves to. A tenant that only exists in a `.env` file is implied,
+not visible, and the whole point of M3.1 is that whose graph you are touching is
+never a guess.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +18,18 @@ import typer
 from coletar.config import get_settings
 from coletar.retrieval import retrieve
 from coletar.schema.objects import GLOBAL_SCOPE, MemoryKind, Scope, ScopeType
+from coletar.schema.tenancy import TenantId
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
+
+TENANT_OPTION = typer.Option(
+    None, "--tenant", help="Tenant to act on. Defaults to COLETAR_DEFAULT_TENANT_ID."
+)
+
+
+def _tenant(explicit: str | None) -> TenantId:
+    """Resolve the tenant, preferring an explicit flag over configuration."""
+    return parse_tenant_id(explicit or get_settings().default_tenant_id)
 
 app = typer.Typer(help="coletar — a portable AI workspace.", no_args_is_help=True)
 
@@ -40,6 +59,7 @@ def remember(
     content: str,
     kind: str = typer.Option("fact", help="fact|preference|instruction|goal|correction"),
     project: str | None = typer.Option(None, help="Scope to a project id."),
+    tenant: str | None = TENANT_OPTION,
 ) -> None:
     """Write one memory directly, bypassing any model."""
     from coletar.schema.objects import ExtractionMethod, Memory, OriginType, Provider
@@ -53,25 +73,33 @@ def remember(
             extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
             origin_type=OriginType.USER,
         )
-        await build_store().put_object(memory)
-        typer.echo(memory.id)
+        resolved = _tenant(tenant)
+        await build_store().put_object(resolved, memory)
+        typer.echo(f"{memory.id}  (tenant {resolved})")
 
     asyncio.run(_run())
 
 
 @app.command()
-def search(query: str, project: str | None = typer.Option(None)) -> None:
+def search(
+    query: str,
+    project: str | None = typer.Option(None),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
     """Search the canonical graph the way a connected model would."""
 
     async def _run() -> None:
         settings = get_settings()
+        resolved = _tenant(tenant)
         result = await retrieve(
             build_store(),
+            resolved,
             query,
             scope=_scope(project),
             token_budget=settings.retrieval_token_budget,
             surface="cli",
         )
+        typer.echo(f"tenant {resolved}")
         for obj, s in zip(result.objects, result.scores, strict=True):
             typer.echo(f"{s:.3f}  [{obj.confidence:.2f}] {obj.content}")
 
@@ -79,13 +107,18 @@ def search(query: str, project: str | None = typer.Option(None)) -> None:
 
 
 @app.command()
-def compress(project: str | None = typer.Option(None)) -> None:
+def compress(
+    project: str | None = typer.Option(None), tenant: str | None = TENANT_OPTION
+) -> None:
     """Run the compression job (§6) over one scope."""
     from coletar.jobs import compress as run_compress
 
     async def _run() -> None:
-        report = await run_compress(build_store(), scope=_scope(project) if project else None)
-        typer.echo(json.dumps(report.as_dict(), indent=2))
+        resolved = _tenant(tenant)
+        report = await run_compress(
+            build_store(), resolved, scope=_scope(project) if project else None
+        )
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
 
     asyncio.run(_run())
 
@@ -103,28 +136,31 @@ def migrate() -> None:
 
 
 @app.command()
-def seed() -> None:
+def seed(tenant: str | None = TENANT_OPTION) -> None:
     """Populate the store with the fixture graph: one object of every type, plus a
     supersedes chain. Useful for trying the Inspector and the compilers."""
     from coletar.seed import seed as run_seed
 
     async def _run() -> None:
-        result = await run_seed(build_store())
+        resolved = _tenant(tenant)
+        result = await run_seed(build_store(), resolved)
+        typer.echo(f"seeded {len(result.by_role)} objects into tenant {resolved}")
         typer.echo(json.dumps(result.by_role, indent=2))
 
     asyncio.run(_run())
 
 
 @app.command()
-def history(object_id: str) -> None:
+def history(object_id: str, tenant: str | None = TENANT_OPTION) -> None:
     """Replay one object's revisions from the event log — what a fact used to say
     and when it changed (§6). Reads the log only, never the object table."""
     from coletar.store.replay import replay_history
 
     async def _run() -> None:
-        revisions = await replay_history(build_store(), object_id)
+        resolved = _tenant(tenant)
+        revisions = await replay_history(build_store(), resolved, object_id)
         if not revisions:
-            typer.echo(f"no revisions recorded for {object_id}")
+            typer.echo(f"no revisions recorded for {object_id} in tenant {resolved}")
             return
         for revision in revisions:
             typer.echo(
@@ -164,9 +200,12 @@ def evaluate(
         eval_set = load_eval_set(
             Path(__file__).parent.parent.parent / "tests" / "fixtures" / "retrieval_eval.json"
         )
+        # A fixed, isolated tenant: an evaluation run must never touch real data,
+        # and its numbers must not depend on what happens to be in one.
+        eval_tenant = parse_tenant_id("tenant_eval")
         store = InMemoryStore(embedder=embedder)
-        ids = await seed_corpus(store, eval_set["corpus"])
-        result = await run_eval(store, eval_set, ids)
+        ids = await seed_corpus(store, eval_tenant, eval_set["corpus"])
+        result = await run_eval(store, eval_tenant, eval_set, ids)
         typer.echo(f"embedder: {embedder.model}")
         typer.echo(result.report())
         for miss in result.misses:
@@ -176,11 +215,29 @@ def evaluate(
 
 
 @app.command()
-def events(limit: int = 50) -> None:
+def tenant() -> None:
+    """Show which tenant the CLI and proxy resolve to, and what the store holds.
+
+    "Visible rather than implied" has to mean more than a setting in `.env`.
+    """
+    settings = get_settings()
+    typer.echo(f"configured default : {settings.default_tenant_id}")
+    typer.echo(f"store backend      : {settings.store_backend}")
+    store = build_store()
+    known = getattr(store, "tenants", None)
+    if callable(known):
+        found = sorted(known())
+        typer.echo(f"tenants in store   : {', '.join(found) if found else '(none yet)'}")
+
+
+@app.command()
+def events(limit: int = 50, tenant: str | None = TENANT_OPTION) -> None:
     """Tail the Event/Revision Log — the raw feed behind the dashboard (§6)."""
 
     async def _run() -> None:
-        for event in await build_store().list_events(limit=limit):
+        resolved = _tenant(tenant)
+        typer.echo(f"tenant {resolved}")
+        for event in await build_store().list_events(resolved, limit=limit):
             typer.echo(
                 f"{event.at.isoformat()}  {event.actor:<9} {event.type:<22} "
                 f"{event.object_id or '-'}"

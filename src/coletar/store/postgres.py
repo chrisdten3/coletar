@@ -15,6 +15,12 @@ from taste:
     genuinely better at); the final blend runs through
     `coletar.retrieval.ranking.rank_score`, the same call `InMemoryStore` makes. A
     backend swap must not change which memory a model sees.
+  * **Tenant on every statement.** Identity is `(tenant_id, id)`, enforced by the
+    primary keys and by tenant-aware foreign keys from migration 002 -- so a
+    cross-tenant edge or `supersedes` is refused by the database even if application
+    code asks for one. Every read below filters, including `get_object` and
+    `list_events`; the latter is the worst leak available, since event rows carry
+    full before/after object state.
 """
 
 from __future__ import annotations
@@ -38,6 +44,7 @@ from coletar.schema.objects import (
     ScopeType,
     object_from_record,
 )
+from coletar.schema.tenancy import CrossTenantError, TenantId
 
 #: Always qualified, and every query below aliases `context_object` as `o`. The
 #: search query joins against a candidate CTE that also has an `id`, so an
@@ -52,10 +59,15 @@ _OBJECT_COLUMNS = """
 
 #: An object is active when nothing retired it and nothing supersedes it. The second
 #: half matters between a correction being written and compression next running --
-#: retrieval must not serve the stale fact in that window (§6).
+#: retrieval must not serve the stale fact in that window (§6). The supersession
+#: subquery is itself tenant-scoped: another tenant's correction is none of ours.
 _ACTIVE_PREDICATE = """
-    o.retired_at IS NULL
-    AND NOT EXISTS (SELECT 1 FROM context_object s WHERE s.supersedes = o.id)
+    o.tenant_id = %s
+    AND o.retired_at IS NULL
+    AND NOT EXISTS (
+        SELECT 1 FROM context_object s
+        WHERE s.tenant_id = o.tenant_id AND s.supersedes = o.id
+    )
 """
 
 
@@ -118,12 +130,17 @@ class PostgresStore:
             self._pool = None
 
     # -- objects ------------------------------------------------------------
-    async def put_object(self, obj: ContextObject, *, event: Event | None = None) -> ContextObject:
+    async def put_object(
+        self, tenant_id: TenantId, obj: ContextObject, *, event: Event | None = None
+    ) -> ContextObject:
         vector = (await self._embedder.embed([obj.content]))[0]
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute(f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s",
-                              (obj.id,))
+            await cur.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o "
+                f"WHERE o.tenant_id = %s AND o.id = %s",
+                (tenant_id, obj.id),
+            )
             existing_row = await cur.fetchone()
             before = _to_record(existing_row).model_dump(mode="json") if existing_row else None
             # Detached copy, for the same reason InMemoryStore keeps one: put_object
@@ -132,21 +149,35 @@ class PostgresStore:
             if existing_row is not None:
                 obj.touch()
 
+            if obj.supersedes is not None:
+                # Checked here as well as by the composite foreign key, so both
+                # backends fail the same way with the same message.
+                await cur.execute(
+                    "SELECT 1 FROM context_object WHERE tenant_id = %s AND id = %s",
+                    (tenant_id, obj.supersedes),
+                )
+                if await cur.fetchone() is None:
+                    raise CrossTenantError(
+                        f"supersedes {obj.supersedes!r} is not an object in "
+                        f"tenant {tenant_id!r}"
+                    )
+
             dump = obj.model_dump(mode="json")
             await cur.execute(
                 """
                 INSERT INTO context_object (
-                    id, type, content, scope_type, scope_id, kind, confidence,
+                    tenant_id, id, type, content, scope_type, scope_id, kind, confidence,
                     extraction_method, sensitivity, supersedes, provenance,
                     provider_mappings, payload, version, created_at, updated_at,
                     retired_at, ttl_days
                 ) VALUES (
-                    %(id)s, %(type)s, %(content)s, %(scope_type)s, %(scope_id)s, %(kind)s,
+                    %(tenant_id)s, %(id)s, %(type)s, %(content)s, %(scope_type)s,
+                    %(scope_id)s, %(kind)s,
                     %(confidence)s, %(extraction_method)s, %(sensitivity)s, %(supersedes)s,
                     %(provenance)s, %(provider_mappings)s, %(payload)s, %(version)s,
                     %(created_at)s, %(updated_at)s, %(retired_at)s, %(ttl_days)s
                 )
-                ON CONFLICT (id) DO UPDATE SET
+                ON CONFLICT (tenant_id, id) DO UPDATE SET
                     content = EXCLUDED.content,
                     scope_type = EXCLUDED.scope_type,
                     scope_id = EXCLUDED.scope_id,
@@ -163,18 +194,18 @@ class PostgresStore:
                     retired_at = EXCLUDED.retired_at,
                     ttl_days = EXCLUDED.ttl_days
                 """,
-                _object_params(obj, dump),
+                _object_params(tenant_id, obj, dump),
             )
             await cur.execute(
                 """
-                INSERT INTO object_embedding (object_id, model, embedding)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (object_id) DO UPDATE SET
+                INSERT INTO object_embedding (tenant_id, object_id, model, embedding)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (tenant_id, object_id) DO UPDATE SET
                     model = EXCLUDED.model,
                     embedding = EXCLUDED.embedding,
                     created_at = now()
                 """,
-                (obj.id, self._embedder.model, np.asarray(vector, dtype=np.float32)),
+                (tenant_id, obj.id, self._embedder.model, np.asarray(vector, dtype=np.float32)),
             )
 
             base = event or Event(
@@ -185,22 +216,25 @@ class PostgresStore:
                 detail={"type": obj.type, "scope": str(obj.scope)},
             )
             await _insert_event(
-                cur, base.model_copy(update={"before": before, "after": dump})
+                cur, tenant_id, base.model_copy(update={"before": before, "after": dump})
             )
             # The `async with` commits: object, embedding and event land together.
         return obj
 
-    async def get_object(self, object_id: str) -> ContextObject | None:
+    async def get_object(self, tenant_id: TenantId, object_id: str) -> ContextObject | None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s", (object_id,)
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o "
+                f"WHERE o.tenant_id = %s AND o.id = %s",
+                (tenant_id, object_id),
             )
             row = await cur.fetchone()
         return _to_record(row) if row else None
 
     async def list_objects(
         self,
+        tenant_id: TenantId,
         *,
         type: ObjectType | None = None,
         scope: Scope | None = None,
@@ -208,8 +242,8 @@ class PostgresStore:
         include_superseded: bool = False,
         limit: int = 200,
     ) -> list[ContextObject]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses: list[str] = ["o.tenant_id = %s"]
+        params: list[Any] = [tenant_id]
         if type is not None:
             clauses.append("o.type = %s")
             params.append(str(type))
@@ -220,9 +254,12 @@ class PostgresStore:
             clauses.append("o.retired_at IS NULL")
         if not include_superseded:
             clauses.append(
-                "NOT EXISTS (SELECT 1 FROM context_object s WHERE s.supersedes = o.id)"
+                "NOT EXISTS (SELECT 1 FROM context_object s "
+                "WHERE s.tenant_id = o.tenant_id AND s.supersedes = o.id)"
             )
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        # Unconditional: the tenant predicate is always present, and a form that
+        # can produce an empty WHERE is one refactor away from a cross-tenant scan.
+        where = f"WHERE {' AND '.join(clauses)}"
 
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -234,13 +271,13 @@ class PostgresStore:
             rows = await cur.fetchall()
         return [_to_record(row) for row in rows]
 
-    async def retire_object(self, object_id: str, *, reason: str) -> None:
+    async def retire_object(self, tenant_id: TenantId, object_id: str, *, reason: str) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                f"SELECT {_OBJECT_COLUMNS} FROM context_object o WHERE o.id = %s "
-                f"AND o.retired_at IS NULL FOR UPDATE",
-                (object_id,),
+                f"SELECT {_OBJECT_COLUMNS} FROM context_object o "
+                f"WHERE o.tenant_id = %s AND o.id = %s AND o.retired_at IS NULL FOR UPDATE",
+                (tenant_id, object_id),
             )
             row = await cur.fetchone()
             if row is None:
@@ -248,14 +285,15 @@ class PostgresStore:
             before = _to_record(row).model_dump(mode="json")
             # Soft retire. There is no code path in this package that DELETEs.
             await cur.execute(
-                f"UPDATE context_object AS o SET retired_at = now() WHERE o.id = %s "
-                f"RETURNING {_OBJECT_COLUMNS}",
-                (object_id,),
+                f"UPDATE context_object AS o SET retired_at = now() "
+                f"WHERE o.tenant_id = %s AND o.id = %s RETURNING {_OBJECT_COLUMNS}",
+                (tenant_id, object_id),
             )
             after_row = await cur.fetchone()
             assert after_row is not None
             await _insert_event(
                 cur,
+                tenant_id,
                 Event(
                     type=EventType.OBJECT_RETIRED,
                     object_id=object_id,
@@ -267,23 +305,34 @@ class PostgresStore:
             )
 
     # -- edges --------------------------------------------------------------
-    async def add_edge(self, edge: Edge) -> None:
+    async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            # The primary key is (src_id, dst_id, type), so this is idempotent in the
-            # schema rather than in a check the caller could forget.
+            for endpoint in (edge.src_id, edge.dst_id):
+                await cur.execute(
+                    "SELECT 1 FROM context_object WHERE tenant_id = %s AND id = %s",
+                    (tenant_id, endpoint),
+                )
+                if await cur.fetchone() is None:
+                    raise CrossTenantError(
+                        f"edge endpoint {endpoint!r} is not in tenant {tenant_id!r}"
+                    )
+            # The primary key is (tenant_id, src_id, dst_id, type), so this is
+            # idempotent in the schema rather than in a check the caller could forget.
             await cur.execute(
                 """
-                INSERT INTO context_edge (src_id, dst_id, type, confidence, created_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (src_id, dst_id, type) DO NOTHING
+                INSERT INTO context_edge (tenant_id, src_id, dst_id, type, confidence, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (tenant_id, src_id, dst_id, type) DO NOTHING
                 """,
-                (edge.src_id, edge.dst_id, str(edge.type), edge.confidence, edge.created_at),
+                (tenant_id, edge.src_id, edge.dst_id, str(edge.type), edge.confidence,
+                 edge.created_at),
             )
             if cur.rowcount == 0:
                 return  # already asserted; no second row and no second event
             await _insert_event(
                 cur,
+                tenant_id,
                 Event(
                     type=EventType.EDGE_CREATED,
                     object_id=edge.src_id,
@@ -291,39 +340,40 @@ class PostgresStore:
                 ),
             )
 
-    async def edges_from(self, object_id: str) -> list[Edge]:
-        return await self._edges("src_id", object_id)
+    async def edges_from(self, tenant_id: TenantId, object_id: str) -> list[Edge]:
+        return await self._edges(tenant_id, "src_id", object_id)
 
-    async def edges_to(self, object_id: str) -> list[Edge]:
-        return await self._edges("dst_id", object_id)
+    async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]:
+        return await self._edges(tenant_id, "dst_id", object_id)
 
-    async def _edges(self, column: str, object_id: str) -> list[Edge]:
+    async def _edges(self, tenant_id: TenantId, column: str, object_id: str) -> list[Edge]:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT src_id, dst_id, type, confidence, created_at "
-                f"FROM context_edge WHERE {column} = %s",
-                (object_id,),
+                f"FROM context_edge WHERE tenant_id = %s AND {column} = %s",
+                (tenant_id, object_id),
             )
             rows = await cur.fetchall()
         return [Edge.model_validate(row) for row in rows]
 
     # -- event log ----------------------------------------------------------
-    async def append_event(self, event: Event) -> None:
+    async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-            await _insert_event(cur, event)
+            await _insert_event(cur, tenant_id, event)
 
     async def list_events(
         self,
+        tenant_id: TenantId,
         *,
         object_id: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         limit: int = 200,
     ) -> list[Event]:
-        clauses: list[str] = []
-        params: list[Any] = []
+        clauses: list[str] = ["tenant_id = %s"]
+        params: list[Any] = [tenant_id]
         if object_id is not None:
             clauses.append("object_id = %s")
             params.append(object_id)
@@ -333,7 +383,9 @@ class PostgresStore:
         if until is not None:
             clauses.append("at <= %s")
             params.append(until)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        # Unconditional: the tenant predicate is always present, and a form that
+        # can produce an empty WHERE is one refactor away from a cross-tenant scan.
+        where = f"WHERE {' AND '.join(clauses)}"
 
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -348,6 +400,7 @@ class PostgresStore:
     # -- retrieval ----------------------------------------------------------
     async def search(
         self,
+        tenant_id: TenantId,
         query: str,
         *,
         scope: Scope | None = None,
@@ -374,7 +427,8 @@ class PostgresStore:
         WITH candidates AS (
             (
                 SELECT o.id FROM context_object o
-                JOIN object_embedding e ON e.object_id = o.id
+                JOIN object_embedding e
+                  ON e.tenant_id = o.tenant_id AND e.object_id = o.id
                 WHERE {_ACTIVE_PREDICATE} {scope_clause}
                 ORDER BY e.embedding <=> %s
                 LIMIT %s
@@ -389,10 +443,17 @@ class PostgresStore:
         )
         SELECT {_OBJECT_COLUMNS}, e.embedding AS embedding
         FROM context_object o
-        JOIN candidates c ON c.id = o.id
-        LEFT JOIN object_embedding e ON e.object_id = o.id
+        JOIN candidates c ON c.id = o.id AND o.tenant_id = %s
+        LEFT JOIN object_embedding e
+          ON e.tenant_id = o.tenant_id AND e.object_id = o.id
         """
-        params = [*scope_params, query_array, fetch, *scope_params, query, fetch]
+        # Each half of the union carries its own tenant parameter, because
+        # _ACTIVE_PREDICATE is interpolated into both.
+        params = [
+            tenant_id, *scope_params, query_array, fetch,
+            tenant_id, *scope_params, query, fetch,
+            tenant_id,
+        ]
 
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
@@ -426,10 +487,13 @@ class PostgresStore:
         return scored[:top_k]
 
 
-def _object_params(obj: ContextObject, dump: dict[str, Any]) -> dict[str, Any]:
+def _object_params(
+    tenant_id: TenantId, obj: ContextObject, dump: dict[str, Any]
+) -> dict[str, Any]:
     from psycopg.types.json import Jsonb
 
     return {
+        "tenant_id": tenant_id,
         "id": obj.id,
         "type": str(obj.type),
         "content": obj.content,
@@ -451,7 +515,7 @@ def _object_params(obj: ContextObject, dump: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def _insert_event(cur: Any, event: Event) -> None:
+async def _insert_event(cur: Any, tenant_id: TenantId, event: Event) -> None:
     """The only INSERT into `event_log`, and there is no UPDATE or DELETE anywhere.
 
     before/after ride inside `detail` so the log stays a single append-only table
@@ -466,10 +530,11 @@ async def _insert_event(cur: Any, event: Event) -> None:
         detail["__after"] = event.after
     await cur.execute(
         """
-        INSERT INTO event_log (id, type, object_id, actor, provider, at, detail)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO event_log (tenant_id, id, type, object_id, actor, provider, at, detail)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """,
         (
+            tenant_id,
             event.id,
             str(event.type),
             event.object_id,

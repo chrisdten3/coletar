@@ -18,20 +18,27 @@ actor. The observability dashboard (§6) has to answer "who wrote this", and M3.
 requires that one user's token cannot reach another user's objects -- both start
 from knowing who is calling.
 
-The `Authenticator` protocol is the seam OAuth arrives through in M3. The store
-itself is still **single-tenant**: a valid key today reaches the whole graph. Scopes
-are enforced, tenancy is not. Do not deploy this for more than one user until M3.1
-lands a tenant column and the query-level filtering that goes with it.
+The `Authenticator` protocol is the seam OAuth arrives through in M3.3.
+
+**Every principal belongs to exactly one tenant, and the MCP server resolves the
+tenant from the principal alone.** It never consults configuration for a fallback: a
+connector that falls back to a configured tenant is a connector serving someone
+else's graph. `COLETAR_DEFAULT_TENANT_ID` exists for the CLI and the local proxy and
+is deliberately unreachable from here.
 """
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
+
+from coletar.schema.tenancy import InvalidTenantId, TenantId
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
 
 #: Read is search and inspection; write is anything that mutates the graph. The
 #: split exists because M7.1 requires a ChatGPT connector whose write attempts are
@@ -48,9 +55,14 @@ EXEMPT_PATHS = frozenset({"/healthz"})
 
 @dataclass(frozen=True)
 class Principal:
-    """Who is calling. `id` is what lands in the event log's actor detail."""
+    """Who is calling, and whose graph they reach.
+
+    `id` is what lands in the event log's actor detail; `tenant_id` is the only thing
+    that decides which objects exist as far as this caller is concerned.
+    """
 
     id: str
+    tenant_id: TenantId
     scopes: frozenset[str] = DEFAULT_SCOPES
 
     def can(self, scope: str) -> bool:
@@ -96,44 +108,65 @@ class Authenticator(Protocol):
 
 
 class ApiKeyAuthenticator:
-    """Bearer API keys from configuration.
+    """Bearer API keys from configuration, as JSON.
 
-    Key format is `id:secret` or `id:secret:read|write`, comma-separated:
+        COLETAR_MCP_API_KEYS='[
+          {"id": "alice-claude", "secret": "sk-live-...", "tenant_id": "tenant_alice"},
+          {"id": "dashboard", "secret": "sk-ro-...", "tenant_id": "tenant_alice",
+           "scopes": ["read"]}
+        ]'
 
-        COLETAR_MCP_API_KEYS="alice:sk-live-...,dashboard:sk-ro-...:read"
+    JSON rather than the colon-delimited form this started as. Adding the tenant would
+    have made it a four-field positional string, and a positional string whose third
+    field silently decides whose data you reach is a configuration format that will
+    eventually be got wrong.
     """
 
-    def __init__(self, keys: Iterable[tuple[str, str, frozenset[str]]]) -> None:
-        self._by_secret: dict[str, Principal] = {
-            secret: Principal(id=principal_id, scopes=scopes)
-            for principal_id, secret, scopes in keys
-        }
+    def __init__(self, principals: Iterable[tuple[str, Principal]]) -> None:
+        self._by_secret: dict[str, Principal] = dict(principals)
 
     def __len__(self) -> int:
         return len(self._by_secret)
 
+    @property
+    def tenants(self) -> set[TenantId]:
+        return {p.tenant_id for p in self._by_secret.values()}
+
     @classmethod
     def from_config(cls, raw: str) -> ApiKeyAuthenticator:
-        keys: list[tuple[str, str, frozenset[str]]] = []
-        for entry in (part.strip() for part in raw.split(",")):
-            if not entry:
-                continue
-            fields = entry.split(":")
-            if len(fields) < 2 or not fields[0] or not fields[1]:
-                raise AuthError(
-                    f"malformed COLETAR_MCP_API_KEYS entry {entry!r}; "
-                    f"expected 'id:secret' or 'id:secret:read|write'"
-                )
-            principal_id, secret = fields[0], fields[1]
-            if len(fields) > 2 and fields[2]:
-                scopes = frozenset(s for s in fields[2].split("|") if s)
-                unknown = scopes - DEFAULT_SCOPES
-                if unknown:
-                    raise AuthError(f"unknown scope(s) {sorted(unknown)} in {entry!r}")
-            else:
-                scopes = DEFAULT_SCOPES
-            keys.append((principal_id, secret, scopes))
-        return cls(keys)
+        text = (raw or "").strip()
+        if not text:
+            return cls([])
+        try:
+            entries = json.loads(text)
+        except ValueError as exc:
+            raise AuthError(
+                f"COLETAR_MCP_API_KEYS must be a JSON array of "
+                f"{{id, secret, tenant_id, scopes?}} objects: {exc}"
+            ) from exc
+        if not isinstance(entries, list):
+            raise AuthError("COLETAR_MCP_API_KEYS must be a JSON *array*.")
+
+        principals: list[tuple[str, Principal]] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise AuthError(f"each key entry must be an object; got {entry!r}")
+            missing = {"id", "secret", "tenant_id"} - set(entry)
+            if missing:
+                raise AuthError(f"key entry {entry.get('id', '?')!r} is missing {sorted(missing)}")
+            try:
+                tenant = parse_tenant_id(str(entry["tenant_id"]))
+            except InvalidTenantId as exc:
+                raise AuthError(str(exc)) from exc
+            scopes = frozenset(entry.get("scopes") or DEFAULT_SCOPES)
+            unknown = scopes - DEFAULT_SCOPES
+            if unknown:
+                raise AuthError(f"unknown scope(s) {sorted(unknown)} on {entry['id']!r}")
+            principals.append(
+                (str(entry["secret"]), Principal(id=str(entry["id"]), tenant_id=tenant,
+                                                 scopes=scopes))
+            )
+        return cls(principals)
 
     def authenticate(self, credential: str | None) -> Principal | None:
         if not credential:

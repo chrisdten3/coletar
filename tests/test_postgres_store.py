@@ -39,7 +39,7 @@ from coletar.store.memory import InMemoryStore
 from coletar.store.migrate import discover, run_migrations
 from coletar.store.postgres import PostgresStore
 from coletar.store.replay import replay_object
-from conftest import RelevanceSet, build_corpus_object, scope_from
+from conftest import TENANT, RelevanceSet, build_corpus_object, scope_from
 
 MIGRATION_BUDGET_SECONDS = 5.0
 
@@ -120,9 +120,9 @@ async def test_every_object_type_round_trips_exactly(store: PostgresStore, objec
             extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
             provenance=Provenance(origin_type=OriginType.USER, provider=Provider.COLETAR),
         )
-    await store.put_object(original)
+    await store.put_object(TENANT, original)
 
-    read_back = await store.get_object(original.id)
+    read_back = await store.get_object(TENANT, original.id)
 
     assert read_back is not None
     assert read_back.model_dump() == original.model_dump()
@@ -130,8 +130,8 @@ async def test_every_object_type_round_trips_exactly(store: PostgresStore, objec
 
 
 async def test_object_and_event_commit_together(store: PostgresStore):
-    memory = await store.put_object(Memory.from_write("One write, one event."))
-    events = await store.list_events(object_id=memory.id)
+    memory = await store.put_object(TENANT, Memory.from_write("One write, one event."))
+    events = await store.list_events(TENANT, object_id=memory.id)
     assert len(events) == 1
     assert events[0].type is EventType.OBJECT_CREATED
     assert events[0].after is not None
@@ -139,69 +139,70 @@ async def test_object_and_event_commit_together(store: PostgresStore):
 
 
 async def test_active_excludes_superseded_and_retired(store: PostgresStore):
-    old = await store.put_object(Memory.from_write("Chris works at Acme."))
-    new = await store.put_object(
+    old = await store.put_object(TENANT, Memory.from_write("Chris works at Acme."))
+    new = await store.put_object(TENANT, 
         Memory.from_write(
             "Chris is independent.", kind=MemoryKind.CORRECTION, supersedes=old.id
         )
     )
 
-    active = {o.id for o in await store.list_objects(type=ObjectType.MEMORY)}
+    active = {o.id for o in await store.list_objects(TENANT, type=ObjectType.MEMORY)}
     assert active == {new.id}
-    assert {o.id for o in await store.list_objects(include_superseded=True)} == {old.id, new.id}
+    assert {o.id for o in await store.list_objects(
+        TENANT, include_superseded=True)} == {old.id, new.id}
 
 
 async def test_retire_is_soft_and_the_object_stays_readable(store: PostgresStore):
-    memory = await store.put_object(Memory.from_write("Retire me."))
-    await store.retire_object(memory.id, reason="compressed")
+    memory = await store.put_object(TENANT, Memory.from_write("Retire me."))
+    await store.retire_object(TENANT, memory.id, reason="compressed")
 
-    still_there = await store.get_object(memory.id)
+    still_there = await store.get_object(TENANT, memory.id)
     assert still_there is not None and not still_there.is_active
-    assert await store.list_objects(type=ObjectType.MEMORY) == []
+    assert await store.list_objects(TENANT, type=ObjectType.MEMORY) == []
 
 
 async def test_duplicate_edge_is_idempotent(store: PostgresStore):
-    a = await store.put_object(Memory.from_write("First."))
-    b = await store.put_object(Memory.from_write("Second."))
+    a = await store.put_object(TENANT, Memory.from_write("First."))
+    b = await store.put_object(TENANT, Memory.from_write("Second."))
     edge = Edge(src_id=a.id, dst_id=b.id, type=EdgeType.RELATES_TO)
 
-    await store.add_edge(edge)
-    await store.add_edge(edge)
+    await store.add_edge(TENANT, edge)
+    await store.add_edge(TENANT, edge)
 
-    assert len(await store.edges_from(a.id)) == 1
-    assert len(await store.edges_to(b.id)) == 1
-    edge_events = [e for e in await store.list_events() if e.type is EventType.EDGE_CREATED]
+    assert len(await store.edges_from(TENANT, a.id)) == 1
+    assert len(await store.edges_to(TENANT, b.id)) == 1
+    edge_events = [e for e in await store.list_events(TENANT) if e.type is EventType.EDGE_CREATED]
     assert len(edge_events) == 1
 
 
 async def test_replay_works_against_the_postgres_log(store: PostgresStore):
-    memory = await store.put_object(Memory.from_write("Chris works at Acme."))
-    stored = await store.get_object(memory.id)
+    memory = await store.put_object(TENANT, Memory.from_write("Chris works at Acme."))
+    stored = await store.get_object(TENANT, memory.id)
     assert stored is not None
     stored.content = "Chris is independent."
-    await store.put_object(stored)
+    await store.put_object(TENANT, stored)
 
-    current = await replay_object(store, memory.id)
+    current = await replay_object(store, TENANT, memory.id)
     assert current is not None and current.content == "Chris is independent."
 
 
 async def test_a_write_is_searchable_on_the_very_next_call(store: PostgresStore):
-    memory = await store.put_object(Memory.from_write("Ledger deploys to Fly.io."))
-    found = {hit.obj.id for hit in await store.search("where does ledger deploy")}
+    memory = await store.put_object(TENANT, Memory.from_write("Ledger deploys to Fly.io."))
+    found = {hit.obj.id for hit in await store.search(TENANT, "where does ledger deploy")}
     assert memory.id in found
 
 
 async def test_project_scoped_search_sees_global_but_not_another_project(store: PostgresStore):
     ledger = Scope(type=ScopeType.PROJECT, id="proj_ledger")
-    mine = await store.put_object(Memory.from_write("Ledger ships in March.", scope=ledger))
-    globally = await store.put_object(Memory.from_write("Chris ships things in March."))
-    await store.put_object(
+    mine = await store.put_object(TENANT, Memory.from_write("Ledger ships in March.", scope=ledger))
+    globally = await store.put_object(TENANT, Memory.from_write("Chris ships things in March."))
+    await store.put_object(TENANT, 
         Memory.from_write(
             "Atlas ships in March.", scope=Scope(type=ScopeType.PROJECT, id="proj_atlas")
         )
     )
 
-    results = await store.search("what ships in march", scope=ledger, top_k=20)
+    results = await store.search(TENANT, "what ships in march", scope=ledger, top_k=20)
     found = {hit.obj.id for hit in results}
 
     assert found == {mine.id, globally.id}
@@ -215,15 +216,17 @@ async def test_ranking_matches_the_in_process_store(
     reference = InMemoryStore(embedder=HashingEmbedder(768))
     for item in relevance_set.corpus:
         obj = build_corpus_object(item)
-        await reference.put_object(obj)
-        await store.put_object(obj)
+        await reference.put_object(TENANT, obj)
+        await store.put_object(TENANT, obj)
 
     disagreements: list[str] = []
     for query in relevance_set.queries:
         scope = scope_from(query.get("scope"))
         text = str(query["query"])
-        expected = [hit.obj.content for hit in await reference.search(text, scope=scope, top_k=5)]
-        actual = [hit.obj.content for hit in await store.search(text, scope=scope, top_k=5)]
+        expected_hits = await reference.search(TENANT, text, scope=scope, top_k=5)
+        expected = [hit.obj.content for hit in expected_hits]
+        actual_hits = await store.search(TENANT, text, scope=scope, top_k=5)
+        actual = [hit.obj.content for hit in actual_hits]
         if expected[:3] != actual[:3]:
             disagreements.append(f"{query['query']!r}: {expected[:3]} vs {actual[:3]}")
 
@@ -243,8 +246,8 @@ async def test_postgres_candidate_recall_matches_exact_in_process_search(store):
 
     data = load_eval_set(Path(__file__).parent / "fixtures" / "retrieval_eval.json")
     reference = InMemoryStore(embedder=HashingEmbedder(768))
-    ref_ids = await seed_corpus(reference, data["corpus"])
-    pg_ids = await seed_corpus(store, data["corpus"])
+    ref_ids = await seed_corpus(reference, TENANT, data["corpus"])
+    pg_ids = await seed_corpus(store, TENANT, data["corpus"])
     ref_key = {v: k for k, v in ref_ids.items()}
     pg_key = {v: k for k, v in pg_ids.items()}
 
@@ -256,11 +259,11 @@ async def test_postgres_candidate_recall_matches_exact_in_process_search(store):
         text = str(query["query"])
         expected_keys = {
             ref_key[hit.obj.id]
-            for hit in await reference.search(text, scope=scope, top_k=CANDIDATE_DEPTH)
+            for hit in await reference.search(TENANT, text, scope=scope, top_k=CANDIDATE_DEPTH)
         }
         actual_keys = {
             pg_key[hit.obj.id]
-            for hit in await store.search(text, scope=scope, top_k=CANDIDATE_DEPTH)
+            for hit in await store.search(TENANT, text, scope=scope, top_k=CANDIDATE_DEPTH)
         }
         if not expected_keys:
             continue

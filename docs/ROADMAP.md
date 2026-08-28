@@ -212,27 +212,48 @@ is pull-based — there is no sync job, the next `search_context` simply sees th
 hosting. If cross-surface propagation is broken at the graph level, that should
 surface before deployment, not after.
 
-### M3.1 Tenant isolation — local, no infrastructure
+### M3.1 Tenant isolation — local, no infrastructure ✅
 
 The largest structural change since M1, and the one thing blocking any real
-deployment. Nothing in the codebase is tenant-aware today: every table is
-unqualified and every query returns everything.
+deployment. Nothing in the codebase was tenant-aware: every table was unqualified and
+every query returned everything.
 
-- [ ] Migration `002` adding `tenant_id` to `context_object`, `context_edge`,
-      `object_embedding`, `event_log` and `compile_run`
-- [ ] `Principal` carries a `tenant_id`; the store resolves every call against it
-- [ ] **All six read paths filtered**, each of which leaks independently:
-      - [ ] `search` and `list_objects` — the obvious pair
-      - [ ] `get_object` — knowing an id must not grant access
-      - [ ] `list_events`, and therefore `replay` — **the worst leak**, because event
-            rows carry full `before`/`after` object state, so an unfiltered log
-            leaks *content* rather than merely ids
-      - [ ] `edges_from` / `edges_to` — graph structure is not public either
-      - [ ] retrieval traces — they carry a principal, result ids and query digests
-- [ ] Isolation tests against real Postgres, including a direct fetch of a known
-      foreign id, a cross-tenant `supersedes`, and a foreign object id passed to
-      every read path
-- [ ] Auth validation adds no more than 50ms per call
+**The rule everything follows from:** the Store never assumes a tenant; only
+application boundaries resolve one. Every `Store` method takes `tenant_id` explicitly
+and none of them defaults it. The call sites are noisier for it, and the noise is the
+point — each one names the tenant out loud, and a background job cannot drift into a
+shared graph.
+
+- [x] Migration `002`: `tenant_id` on all five tables, identity becomes
+      `(tenant_id, id)`, and the column's `DEFAULT` is dropped immediately after
+      back-filling — the implicit path exists only for the duration of the migration
+- [x] Tenant-aware foreign keys, so Postgres refuses a cross-tenant edge or
+      `supersedes` even when application code asks for one
+- [x] `TenantId` is a `NewType`, not a `str`: signatures read `(tenant_id, object_id)`
+      and a swapped pair would otherwise typecheck while reading another tenant's data
+- [x] `Principal` carries a `tenant_id`; the MCP server derives the tenant from it
+      alone, with no configuration fallback and no tenant argument on any tool
+- [x] API keys moved to JSON. Adding the tenant to the colon-delimited form would
+      have made it a four-field positional string whose third field silently decides
+      whose data you reach
+- [x] **All six read paths filtered**: `search`, `list_objects`, `get_object`,
+      `list_events` (and therefore `replay`), `edges_from`/`edges_to`, and retrieval
+      traces
+- [x] The in-process store implements *exactly* the same semantics, namespaced per
+      tenant with its own vector index — cross-tenant candidates never enter scoring,
+      rather than being filtered afterwards. A backend that isolates differently is
+      worse than one that does not isolate at all: the tests pass locally and the
+      graph leaks in production
+- [x] Both backends raise the same `CrossTenantError`, so a caller never has to know
+      which one it is talking to
+- [x] Snapshot `format_version` 2, with a version-1 file upgraded to the named legacy
+      tenant — visibly, via both a warning and a `store.migrated` event
+- [x] Adversarial isolation suite run against **both** backends: a known foreign id
+      pushed through every read path, cross-tenant `supersedes` and edges, retirement,
+      identical ids in two tenants, per-tenant scopes, and an empty tenant
+- [x] Auth validation p95 well under the 50ms budget at 500 configured keys
+- [x] Tenant is visible, not implied: `--tenant` on every graph command, writes report
+      where they landed, and `coletar tenant` prints what the default resolves to
 
 ### M3.2 Cross-surface propagation — local, no infrastructure
 

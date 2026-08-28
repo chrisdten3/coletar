@@ -35,17 +35,30 @@ not a check inside each tool — a check inside each tool is a check the next to
 forget to add.
 
 ```bash
-COLETAR_MCP_API_KEYS="alice:sk-live-abc123" uv run coletar serve-mcp
+COLETAR_MCP_API_KEYS='[{"id":"alice-claude","secret":"sk-live-abc123","tenant_id":"tenant_alice"}]' \
+  uv run coletar serve-mcp
 ```
 
-Keys are `id:secret`, comma-separated. Append `:read` for a read-only key:
+Keys are a JSON array. `scopes` defaults to `["read","write"]`; a read-only key names
+its scopes explicitly:
 
-```bash
-COLETAR_MCP_API_KEYS="alice:sk-live-abc123,chatgpt:sk-ro-def456:read"
+```json
+[
+  {"id": "alice-claude", "secret": "sk-live-abc123", "tenant_id": "tenant_alice"},
+  {"id": "chatgpt", "secret": "sk-ro-def456", "tenant_id": "tenant_alice",
+   "scopes": ["read"]}
+]
 ```
 
-The `id` is not decoration — it is recorded as the principal on every event the
-connector produces, which is how the dashboard (§6) answers "who wrote this".
+JSON rather than the colon-delimited form this started as: adding the tenant would
+have made it a four-field positional string, and a positional string whose third
+field silently decides whose data you reach is a format that will eventually be got
+wrong.
+
+The `id` is not decoration — it is recorded as the principal on every event and
+retrieval trace the connector produces, which is how the dashboard (§6) answers "who
+wrote this". The `tenant_id` is the only thing deciding which graph the caller
+reaches.
 
 **The server fails closed.** With no keys configured it refuses to start. There is no
 flag to disable auth, because "unauthenticated requests are rejected" must not quietly
@@ -73,11 +86,26 @@ is deliberate rather than cosmetic: the ChatGPT leg is read-plus-confirmed-write
 OpenAI extends write-capable custom connectors past Business/Enterprise/Edu, and a
 restriction enforced only in the client is not a restriction.
 
-### Still single-tenant
+### Tenancy
 
-Scopes are enforced; **tenancy is not**. Any valid key today reaches the whole graph.
-Per-user isolation — a tenant column and the query-level filtering that goes with it —
-is M3.1. Do not deploy this for more than one person before that lands.
+Every principal belongs to exactly one tenant, and **the server derives the tenant
+from the principal alone**. There is no configuration fallback reachable from the MCP
+server and no tenant argument on any tool: a connector that could be *told* which
+graph to read is not isolated. `COLETAR_DEFAULT_TENANT_ID` exists for the CLI and the
+local proxy, which have no caller identity, and is deliberately unreachable here.
+
+Isolation is enforced in three places, so a bug in any one of them is not sufficient
+to leak data:
+
+| Layer | What it does |
+|---|---|
+| Tool boundary | The tenant comes from the authenticated principal; no tool accepts one |
+| Store | Every read path filters — including `get_object`, the edge lookups, and the event log, which would otherwise leak full object *content* through its before/after state |
+| Postgres | Identity is `(tenant_id, id)`, and composite foreign keys refuse a cross-tenant edge or `supersedes` even if application code asks |
+
+Both backends raise the same `CrossTenantError`, so a caller never has to know which
+one it is talking to. The contract is proved by a single adversarial suite run against
+both — see `tests/test_tenancy.py`.
 
 ## Instruction snippets
 

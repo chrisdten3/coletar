@@ -37,6 +37,7 @@ from coletar.retrieval.context import RetrievedContext
 from coletar.retrieval.ranking import RANKING_VERSION
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import Scope
+from coletar.schema.tenancy import TenantId
 
 if TYPE_CHECKING:
     from coletar.store.base import Store
@@ -146,12 +147,16 @@ def build_trace(
 
 
 async def record_trace(
-    store: Store, trace: RetrievalTrace, *, actor: Actor = Actor.CONNECTOR
+    store: Store,
+    tenant_id: TenantId,
+    trace: RetrievalTrace,
+    *,
+    actor: Actor = Actor.CONNECTOR,
 ) -> Event:
     event = Event(
         type=EventType.RETRIEVAL_TRACE,
         actor=actor,
         detail=trace.as_detail(),
     )
-    await store.append_event(event)
+    await store.append_event(tenant_id, event)
     return event
