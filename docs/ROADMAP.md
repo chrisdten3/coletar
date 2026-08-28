@@ -182,17 +182,113 @@ narrowing and final context assembly observable enough to change safely.
 
 ## M3 — Claude connector (Live Sync)
 
-SCOPE §10 step 2. Can ship in parallel with M2; depends on no export-parsing work,
-since objects arrive already typed.
+SCOPE §10 step 2. The first time coletar does the thing it exists to do. Everything
+through M2 is substrate — a graph, two backends, measured retrieval, an authenticated
+server — and none of it has yet touched a frontier model. M3 is where the central
+claim gets tested: *a memory written on one surface is available to every other
+surface's next conversation.*
 
-- [ ] Deploy behind HTTPS and register as a Claude Custom Connector
-- [ ] Per-user scoped auth; user A's token cannot read user B's objects
+Claude is the only new provider, and deliberately so. It is the one frontier surface
+where the path is fully sanctioned — Custom Connectors are read **and** write on
+individual accounts, objects arrive already typed through `write_memory`, and no
+export parser or page reading is involved. ChatGPT is read-plus-confirmed-write until
+OpenAI extends write scope (M7.1); Gemini has no verified path at all. Claude tests
+the real integration with the fewest unrelated variables.
+
+**Two decisions taken, so they are not re-litigated mid-slice:**
+
+- **Tenancy is a flat `tenant_id`.** No user/org hierarchy. Hierarchy is easy to add
+  later and hard to remove, and nothing in §2 or §9 needs one yet.
+- **The MCP service deploys to Fly.io**, a long-running container host. Not
+  serverless: the server runs stateful streamable HTTP (`stateless_http=False`) and
+  holds a psycopg connection pool, and the in-process store cannot exist on
+  serverless at all. Making it work on functions means changing the transport and
+  re-verifying MCP session handling across invocations — real work whose only payoff
+  is the host. A consumer UI can live on Vercel later; the service should not.
+
+The ordering below front-loads everything that is testable for free. Propagation here
+is pull-based — there is no sync job, the next `search_context` simply sees the write
+— so the *mechanism* is graph-level and provable locally, before a single dollar of
+hosting. If cross-surface propagation is broken at the graph level, that should
+surface before deployment, not after.
+
+### M3.1 Tenant isolation — local, no infrastructure
+
+The largest structural change since M1, and the one thing blocking any real
+deployment. Nothing in the codebase is tenant-aware today: every table is
+unqualified and every query returns everything.
+
+- [ ] Migration `002` adding `tenant_id` to `context_object`, `context_edge`,
+      `object_embedding`, `event_log` and `compile_run`
+- [ ] `Principal` carries a `tenant_id`; the store resolves every call against it
+- [ ] **All six read paths filtered**, each of which leaks independently:
+      - [ ] `search` and `list_objects` — the obvious pair
+      - [ ] `get_object` — knowing an id must not grant access
+      - [ ] `list_events`, and therefore `replay` — **the worst leak**, because event
+            rows carry full `before`/`after` object state, so an unfiltered log
+            leaks *content* rather than merely ids
+      - [ ] `edges_from` / `edges_to` — graph structure is not public either
+      - [ ] retrieval traces — they carry a principal, result ids and query digests
+- [ ] Isolation tests against real Postgres, including a direct fetch of a known
+      foreign id, a cross-tenant `supersedes`, and a foreign object id passed to
+      every read path
+- [ ] Auth validation adds no more than 50ms per call
+
+### M3.2 Cross-surface propagation — local, no infrastructure
+
+The product's actual promise is cross-*surface*, not cross-conversation. This proves
+the mechanism with no deployment, no Anthropic API key and no cost, by pointing the
+local proxy and the MCP server at the same graph.
+
+- [ ] Harness: write through the proxy, read through the MCP server, and back
+- [ ] Propagation latency under 1s at p95, tenant-scoped both directions
+- [ ] Runnable on demand and in CI
+
+**Known shortcut, recorded rather than drifted into:** the proxy calls `build_store()`
+directly, so it bypasses authentication, tenant resolution and scope enforcement — it
+*is* the trusted process. That is acceptable for a single-user local daemon and
+unacceptable for anything else. See the M4 item.
+
+### M3.3 Deployment and the real Claude connector
+
+- [ ] Fly.io deployment of the MCP service, managed Postgres, secrets, migrations
+- [ ] Registered as a Claude Custom Connector, completed from Claude's own settings
+- [ ] A simulated OAuth handshake issues a token scoped to one tenant
 - [ ] Ship the instruction snippets in `CONNECTORS.md` as a copy-paste flow
-- [ ] Tool-use reliability: ≥85% write-on-statement, ≥80% read-in-first-two-turns,
-      <10% spurious writes
-- [ ] Cross-conversation propagation harness — a fact written in conversation A is
-      retrievable in conversation B within 1s at p95. This is the direct proof of the
-      product's central claim.
+- [ ] Cross-conversation propagation: a fact written in Claude conversation A is
+      retrievable in a fresh conversation B, under 1s at p95. The build plan is
+      explicit that this is **not optional** before M3 is done — M3.2 is a
+      prerequisite step, never a substitute
+- [ ] **Synthetic data only** until isolation, fail-closed auth, secret handling and
+      log inspection have all been verified against the deployment
+
+No Anthropic API key is needed for any of this. Claude's cloud calls *our* endpoint;
+the credential that matters is a coletar token.
+
+### M3.4 Tool-use reliability harness
+
+A different kind of measurement from anything so far. Every bar to date is
+deterministic — same input, same output. This measures whether a *model chooses* to
+call a tool, which is non-deterministic and needs enough trials to be a rate rather
+than an anecdote.
+
+- [ ] Scripted conversations driven through the Messages API against the deployed
+      connector. **This is where an Anthropic API key becomes necessary** — a
+      separate credential from the coletar token, pointing the other way
+- [ ] `write_memory` fires on ≥85% of clear preference statements
+- [ ] `search_context` called within the first two turns ≥80% of the time
+- [ ] Spurious writes under 10% on neutral conversations
+- [ ] Versioned instruction snippet, so a reliability number is attributable to the
+      prompt that produced it
+
+### Not satisfiable in code
+
+Stated here rather than discovered at the end:
+
+- **"Connector setup completes without support intervention ≥90% of the time in an
+  internal dogfood test"** needs real people doing setup. The flow and its
+  documentation can be built; the statistic cannot be manufactured.
+- Registering a real Custom Connector needs a deployed endpoint and a Claude account.
 
 ---
 
@@ -201,6 +297,11 @@ since objects arrive already typed.
 SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
 
 - [x] Compression job: superseded-chain retirement, schedulable and on-demand
+- [ ] **The local proxy becomes an MCP client.** It calls `build_store()` directly
+      today, so it bypasses authentication, tenant resolution and scope enforcement.
+      Fine for a single-user local daemon, wrong for anything else: both surfaces
+      should pass through the same auth, tenancy and event semantics rather than one
+      of them holding database credentials
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract
