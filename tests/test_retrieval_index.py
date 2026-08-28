@@ -58,6 +58,22 @@ def test_stemming_closes_the_gaps_that_break_an_exact_token_match():
     assert stem("class") == "class"
 
 
+def test_stemming_is_symmetric_not_pretty():
+    """`stem("chris") == "chri"` looks like a bug and was queued as one.
+
+    The obvious fix — emitting the raw token alongside its stem — was measured
+    against the 106-query evaluation set and made every metric worse, including the
+    exact-identifier category it was meant to help, because two tokens per word
+    inflates the denominator in `lexical_score`. What actually matters is that the
+    mangling is *symmetric*: query and content pass through the same function, so a
+    proper noun still finds itself. This pins that, so the shape is not "fixed"
+    again without re-measuring.
+    """
+    assert stem("chris") == "chri"
+    assert tokenize("Chris") == tokenize("chris") == ["chri"]
+    assert set(tokenize("Chris prefers uv")) & set(tokenize("what does Chris prefer"))
+
+
 def test_stopwords_are_dropped_from_content_tokens():
     assert tokenize("what should I do when a function fails") == ["function", "fail"]
 
@@ -93,7 +109,7 @@ async def test_a_write_is_searchable_on_the_very_next_call():
     memory = await store.put_object(
         Memory.from_write("Chris deploys Ledger to Fly.io.", kind=MemoryKind.FACT)
     )
-    assert memory.id in {o.id for o, _ in await store.search("where does ledger deploy")}
+    assert memory.id in {hit.obj.id for hit in await store.search("where does ledger deploy")}
 
 
 async def test_an_updated_object_is_found_by_its_new_content():
@@ -102,7 +118,7 @@ async def test_an_updated_object_is_found_by_its_new_content():
     memory.content = "Chris uses uv exclusively."
     await store.put_object(memory)
 
-    assert {o.id for o, _ in await store.search("uv")} == {memory.id}
+    assert {hit.obj.id for hit in await store.search("uv")} == {memory.id}
     assert not await store.search("pip")
 
 
@@ -114,7 +130,7 @@ async def test_retired_and_superseded_objects_are_absent_from_search():
             "Ledger deploys to Fly.io.", kind=MemoryKind.CORRECTION, supersedes=old.id
         )
     )
-    found = {o.id for o, _ in await store.search("where does ledger deploy")}
+    found = {hit.obj.id for hit in await store.search("where does ledger deploy")}
     assert found == {new.id}
 
 
@@ -131,7 +147,7 @@ async def test_top_five_relevance_meets_the_bar(
         results = await store.search(
             str(query["query"]), scope=scope_from(query.get("scope")), top_k=TOP_K
         )
-        found = [by_id[obj.id] for obj, _ in results]
+        found = [by_id[hit.obj.id] for hit in results]
         (hits if query["expect"] in found else misses).append(str(query["query"]))
 
     rate = len(hits) / len(relevance_set.queries)
@@ -146,7 +162,7 @@ async def test_project_scoped_search_sees_global_but_not_another_project(
     ledger = Scope(type=ScopeType.PROJECT, id="proj_ledger")
 
     results = await store.search("what language is this written in", scope=ledger, top_k=30)
-    found = {obj.id for obj, _ in results}
+    found = {hit.obj.id for hit in results}
 
     assert ids["atlas_language"] not in found  # another project's object
     globals_present = {ids["python_version"], ids["type_checking"]} & found
@@ -160,7 +176,7 @@ async def test_global_scoped_search_excludes_every_project(
 
     store, ids = relevance_store
     results = await store.search("ledger invoicing database", scope=GLOBAL_SCOPE, top_k=30)
-    found = {obj.id for obj, _ in results}
+    found = {hit.obj.id for hit in results}
 
     assert ids["db_choice"] not in found
     assert ids["atlas_language"] not in found

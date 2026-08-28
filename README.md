@@ -18,19 +18,31 @@ Live Sync is "Plaid for memory." True Migration is closer to actually switching 
 
 ## Status
 
-**M1 done — canonical schema + storage backend.** The §2 object model, both store
-backends (zero-infrastructure in-process and Postgres/pgvector), the hybrid vector +
-lexical retrieval index, and the append-only Event/Revision Log with full replay are
-implemented, and every M1 acceptance criterion is pinned by a test — including the
-measured ones: **95%** top-5 relevance against a 90% bar, **~21ms** p95 search at
-10,000 objects against a 300ms bar.
+**M1 and M2 complete.** The §2 object model, both store backends (zero-infrastructure
+in-process and Postgres/pgvector), hybrid retrieval, the append-only Event/Revision
+Log with replay, the authenticated MCP server, the local proxy, and a measured
+retrieval evaluation suite are implemented, with every acceptance criterion pinned by
+a test — including the measured ones:
 
-The MCP server, the local proxy, the compression job and the Continuity Score exist
-and work; their remaining acceptance criteria (auth, labelled extraction sets, token
-budgeting) are M2 and M4. Every provider compiler is still scaffolding with its
-contract fixed and its body unwritten. See [docs/ROADMAP.md](docs/ROADMAP.md) for
-exactly what is real and what is not, and [docs/RETRIEVAL.md](docs/RETRIEVAL.md) for
-the published ranking formula.
+| | Measured | Bar |
+|---|---|---|
+| Retrieval hit@5, 106 labelled queries | 85.8% hashing / **92.5%** nomic-embed-text | — |
+| Candidate recall@50, Postgres vs exact scan | **99.54%**, zero leaks | ≥98% |
+| Search p95, 10,000 objects | **~21ms** | 300ms |
+| Extraction false-positive rate | **4.3%** | <15% |
+| Proxy added round-trip latency | **~2.4ms p95** | 2s |
+| MCP tool round-trip p95 | well under budget | 500ms |
+
+Retrieval is measured across eight query categories, and
+[docs/RETRIEVAL.md](docs/RETRIEVAL.md) publishes where it *fails* as well as where it
+succeeds — corrections are the weak leg, and a better embedder is not uniformly
+better. The compression job and the Continuity Score exist and work; their remaining
+acceptance criteria are M4.
+
+**Not yet built:** every provider compiler (still scaffolding with contracts fixed and
+bodies unwritten), the Context Inspector, the observability dashboard, and per-user
+tenancy — the store is single-tenant, so the MCP server should not yet be deployed for
+more than one person. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
 
@@ -69,6 +81,13 @@ uv run coletar serve-proxy
 
 Then send traffic to `http://localhost:8787/v1` instead of `http://localhost:11434/v1`.
 No export, no scraping, no ToS exposure — the whole loop is on your machine.
+
+Both the buffered and the streaming paths inject and extract. Streamed chunks are
+forwarded before they are parsed, so reassembly never sits between the model and your
+screen — measured overhead is ~2.4ms p95 at 1,000 stored objects.
+
+Extraction is precision-first: 4.3% false-positive write rate against a 50-turn
+labelled set, measured in [docs/EXTRACTION.md](docs/EXTRACTION.md).
 
 ### The MCP server
 

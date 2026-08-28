@@ -55,7 +55,7 @@ this container".
 | Backend | What it is | When |
 |---|---|---|
 | `hashing` (default) | Signed hashing of word unigrams and character 4-grams into the same 768-dim space, L2-normalized. Reaches morphological variants (`money` ~ `monetary`), **cannot** reach synonymy. | A fresh clone, with nothing installed. The in-process store has to work with no infrastructure, so the default embedder cannot require a model server. |
-| `ollama` | `nomic-embed-text` (or any embedding model) on the user's own server. | Real deployments. §4 and §11: typed extraction and embedding at consumer scale is genuine inference spend, and on the local leg that spend is zero. |
+| `ollama` | `nomic-embed-text` (or any embedding model) on the user's own server. Verified against a live Ollama in `tests/test_embedding_live.py`, gated so the suite stays green without one. | Real deployments. §4 and §11: typed extraction and embedding at consumer scale is genuine inference spend, and on the local leg that spend is zero. |
 
 Embedding happens **on the write path**, so an object is searchable on the very next
 call. The bound on "when does a write become visible" is one embed call, not an
@@ -65,18 +65,108 @@ unspecified background window.
 
 Against [`tests/fixtures/relevance_set.json`](../tests/fixtures/relevance_set.json) —
 30 objects with deliberate near-misses, 20 queries phrased the way a model phrases
-them when calling `search_context`:
+them when calling `search_context`. **Both backends are measured, because both ship:**
+`hashing` is what a fresh clone gets with nothing installed, `ollama` is what a real
+deployment runs.
 
-| | `hashing` (default) |
-|---|---|
-| top-5 hit rate | **95%** (19/20), against a 90% bar |
-| p95 search latency, 10,000 objects | **~21ms**, against a 300ms bar |
-| write path | ~0.2ms/object |
+| | `hashing` (default) | `ollama` / `nomic-embed-text` |
+|---|---|---|
+| top-5 hit rate (bar: 90%) | **95%** (19/20) | **100%** (20/20) |
+| hit@1 | 80% | 90% |
+| MRR@5 | 0.858 | 0.933 |
+| search latency, p50 | 0.2ms | 23.5ms |
+| write path, per object | ~0.2ms | ~34ms (one HTTP round trip) |
 
-The single miss is *"is it ok to book a meeting at 9am"* against *"Do not schedule
-anything before 10am"*. That needs synonymy, and there is no model behind a hash. It
-is kept in the set on purpose: it is the query that should start passing the day
-`COLETAR_EMBEDDING_BACKEND=ollama` becomes the default.
+The numbers live in
+[`tests/fixtures/relevance_baselines.json`](../tests/fixtures/relevance_baselines.json)
+and are asserted by `test_the_published_numbers_still_hold`. A documented figure that
+has drifted from the implementation is worse than no figure, so the table and the test
+move together.
+
+**The hashing default's one miss** is *"is it ok to book a meeting at 9am"* against
+*"Do not schedule anything before 10am"*. That needs synonymy, and there is no model
+behind a hash. It was left in the set deliberately as the canary for this backend —
+and it resolves under `nomic-embed-text`, which is what took 95% to 100%.
+
+**The trade is latency, not accuracy.** Real embeddings cost roughly 100× on search
+(0.2ms → 23.5ms, still an order of magnitude inside the 300ms bar) and roughly 170× on
+write, because every write is an HTTP round trip to the model server. That write cost
+is the one to watch: at 34ms per object, parsing a 500-conversation export (M6.2) would
+spend minutes in the embedder alone. The `Embedder` protocol is batch-shaped for
+exactly this reason, but `put_object` currently embeds one object per call, so bulk
+ingest paths should batch before that milestone.
+
+At 10,000 objects the in-process index answers in **~21ms p95** with the hashing
+backend, against a 300ms bar.
+
+## The evaluation suite
+
+The 20-query relevance set answers *is retrieval working*. It cannot answer *where is
+it failing*, which is what you need before changing a ranker. So M2.3 expands it to
+**106 labelled queries over 58 objects**, in
+[`tests/fixtures/retrieval_eval.json`](../tests/fixtures/retrieval_eval.json), across
+the eight categories §5.1 names. The original 20 are carried verbatim and tagged, so
+the headline number stays comparable across the expansion.
+
+Measured at **two boundaries**, because they fail differently:
+
+- **Candidate recall@50** — did narrowing keep the relevant object at all? A reranker
+  cannot repair an object that candidate generation discarded, so this says whether a
+  fix belongs in the retriever or the ranker.
+- **Final ranking** — did it land in the context the model actually saw?
+
+Reproduce with `uv run coletar evaluate` (add `--ollama` for the real embedder).
+
+| | `hashing` | `nomic-embed-text` |
+|---|---|---|
+| candidate recall@50 | 91.5% | **100%** |
+| hit@1 | 55.7% | **67.0%** |
+| hit@5 | 85.8% | **92.5%** |
+| MRR@5 | 0.676 | **0.768** |
+| mean injected tokens | 80.2 | 82.4 |
+| latency p50 / p95 | 0.5 / 0.9ms | 32.0 / 76.7ms |
+| **leaks** | **0** | **0** |
+
+`leaks` is a hard zero, not a target. A superseded or cross-scope object surfacing at
+all is a correctness failure, and hit rate bought by *also* returning the stale answer
+is not a retrieval win. Injected tokens sit next to accuracy for the same reason —
+so a future change cannot buy hit rate by flooding the context.
+
+### Where it fails, by category
+
+| Category | `hashing` | `nomic-embed-text` |
+|---|---|---|
+| exact_id | 100% | 93.8% |
+| near_miss | 100% | 100% |
+| paraphrase | 93.3% | 96.7% |
+| negation | 81.8% | 90.9% |
+| temporal | 80.0% | 90.0% |
+| multi_hop | 77.8% | 88.9% |
+| scope_isolation | 77.8% | 77.8% |
+| **correction** | **50.0%** | 90.0% |
+
+Three things fall out of that table that the single headline number hid.
+
+**Corrections are the weak leg, and it is structural.** When a fact is superseded, the
+old object is correctly excluded from retrieval — but the *correction* often does not
+mention the old value. "Chris is independent and consults through his own studio"
+contains no "Acme", so a user asking *"is Chris still at Acme?"* matches nothing, and
+the honest answer ("no, he moved") is unreachable. A real embedder papers over much of
+this (50% → 90%) without fixing it. The fix is graph-shaped, not ranking-shaped:
+match the superseded object for *recall*, then follow its `supersedes` edge and return
+the replacement. That is a candidate-generation strategy, so it belongs at M4 behind
+the strategy interface, evaluated against this suite — which is exactly what having
+the suite is for.
+
+**A better embedder is not uniformly better.** `nomic-embed-text` is *worse* at exact
+identifiers (100% → 93.8%). This is the concrete case for the hybrid: the vector term
+finds paraphrase, and the lexical term stops a project name or a port number being
+smeared into semantic neighbours. Dropping either half would cost real accuracy.
+
+**`scope_isolation` is 77.8% on both backends**, which means it is not a semantic
+problem — no embedder will move it. Isolation itself is intact (zero leaks in both);
+what fails is *ranking within* the correct scope when global and project objects
+compete. Also an M4 concern.
 
 ## Backend parity
 

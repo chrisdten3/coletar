@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # Hosted MCP server (§9). ChatGPT only accepts remote HTTPS servers, so this
     # is always an HTTP transport, never stdio, outside of local development.
     mcp_port: int = 8788
+    # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
+    # Empty means the server refuses to start -- it never serves unauthenticated.
+    mcp_api_keys: str = ""
 
     # Retrieval. "hashing" is the default because the in-process store has to work
     # with nothing installed; "ollama" is what a real deployment runs, against the

@@ -28,7 +28,7 @@ async def test_search_ranks_higher_confidence_first():
     await store.put_object(weak)
     await store.put_object(strong)
     results = await store.search("what does chris prefer")
-    assert results[0][0].id == strong.id
+    assert results[0].obj.id == strong.id
 
 
 async def test_project_scoped_search_includes_global_and_excludes_other_projects():
@@ -46,7 +46,7 @@ async def test_project_scoped_search_includes_global_and_excludes_other_projects
         )
     )
 
-    found = {obj.id for obj, _ in await store.search("march", scope=scope)}
+    found = {hit.obj.id for hit in await store.search("march", scope=scope)}
 
     assert found == {mine.id, globally.id}
 
@@ -66,4 +66,4 @@ async def test_compression_retires_superseded_but_keeps_it_readable():
     assert not (await store.get_object(old.id)).is_active
     # Retired, not deleted: still there for the Context Inspector.
     assert await store.get_object(old.id) is not None
-    assert all(o.id != old.id for o, _ in await store.search("chris works"))
+    assert all(hit.obj.id != old.id for hit in await store.search("chris works"))

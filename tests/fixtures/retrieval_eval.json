@@ -1,0 +1,1036 @@
+{
+  "_notes": [
+    "M2.3's labelled retrieval evaluation set, expanded from M1.2's 20-query",
+    "relevance set. Queries carrying \"m1_2\": true are that original set verbatim,",
+    "so the published headline number stays computable and comparable while the",
+    "wider suite diagnoses *where* retrieval fails rather than only whether it does.",
+    "",
+    "Categories, per SCOPE \u00a75.1: exact_id, paraphrase, temporal, correction,",
+    "negation, scope_isolation, multi_hop, near_miss.",
+    "",
+    "\"expect\" is the object that should rank in the top k. \"expect_absent\" is an",
+    "object that must NOT appear at all \u2014 a stale fact a correction superseded, or",
+    "another project's object. A hit rate obtained by also returning the superseded",
+    "answer is not a retrieval win.",
+    "",
+    "Written and labelled before being measured against any implementation."
+  ],
+  "corpus": [
+    {
+      "key": "money_repr",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I prefer fixed-point integers in minor units over floating point doubles for representing money."
+    },
+    {
+      "key": "money_rounding",
+      "type": "decision",
+      "scope": "proj_ledger",
+      "content": "Ledger rounds monetary amounts exactly once, at presentation time, never during arithmetic."
+    },
+    {
+      "key": "currency_display",
+      "type": "memory",
+      "kind": "instruction",
+      "scope": "proj_ledger",
+      "content": "Always display currency amounts with the ISO 4217 code, not the symbol."
+    },
+    {
+      "key": "test_output_first",
+      "type": "memory",
+      "kind": "instruction",
+      "content": "Always show me the failing test output before proposing a fix."
+    },
+    {
+      "key": "test_framework",
+      "type": "fact",
+      "scope": "proj_ledger",
+      "content": "Ledger's test suite runs under pytest with asyncio_mode set to auto."
+    },
+    {
+      "key": "test_coverage_bar",
+      "type": "memory",
+      "kind": "goal",
+      "scope": "proj_ledger",
+      "content": "Ledger should not merge a pull request that drops line coverage below 85 percent."
+    },
+    {
+      "key": "python_version",
+      "type": "memory",
+      "kind": "fact",
+      "content": "I run Python 3.12 and manage every project with uv rather than pip or poetry."
+    },
+    {
+      "key": "type_checking",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I want mypy configured strict on every project, with type annotations on all public functions."
+    },
+    {
+      "key": "linting",
+      "type": "memory",
+      "kind": "preference",
+      "content": "Use ruff for both linting and formatting; do not add black or isort separately."
+    },
+    {
+      "key": "db_choice",
+      "type": "decision",
+      "scope": "proj_ledger",
+      "content": "Ledger stores its data in Postgres with pgvector, not in a dedicated graph database."
+    },
+    {
+      "key": "db_migrations",
+      "type": "memory",
+      "kind": "instruction",
+      "scope": "proj_ledger",
+      "content": "Write plain SQL migration files; do not introduce an ORM migration tool into Ledger."
+    },
+    {
+      "key": "deployment",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "Ledger deploys to Fly.io from the main branch on every merge."
+    },
+    {
+      "key": "invoicing_goal",
+      "type": "memory",
+      "kind": "goal",
+      "scope": "proj_ledger",
+      "content": "Ship the invoicing module before the end of the quarter."
+    },
+    {
+      "key": "invoicing_scope",
+      "type": "decision",
+      "scope": "proj_ledger",
+      "content": "The first invoicing release supports one-off invoices only; recurring billing is explicitly out of scope."
+    },
+    {
+      "key": "employer",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Chris is independent and consults through his own studio rather than working for an employer."
+    },
+    {
+      "key": "location",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Chris is based in Washington DC and works in the US Eastern timezone."
+    },
+    {
+      "key": "working_hours",
+      "type": "memory",
+      "kind": "inference",
+      "content": "Chris works late in the evening rather than early in the morning."
+    },
+    {
+      "key": "meeting_pref",
+      "type": "memory",
+      "kind": "preference",
+      "content": "Do not schedule anything before 10am; mornings are for focused work."
+    },
+    {
+      "key": "writing_voice",
+      "type": "memory",
+      "kind": "instruction",
+      "content": "Write in plain declarative prose. No bullet-point summaries unless I ask for a list."
+    },
+    {
+      "key": "code_comments",
+      "type": "memory",
+      "kind": "preference",
+      "content": "Comments should explain why a decision was made, not restate what the line does."
+    },
+    {
+      "key": "atlas_language",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_atlas",
+      "content": "The Atlas prototype is written in Rust."
+    },
+    {
+      "key": "atlas_status",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_atlas",
+      "content": "Atlas is paused until Ledger's invoicing work lands."
+    },
+    {
+      "key": "frontend",
+      "type": "memory",
+      "kind": "preference",
+      "content": "For web interfaces I use plain server-rendered HTML with a little vanilla JavaScript, not React."
+    },
+    {
+      "key": "api_style",
+      "type": "memory",
+      "kind": "preference",
+      "content": "Design REST endpoints around nouns and HTTP verbs; avoid RPC-style action URLs."
+    },
+    {
+      "key": "secret_handling",
+      "type": "memory",
+      "kind": "instruction",
+      "content": "Never put credentials in a repository; read every secret from the environment."
+    },
+    {
+      "key": "review_style",
+      "type": "memory",
+      "kind": "preference",
+      "content": "In code review, tell me the single most serious problem first instead of listing everything at once."
+    },
+    {
+      "key": "dependency_bar",
+      "type": "memory",
+      "kind": "instruction",
+      "content": "Do not add a new dependency unless the reason survives being said out loud."
+    },
+    {
+      "key": "error_handling",
+      "type": "memory",
+      "kind": "preference",
+      "content": "Raise a specific exception with a useful message instead of returning None on failure."
+    },
+    {
+      "key": "async_style",
+      "type": "decision",
+      "content": "Every storage and retrieval call in my projects is async, all the way down."
+    },
+    {
+      "key": "coffee",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Chris drinks his coffee black and does not take sugar."
+    },
+    {
+      "key": "pg_port",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "Ledger's Postgres runs on host port 5433, not the default 5432."
+    },
+    {
+      "key": "module_path",
+      "type": "artifact",
+      "scope": "proj_ledger",
+      "content": "ledger/money.py holds the Money value type and its arithmetic."
+    },
+    {
+      "key": "embed_model",
+      "type": "decision",
+      "scope": "proj_ledger",
+      "content": "Ledger embeds with nomic-embed-text at 768 dimensions."
+    },
+    {
+      "key": "ci_workflow",
+      "type": "fact",
+      "scope": "proj_ledger",
+      "content": "The CI workflow file is .github/workflows/verify.yml."
+    },
+    {
+      "key": "licence",
+      "type": "memory",
+      "kind": "fact",
+      "content": "All of my open source work ships under the MIT licence."
+    },
+    {
+      "key": "employer_v1",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Chris works at Acme Corp."
+    },
+    {
+      "key": "employer_v2",
+      "type": "memory",
+      "kind": "correction",
+      "content": "Chris is independent and consults through his own studio.",
+      "supersedes": "employer_v1"
+    },
+    {
+      "key": "db_v1",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "Ledger stored its data in MySQL during the prototype."
+    },
+    {
+      "key": "db_v2",
+      "type": "memory",
+      "kind": "correction",
+      "scope": "proj_ledger",
+      "content": "Ledger moved from MySQL to Postgres in March.",
+      "supersedes": "db_v1"
+    },
+    {
+      "key": "deploy_v1",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "Ledger deployed to Heroku when it launched."
+    },
+    {
+      "key": "deploy_v2",
+      "type": "memory",
+      "kind": "correction",
+      "scope": "proj_ledger",
+      "content": "Ledger now deploys to Fly.io on every merge to main.",
+      "supersedes": "deploy_v1"
+    },
+    {
+      "key": "no_orm",
+      "type": "memory",
+      "kind": "preference",
+      "scope": "proj_ledger",
+      "content": "I never use an ORM in Ledger; every query is written as plain SQL."
+    },
+    {
+      "key": "no_docker_local",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I don't use Docker for local development, only in CI."
+    },
+    {
+      "key": "no_mocks",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I don't want database tests written against mocks."
+    },
+    {
+      "key": "no_global_state",
+      "type": "memory",
+      "kind": "instruction",
+      "content": "Never introduce module-level mutable global state."
+    },
+    {
+      "key": "beacon_language",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_beacon",
+      "content": "Beacon is written in Go."
+    },
+    {
+      "key": "beacon_db",
+      "type": "decision",
+      "scope": "proj_beacon",
+      "content": "Beacon stores events in SQLite rather than Postgres."
+    },
+    {
+      "key": "beacon_deploy",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_beacon",
+      "content": "Beacon deploys to a Raspberry Pi on my home network."
+    },
+    {
+      "key": "atlas_deploy",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_atlas",
+      "content": "Atlas has never been deployed anywhere; it is a prototype."
+    },
+    {
+      "key": "invoice_owner",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "Priya owns the invoicing module."
+    },
+    {
+      "key": "priya_timezone",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Priya works from Lisbon, in Western European Time."
+    },
+    {
+      "key": "money_owner",
+      "type": "memory",
+      "kind": "fact",
+      "scope": "proj_ledger",
+      "content": "I own the money and currency code myself."
+    },
+    {
+      "key": "release_gate",
+      "type": "decision",
+      "scope": "proj_ledger",
+      "content": "Nothing ships in Ledger without the module owner's review."
+    },
+    {
+      "key": "coffee_order",
+      "type": "memory",
+      "kind": "fact",
+      "content": "Chris drinks his coffee black, no sugar."
+    },
+    {
+      "key": "tea",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I prefer tea in the afternoon and coffee in the morning."
+    },
+    {
+      "key": "money_charity",
+      "type": "memory",
+      "kind": "fact",
+      "content": "I donate a fixed share of my income to charity each year."
+    },
+    {
+      "key": "rust_opinion",
+      "type": "memory",
+      "kind": "preference",
+      "content": "I like Rust but would not choose it for a web backend."
+    },
+    {
+      "key": "python_web",
+      "type": "memory",
+      "kind": "preference",
+      "content": "For web backends I reach for Python with FastAPI."
+    }
+  ],
+  "queries": [
+    {
+      "query": "how should I represent monetary amounts in code",
+      "expect": "money_repr",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "when does Ledger round currency values",
+      "expect": "money_rounding",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "what Python version and package manager does Chris use",
+      "expect": "python_version",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "should I run a static type checker on this project",
+      "expect": "type_checking",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "which linter and formatter should I use",
+      "expect": "linting",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what database does Ledger use",
+      "expect": "db_choice",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "how are database migrations written for Ledger",
+      "expect": "db_migrations",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "where does Ledger get deployed",
+      "expect": "deployment",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "what is the deadline for the invoicing module",
+      "expect": "invoicing_goal",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "does the first invoicing release handle recurring billing",
+      "expect": "invoicing_scope",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "who does Chris work for",
+      "expect": "employer",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what timezone is Chris in",
+      "expect": "location",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "is it ok to book a meeting at 9am",
+      "expect": "meeting_pref",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "how should I write prose for Chris",
+      "expect": "writing_voice",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what should code comments contain",
+      "expect": "code_comments",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what language is the Atlas prototype written in",
+      "expect": "atlas_language",
+      "category": "paraphrase",
+      "scope": "proj_atlas",
+      "m1_2": true
+    },
+    {
+      "query": "what testing framework does Ledger use",
+      "expect": "test_framework",
+      "category": "paraphrase",
+      "scope": "proj_ledger",
+      "m1_2": true
+    },
+    {
+      "query": "should I show test failures before fixing them",
+      "expect": "test_output_first",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "how should credentials be stored",
+      "expect": "secret_handling",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what should I do when a function fails",
+      "expect": "error_handling",
+      "category": "paraphrase",
+      "m1_2": true
+    },
+    {
+      "query": "what port is Postgres on",
+      "expect": "pg_port",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "5433",
+      "expect": "pg_port",
+      "category": "exact_id",
+      "scope": "proj_ledger",
+      "note": "bare identifier"
+    },
+    {
+      "query": "which file holds the Money type",
+      "expect": "module_path",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "ledger/money.py",
+      "expect": "module_path",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what embedding model and how many dimensions",
+      "expect": "embed_model",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "nomic-embed-text",
+      "expect": "embed_model",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "where is the CI workflow defined",
+      "expect": "ci_workflow",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "verify.yml",
+      "expect": "ci_workflow",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what licence does Chris use",
+      "expect": "licence",
+      "category": "exact_id"
+    },
+    {
+      "query": "MIT",
+      "expect": "licence",
+      "category": "exact_id",
+      "note": "a bare licence identifier"
+    },
+    {
+      "query": "Fly.io",
+      "expect": "deploy_v2",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "who is Priya",
+      "expect": "priya_timezone",
+      "category": "exact_id"
+    },
+    {
+      "query": "how do I keep track of amounts of money",
+      "expect": "money_repr",
+      "category": "paraphrase"
+    },
+    {
+      "query": "should I write raw SQL or use a query builder",
+      "expect": "no_orm",
+      "category": "paraphrase",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what is my stance on containers when coding locally",
+      "expect": "no_docker_local",
+      "category": "paraphrase"
+    },
+    {
+      "query": "do I want stubs standing in for the database in tests",
+      "expect": "no_mocks",
+      "category": "paraphrase"
+    },
+    {
+      "query": "which language did I choose for the home monitoring tool",
+      "expect": "beacon_language",
+      "category": "paraphrase",
+      "scope": "proj_beacon"
+    },
+    {
+      "query": "what runs the beacon service",
+      "expect": "beacon_deploy",
+      "category": "paraphrase",
+      "scope": "proj_beacon"
+    },
+    {
+      "query": "what framework do I pick for server side web work",
+      "expect": "python_web",
+      "category": "paraphrase"
+    },
+    {
+      "query": "how do I feel about systems languages for web services",
+      "expect": "rust_opinion",
+      "category": "paraphrase"
+    },
+    {
+      "query": "what beverage does Chris drink",
+      "expect": "coffee_order",
+      "category": "paraphrase"
+    },
+    {
+      "query": "is there a review requirement before release",
+      "expect": "release_gate",
+      "category": "paraphrase",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "where does Ledger deploy now",
+      "expect": "deploy_v2",
+      "category": "temporal",
+      "scope": "proj_ledger",
+      "expect_absent": "deploy_v1",
+      "note": "the superseded answer must not surface"
+    },
+    {
+      "query": "what database does Ledger use currently",
+      "expect": "db_v2",
+      "category": "temporal",
+      "scope": "proj_ledger",
+      "expect_absent": "db_v1"
+    },
+    {
+      "query": "who does Chris work for these days",
+      "expect": "employer_v2",
+      "category": "temporal",
+      "expect_absent": "employer_v1"
+    },
+    {
+      "query": "what changed about Ledger's database",
+      "expect": "db_v2",
+      "category": "temporal",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "when did Ledger switch databases",
+      "expect": "db_v2",
+      "category": "temporal",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "has Atlas ever shipped",
+      "expect": "atlas_deploy",
+      "category": "temporal",
+      "scope": "proj_atlas"
+    },
+    {
+      "query": "is Chris still at Acme",
+      "expect": "employer_v2",
+      "category": "correction",
+      "expect_absent": "employer_v1"
+    },
+    {
+      "query": "is Ledger on Heroku",
+      "expect": "deploy_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "deploy_v1"
+    },
+    {
+      "query": "is Ledger on MySQL",
+      "expect": "db_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "db_v1"
+    },
+    {
+      "query": "Acme Corp",
+      "expect": "employer_v2",
+      "category": "correction",
+      "expect_absent": "employer_v1",
+      "note": "naming the stale employer must still return the current fact"
+    },
+    {
+      "query": "Heroku",
+      "expect": "deploy_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "deploy_v1"
+    },
+    {
+      "query": "MySQL",
+      "expect": "db_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "db_v1"
+    },
+    {
+      "query": "what do I avoid using for database access",
+      "expect": "no_orm",
+      "category": "negation",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "am I allowed to add an ORM",
+      "expect": "no_orm",
+      "category": "negation",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "should tests use mocks for the database",
+      "expect": "no_mocks",
+      "category": "negation"
+    },
+    {
+      "query": "can I use module level globals",
+      "expect": "no_global_state",
+      "category": "negation"
+    },
+    {
+      "query": "do I run Docker on my laptop",
+      "expect": "no_docker_local",
+      "category": "negation"
+    },
+    {
+      "query": "what must never be introduced into the codebase",
+      "expect": "no_global_state",
+      "category": "negation"
+    },
+    {
+      "query": "things I refuse to use",
+      "expect": "no_orm",
+      "category": "negation",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what language is this project written in",
+      "expect": "beacon_language",
+      "category": "scope_isolation",
+      "scope": "proj_beacon",
+      "expect_absent": "atlas_language"
+    },
+    {
+      "query": "what language is this project written in",
+      "expect": "atlas_language",
+      "category": "scope_isolation",
+      "scope": "proj_atlas",
+      "expect_absent": "beacon_language"
+    },
+    {
+      "query": "what database does this project use",
+      "expect": "beacon_db",
+      "category": "scope_isolation",
+      "scope": "proj_beacon",
+      "expect_absent": "db_choice"
+    },
+    {
+      "query": "what database does this project use",
+      "expect": "db_choice",
+      "category": "scope_isolation",
+      "scope": "proj_ledger",
+      "expect_absent": "beacon_db"
+    },
+    {
+      "query": "where does this project deploy",
+      "expect": "beacon_deploy",
+      "category": "scope_isolation",
+      "scope": "proj_beacon",
+      "expect_absent": "deploy_v2"
+    },
+    {
+      "query": "where does this project deploy",
+      "expect": "deploy_v2",
+      "category": "scope_isolation",
+      "scope": "proj_ledger",
+      "expect_absent": "beacon_deploy"
+    },
+    {
+      "query": "what is the deployment story",
+      "expect": "atlas_deploy",
+      "category": "scope_isolation",
+      "scope": "proj_atlas",
+      "expect_absent": "beacon_deploy"
+    },
+    {
+      "query": "my licence and my language choice",
+      "expect": "licence",
+      "category": "scope_isolation",
+      "scope": "proj_beacon",
+      "note": "a global fact must still be visible from inside a project"
+    },
+    {
+      "query": "what package manager do I use",
+      "expect": "python_version",
+      "category": "scope_isolation",
+      "scope": "proj_beacon",
+      "note": "global preference reachable from any project"
+    },
+    {
+      "query": "what timezone is the invoicing owner in",
+      "expect": "invoice_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger",
+      "note": "needs invoice_owner then priya_timezone"
+    },
+    {
+      "query": "who do I need review from to ship invoicing",
+      "expect": "release_gate",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "who reviews the money code",
+      "expect": "money_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "which module does Priya own",
+      "expect": "invoice_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "is the invoicing owner in my timezone",
+      "expect": "priya_timezone",
+      "category": "multi_hop"
+    },
+    {
+      "query": "what does Chris drink in the morning",
+      "expect": "tea",
+      "category": "near_miss",
+      "note": "coffee_order shares vocabulary; tea names both times of day"
+    },
+    {
+      "query": "how does Chris take his coffee",
+      "expect": "coffee_order",
+      "category": "near_miss"
+    },
+    {
+      "query": "what does Chris do with his money each year",
+      "expect": "money_charity",
+      "category": "near_miss",
+      "note": "money_repr is the obvious lexical match and is wrong"
+    },
+    {
+      "query": "how should money be represented in code",
+      "expect": "money_repr",
+      "category": "near_miss"
+    },
+    {
+      "query": "would I build a web service in Rust",
+      "expect": "rust_opinion",
+      "category": "near_miss"
+    },
+    {
+      "query": "what do I build web services with",
+      "expect": "python_web",
+      "category": "near_miss"
+    },
+    {
+      "query": "does Ledger use an ORM",
+      "expect": "no_orm",
+      "category": "near_miss",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what owns the money code",
+      "expect": "money_owner",
+      "category": "near_miss",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what did Ledger use before Postgres",
+      "expect": "db_v2",
+      "category": "temporal",
+      "scope": "proj_ledger",
+      "note": "the correction names the prior state, so it answers both directions"
+    },
+    {
+      "query": "what was Ledger's original deployment target",
+      "expect": "deploy_v2",
+      "category": "temporal",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "has Chris changed jobs",
+      "expect": "employer_v2",
+      "category": "temporal",
+      "expect_absent": "employer_v1"
+    },
+    {
+      "query": "what is true about my employment right now",
+      "expect": "employer_v2",
+      "category": "temporal",
+      "expect_absent": "employer_v1"
+    },
+    {
+      "query": "correct me on where Ledger runs",
+      "expect": "deploy_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "deploy_v1"
+    },
+    {
+      "query": "I think Chris is at Acme, is that right",
+      "expect": "employer_v2",
+      "category": "correction",
+      "expect_absent": "employer_v1"
+    },
+    {
+      "query": "did the database choice change",
+      "expect": "db_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "db_v1"
+    },
+    {
+      "query": "prototype database",
+      "expect": "db_v2",
+      "category": "correction",
+      "scope": "proj_ledger",
+      "expect_absent": "db_v1",
+      "note": "the stale object is the closer lexical match and must still lose"
+    },
+    {
+      "query": "is an ORM acceptable here",
+      "expect": "no_orm",
+      "category": "negation",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what is banned in this codebase",
+      "expect": "no_global_state",
+      "category": "negation"
+    },
+    {
+      "query": "should I containerise my dev environment",
+      "expect": "no_docker_local",
+      "category": "negation"
+    },
+    {
+      "query": "write the database tests against a fake",
+      "expect": "no_mocks",
+      "category": "negation"
+    },
+    {
+      "query": "what hours does the person who owns invoicing keep",
+      "expect": "priya_timezone",
+      "category": "multi_hop"
+    },
+    {
+      "query": "do I need someone else to approve invoicing changes",
+      "expect": "invoice_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "can I merge money changes without review",
+      "expect": "money_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "which modules do I own versus delegate",
+      "expect": "money_owner",
+      "category": "multi_hop",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "768",
+      "expect": "embed_model",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "what is the default Postgres port I avoid",
+      "expect": "pg_port",
+      "category": "exact_id",
+      "scope": "proj_ledger"
+    },
+    {
+      "query": "SQLite",
+      "expect": "beacon_db",
+      "category": "exact_id",
+      "scope": "proj_beacon"
+    },
+    {
+      "query": "Raspberry Pi",
+      "expect": "beacon_deploy",
+      "category": "exact_id",
+      "scope": "proj_beacon"
+    },
+    {
+      "query": "what is my afternoon drink",
+      "expect": "tea",
+      "category": "near_miss"
+    },
+    {
+      "query": "fixed share",
+      "expect": "money_charity",
+      "category": "near_miss",
+      "note": "'fixed' also appears in the fixed-point money preference"
+    },
+    {
+      "query": "Go",
+      "expect": "beacon_language",
+      "category": "near_miss",
+      "scope": "proj_beacon"
+    }
+  ]
+}

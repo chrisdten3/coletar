@@ -16,7 +16,7 @@ from pathlib import Path
 
 from coletar.retrieval.embedding import Embedder, build_embedder, tokenize
 from coletar.retrieval.index import VectorIndex
-from coletar.retrieval.ranking import lexical_score, rank_score
+from coletar.retrieval.ranking import Scored, lexical_score, rank_score
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     ContextObject,
@@ -49,6 +49,10 @@ class InMemoryStore:
         self._path = path
         if path is not None and path.exists():
             self._load()
+
+    @property
+    def embedder_model(self) -> str:
+        return self._embedder.model
 
     # -- snapshot -----------------------------------------------------------
     def _load(self) -> None:
@@ -221,7 +225,7 @@ class InMemoryStore:
         *,
         scope: Scope | None = None,
         top_k: int = 12,
-    ) -> list[tuple[ContextObject, float]]:
+    ) -> list[Scored]:
         await self._ensure_embeddings()
         query_vector = (await self._embedder.embed([query]))[0]
         query_tokens = set(tokenize(query))
@@ -231,8 +235,11 @@ class InMemoryStore:
         superseded = self._superseded_ids()
         now = datetime.now(UTC)
 
-        scored: list[tuple[ContextObject, float]] = []
+        scored: list[Scored] = []
         for obj in self._objects.values():
+            # Stage 1, the policy filter (§5.1): retired and superseded objects and
+            # anything out of scope never reach candidate generation at all, so no
+            # later stage has to remember to exclude them.
             if not obj.is_active or obj.id in superseded:
                 continue
             if not _in_search_scope(obj.scope, scope):
@@ -242,9 +249,9 @@ class InMemoryStore:
             if lexical <= 0.0 and vector <= 0.0:
                 continue
             scored.append(
-                (
-                    obj,
-                    rank_score(
+                Scored(
+                    obj=obj,
+                    components=rank_score(
                         lexical=lexical,
                         vector=vector,
                         confidence=obj.confidence,
@@ -253,10 +260,13 @@ class InMemoryStore:
                     ),
                 )
             )
-        scored.sort(key=lambda pair: (pair[1], pair[0].id), reverse=True)
+        scored.sort(key=lambda hit: (hit.score, hit.obj.id), reverse=True)
         # Only the returned slice is copied, so the cost is bounded by top_k rather
         # than by the size of the corpus.
-        return [(obj.model_copy(deep=True), score) for obj, score in scored[:top_k]]
+        return [
+            Scored(obj=hit.obj.model_copy(deep=True), components=hit.components)
+            for hit in scored[:top_k]
+        ]
 
 
 def _in_search_scope(object_scope: Scope, query_scope: Scope | None) -> bool:

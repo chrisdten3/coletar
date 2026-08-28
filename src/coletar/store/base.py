@@ -25,12 +25,22 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from coletar.retrieval.ranking import Scored
 from coletar.schema.events import Event
 from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
 
 
 @runtime_checkable
 class Store(Protocol):
+    @property
+    def embedder_model(self) -> str:
+        """Which embedder produced this store's vectors.
+
+        The retrieval trace records it, because a measured result that cannot be
+        attributed to the model that produced it is not reproducible.
+        """
+        ...
+
     async def put_object(self, obj: ContextObject, *, event: Event | None = None) -> ContextObject:
         """Insert or update one object and append the matching event, atomically.
 
@@ -91,7 +101,13 @@ class Store(Protocol):
         *,
         scope: Scope | None = None,
         top_k: int = 12,
-    ) -> list[tuple[ContextObject, float]]:
+    ) -> list[Scored]:
         """Hybrid vector + lexical retrieval over active objects, scope per the
-        module docstring. Returns (object, score) descending."""
+        module docstring. Returns `Scored` descending.
+
+        Backends narrow candidates however they can -- the in-process store scans,
+        Postgres uses an ANN index unioned with a sparse match -- but all of them
+        blend through `rank_score`, so a backend swap changes performance and not
+        which memory a model sees (§5.1).
+        """
         ...

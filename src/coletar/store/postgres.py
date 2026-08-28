@@ -28,7 +28,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 
 from coletar.retrieval.embedding import Embedder, build_embedder, cosine, tokenize
-from coletar.retrieval.ranking import lexical_score, rank_score
+from coletar.retrieval.ranking import Scored, lexical_score, rank_score
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     ContextObject,
@@ -95,6 +95,10 @@ class PostgresStore:
         self.embedding_dim = embedding_dim
         self._embedder = embedder or build_embedder()
         self._pool: AsyncConnectionPool | None = None
+
+    @property
+    def embedder_model(self) -> str:
+        return self._embedder.model
 
     async def _get_pool(self) -> AsyncConnectionPool:
         if self._pool is None:
@@ -348,7 +352,7 @@ class PostgresStore:
         *,
         scope: Scope | None = None,
         top_k: int = 12,
-    ) -> list[tuple[ContextObject, float]]:
+    ) -> list[Scored]:
         query_vector = (await self._embedder.embed([query]))[0]
         query_array = np.asarray(query_vector, dtype=np.float32)
 
@@ -396,7 +400,7 @@ class PostgresStore:
             rows = await cur.fetchall()
 
         query_tokens = set(tokenize(query))
-        scored: list[tuple[ContextObject, float]] = []
+        scored: list[Scored] = []
         for row in rows:
             obj = _to_record(row)
             # pgvector hands back its own `Vector` wrapper; `to_list()` is its
@@ -408,9 +412,9 @@ class PostgresStore:
             if lexical <= 0.0 and similarity <= 0.0:
                 continue
             scored.append(
-                (
-                    obj,
-                    rank_score(
+                Scored(
+                    obj=obj,
+                    components=rank_score(
                         lexical=lexical,
                         vector=similarity,
                         confidence=obj.confidence,
@@ -418,7 +422,7 @@ class PostgresStore:
                     ),
                 )
             )
-        scored.sort(key=lambda pair: (pair[1], pair[0].id), reverse=True)
+        scored.sort(key=lambda hit: (hit.score, hit.obj.id), reverse=True)
         return scored[:top_k]
 
 
