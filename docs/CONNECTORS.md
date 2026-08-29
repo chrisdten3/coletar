@@ -160,6 +160,31 @@ When I say "remember this," or state a durable preference, fact, or decision, sa
 to coletar rather than only to your own memory, so it reaches my other tools too.
 ```
 
+### Measured: the snippet is required, not recommended
+
+Tested against the deployed connector on 28 Aug 2026, changing one variable at a time.
+Identical question — *"How should I represent money in code?"* — identical connector,
+identical tool descriptions:
+
+| Configuration | `search_context` fired? |
+|---|---|
+| No Project. MCP server-level `instructions` only | **No** — answered generically |
+| Project with the snippet above | **Yes** — unprompted, and the answer was personalised |
+
+The MCP server sets an `instructions` field, and it is written to say exactly what the
+snippet says. It was not enough on its own: claude.ai either does not surface it to the
+model or weights it below the model's own confidence that it can answer a general
+question unaided.
+
+**So there is no zero-setup path to reliable unprompted reads on claude.ai.** The
+snippet is a requirement. It is one-time per Project rather than per conversation, but
+it is real setup, and any claim about read reliability has to carry the qualifier
+*"inside a Project with the snippet"* — otherwise it describes something the product
+cannot deliver.
+
+Outside a Project the connector still works on explicit request (*"use coletar to…"*),
+which is the difference between read-on-request and read-by-reflex.
+
 ### A note on tool permissions
 
 Set **search_context to allow automatically**. Reading is the half with no competitor

@@ -353,6 +353,15 @@ table, and OpenAI's Import feature validates the approach by doing the same thin
 
 ### M3.5 Tool-use reliability harness
 
+**The bars need a qualifier before they are measured.** Testing on 28 Aug 2026 showed
+`search_context` fires unprompted *inside a Project carrying the instruction snippet*
+and does not fire without one — with the MCP server's own `instructions` field set and
+saying the same thing. So "≥80% read-at-start" is only meaningful as "≥80% inside a
+Project with the snippet". Measured any other way it would describe a configuration
+the product cannot deliver.
+
+
+
 A different kind of measurement from anything so far. Every bar to date is
 deterministic — same input, same output. This measures whether a *model chooses* to
 call a tool, which is non-deterministic and needs enough trials to be a rate rather
