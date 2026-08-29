@@ -213,8 +213,15 @@ _UNAUTHORIZED_BODY = (
 )
 
 
+def _origin(headers: Iterable[tuple[bytes, bytes]]) -> str | None:
+    for name, value in headers:
+        if name.lower() == b"origin":
+            return value.decode("latin-1")
+    return None
+
+
 class AuthMiddleware:
-    """Pure ASGI middleware. Wraps the MCP app so every HTTP request is gated."""
+    """Pure ASGI middleware. Wraps the app so every HTTP request is gated."""
 
     def __init__(
         self,
@@ -222,10 +229,26 @@ class AuthMiddleware:
         authenticator: Authenticator,
         *,
         exempt_paths: frozenset[str] = EXEMPT_PATHS,
+        allowed_origins: frozenset[str] = frozenset(),
     ) -> None:
         self.app = app
         self.authenticator = authenticator
         self.exempt_paths = exempt_paths
+        # An allowlist, never a wildcard. These endpoints are authenticated, and a
+        # wildcard would let any page the user visits attempt to spend their token.
+        self.allowed_origins = allowed_origins
+
+    def _cors_headers(self, origin: str | None) -> list[tuple[bytes, bytes]]:
+        if origin is None or origin not in self.allowed_origins:
+            return []
+        return [
+            (b"access-control-allow-origin", origin.encode()),
+            (b"access-control-allow-headers", b"authorization, x-api-key, content-type"),
+            (b"access-control-allow-methods", b"POST, OPTIONS"),
+            (b"access-control-max-age", b"600"),
+            # The origin decides the response, so caches must not share it.
+            (b"vary", b"Origin"),
+        ]
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         # Lifespan and websocket scopes are not credentialed HTTP requests; passing
@@ -234,7 +257,22 @@ class AuthMiddleware:
             await self.app(scope, receive, send)
             return
 
-        principal = self.authenticator.authenticate(bearer_token(scope.get("headers", [])))
+        headers = scope.get("headers", [])
+        origin = _origin(headers)
+        cors = self._cors_headers(origin)
+
+        # A CORS preflight carries no credentials by definition — the browser strips
+        # them — so gating it on auth would make every cross-origin call fail before
+        # the real request was ever sent. It reveals nothing: the response is a fixed
+        # statement about which methods and headers are permitted.
+        if scope.get("method") == "OPTIONS" and origin is not None:
+            status = 204 if cors else 403
+            await send({"type": "http.response.start", "status": status,
+                        "headers": [*cors, (b"content-length", b"0")]})
+            await send({"type": "http.response.body", "body": b""})
+            return
+
+        principal = self.authenticator.authenticate(bearer_token(headers))
         if principal is None:
             await send(
                 {
@@ -246,11 +284,19 @@ class AuthMiddleware:
                         # leaving it to guess.
                         (b"www-authenticate", b'Bearer realm="coletar"'),
                         (b"content-length", str(len(_UNAUTHORIZED_BODY)).encode()),
+                        # Without these the browser hides the 401 from the caller and
+                        # it presents as an unexplained network failure.
+                        *cors,
                     ],
                 }
             )
             await send({"type": "http.response.body", "body": _UNAUTHORIZED_BODY})
             return
 
+        async def send_with_cors(message: dict[str, Any]) -> None:
+            if message["type"] == "http.response.start" and cors:
+                message = {**message, "headers": [*message.get("headers", []), *cors]}
+            await send(message)
+
         with principal_scope(principal):
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, send_with_cors)

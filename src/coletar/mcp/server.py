@@ -373,12 +373,27 @@ def transport_security() -> TransportSecuritySettings | None:
     )
 
 
-def build_app() -> AuthMiddleware:
-    """The served ASGI app: the MCP streamable-HTTP app behind the auth gate."""
-    return AuthMiddleware(
-        mcp.streamable_http_app(transport_security=transport_security()),
-        build_authenticator(),
+def allowed_origins() -> frozenset[str]:
+    return frozenset(
+        origin.strip()
+        for origin in get_settings().cors_allow_origins.split(",")
+        if origin.strip()
     )
+
+
+def build_app() -> AuthMiddleware:
+    """The served ASGI app: the MCP streamable-HTTP app plus the browser bridge's two
+    REST endpoints, all behind the same auth gate and the same tenancy."""
+    from starlette.routing import Route
+
+    from coletar.mcp import rest
+
+    app = mcp.streamable_http_app(transport_security=transport_security())
+    # Added to the same Starlette app rather than mounted separately, so there is one
+    # auth gate and one place a route can be exposed by accident.
+    for path, endpoint, methods in rest.routes():
+        app.router.routes.append(Route(path, endpoint, methods=[*methods, "OPTIONS"]))
+    return AuthMiddleware(app, build_authenticator(), allowed_origins=allowed_origins())
 
 
 #: Hosts that mean "reachable from outside this machine".

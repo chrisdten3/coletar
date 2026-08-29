@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""
+    # Origins the browser bridge may call from. An allowlist, never a wildcard: these
+    # endpoints are authenticated, and a wildcard would let any page a user visits
+    # attempt to spend their token.
+    cors_allow_origins: str = "https://claude.ai,https://chatgpt.com,https://chat.openai.com"
 
     # Retrieval. "hashing" is the default because the in-process store has to work
     # with nothing installed; "ollama" is what a real deployment runs, against the

@@ -1,0 +1,157 @@
+// coletar composer bridge.
+//
+// THE BOUNDARY, and it is the reason this extension is defensible:
+//
+//   This script reads the *composer* — the box you type into — and nothing else.
+//   It never reads the assistant's replies, and it never reads conversation
+//   history. Reading what you type into a text field is the category browser
+//   software has always occupied: password managers, text expanders, spell
+//   checkers. Reading the model's Output is what both providers' terms name, and
+//   this does not do it.
+//
+//   That is enforced structurally rather than promised. COMPOSERS below is the
+//   only DOM lookup in this file. There is no selector for a message, a response
+//   or a transcript, so there is no code path that could read one.
+//
+// It does two things, both from your own text:
+//   RECALL   pull relevant memory into the box, visibly, so you see it before sending
+//   CAPTURE  offer what you typed to coletar, whose extractor decides if anything
+//            durable is in it (it usually says no)
+
+const COMPOSERS = [
+  'div[contenteditable="true"]',
+  "textarea",
+];
+
+const MARKER = "— coletar —";
+
+const settings = {
+  endpoint: "",
+  apiKey: "",
+  recall: true,
+  capture: true,
+};
+
+chrome.storage.sync.get(settings, (loaded) => Object.assign(settings, loaded));
+chrome.storage.onChanged.addListener((changes) => {
+  for (const [key, { newValue }] of Object.entries(changes)) settings[key] = newValue;
+});
+
+// The single point at which this script touches the page. Everything else works
+// on the string it returns.
+function composer() {
+  for (const selector of COMPOSERS) {
+    const candidates = [...document.querySelectorAll(selector)];
+    const visible = candidates.filter((el) => el.offsetParent !== null && !el.disabled);
+    if (visible.length) return visible[visible.length - 1];
+  }
+  return null;
+}
+
+function readComposer(el) {
+  return (el.value !== undefined ? el.value : el.innerText || "").trim();
+}
+
+function writeComposer(el, text) {
+  if (el.value !== undefined) {
+    el.value = text;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  } else {
+    el.focus();
+    // execCommand keeps the site's own editor state consistent; setting innerText
+    // directly leaves React frameworks believing the box is still empty.
+    document.execCommand("selectAll", false, null);
+    document.execCommand("insertText", false, text);
+  }
+}
+
+async function call(path, body) {
+  if (!settings.endpoint || !settings.apiKey) return null;
+  try {
+    const response = await fetch(settings.endpoint.replace(/\/$/, "") + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": settings.apiKey },
+      body: JSON.stringify({ ...body, surface: location.hostname }),
+    });
+    if (!response.ok) {
+      toast(response.status === 401 ? "coletar: key rejected" : `coletar: ${response.status}`);
+      return null;
+    }
+    return await response.json();
+  } catch (err) {
+    toast("coletar: unreachable");
+    return null;
+  }
+}
+
+function toast(message) {
+  const el = document.createElement("div");
+  el.textContent = message;
+  el.style.cssText =
+    "position:fixed;bottom:20px;right:20px;z-index:2147483647;padding:8px 14px;" +
+    "border-radius:8px;background:#1c1c1c;color:#eee;font:13px system-ui;" +
+    "border:1px solid #444;opacity:0.95";
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+// RECALL. Explicit, and visible: the memory goes into the box above what you wrote,
+// so you read it and send it yourself. Nothing is added to a message you did not see.
+async function recall() {
+  const el = composer();
+  if (!el) return;
+  const text = readComposer(el);
+  if (!text || text.includes(MARKER)) return;
+
+  const data = await call("/v1/search", { query: text, top_k: 6 });
+  if (!data || !data.prompt_block) {
+    toast("coletar: nothing relevant");
+    return;
+  }
+  writeComposer(el, `${data.prompt_block}\n\n${MARKER}\n\n${text}`);
+  toast(`coletar: added ${data.results.length} memor${data.results.length === 1 ? "y" : "ies"}`);
+}
+
+// CAPTURE. Passive, and filtered server-side: the same precision-first extractor the
+// local proxy uses decides whether the turn contained anything durable. Most turns
+// contain nothing and store nothing.
+let lastCaptured = "";
+async function capture() {
+  if (!settings.capture) return;
+  const el = composer();
+  if (!el) return;
+  let text = readComposer(el);
+  if (!text || text === lastCaptured) return;
+  // Never send back an injected block as though the user had typed it.
+  if (text.includes(MARKER)) text = text.split(MARKER).pop().trim();
+  if (!text) return;
+  lastCaptured = text;
+  const data = await call("/v1/capture", { text });
+  if (data && data.count) toast(`coletar: remembered ${data.count}`);
+}
+
+document.addEventListener(
+  "keydown",
+  (event) => {
+    const el = composer();
+    if (!el) return;
+    // Cmd/Ctrl+Shift+M — pull memory in.
+    if (event.key.toLowerCase() === "m" && event.shiftKey && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      if (settings.recall) recall();
+      return;
+    }
+    // Enter sends on both surfaces; read the box before the site clears it.
+    if (event.key === "Enter" && !event.shiftKey && document.activeElement === el) capture();
+  },
+  true,
+);
+
+document.addEventListener(
+  "click",
+  (event) => {
+    const button = event.target.closest?.('button[type="submit"], button[aria-label*="end" i]');
+    if (button) capture();
+  },
+  true,
+);

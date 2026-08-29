@@ -334,6 +334,35 @@ fills from tier-1 surfaces (§4.1) regardless.
 No Anthropic API key is needed for any of this. Claude's cloud calls *our* endpoint;
 the credential that matters is a coletar token.
 
+### M3.6 Composer bridge — web capture without a Project ✅
+
+Measured in M3.3: reliable unprompted reads on claude.ai require the instruction
+snippet in a Project, and the MCP server's own `instructions` field is not enough.
+This removes that requirement.
+
+- [x] REST surface on the same app, same auth, same tenancy: `/v1/search`,
+      `/v1/capture`, `/v1/remember`. Three endpoints and deliberately nothing for
+      enumerating a graph or reading conversations — an extension has no business
+      doing either (§4.1)
+- [x] CORS as an allowlist with an unauthenticated preflight. A browser strips
+      credentials from a preflight by definition, so gating it on auth would fail
+      every cross-origin call before the real request was sent. Rejections carry the
+      headers too, or the browser hides a 401 and it looks like a network failure
+- [x] MV3 extension reading **only the composer**. `COMPOSERS` is the single DOM
+      lookup in the file; there is no selector for a message, a response or a
+      transcript, so no code path can reach one
+- [x] Recall is explicit and visible — memory is written into the box above the
+      user's text, so they read it and send it themselves. Nothing is added to a
+      message they did not see
+- [x] Capture runs the precision-first extractor server-side rather than storing
+      turns, so most turns store nothing (4.3% false positives on the labelled set)
+- [ ] Measure whether recall+capture in practice beats the Project snippet
+
+**The line, and why it holds.** Reading what a user types into a text field is the
+category password managers, text expanders and spell checkers occupy. Reading the
+model's Output is what both providers' terms name. The extension does the first and
+has no ability to do the second.
+
 ### M3.4 Claude Code acquisition — guaranteed capture
 
 Added Aug 2026, and placed ahead of the reliability harness deliberately: guaranteed

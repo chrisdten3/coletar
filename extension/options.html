@@ -1,0 +1,42 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>coletar</title>
+<style>
+  body { font: 14px/1.5 system-ui; max-width: 34rem; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin: 1rem 0 0.25rem; font-weight: 600; }
+  input[type=text], input[type=password] { width: 100%; padding: 0.5rem; font: inherit; }
+  .row { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+  .note { color: #666; font-size: 13px; }
+  .boundary { border-left: 3px solid #888; padding-left: 0.9rem; margin-top: 1.5rem; }
+  button { margin-top: 1.25rem; padding: 0.5rem 1rem; font: inherit; }
+</style>
+<h1>coletar</h1>
+<p class="note">Your portable memory, in the prompt box.</p>
+
+<label for="endpoint">Server</label>
+<input id="endpoint" type="text" placeholder="https://coletar-mcp.fly.dev">
+
+<label for="apiKey">API key</label>
+<input id="apiKey" type="password" placeholder="sk-live-…">
+<p class="note">The same key your MCP connector uses. It decides which tenant you reach.</p>
+
+<div class="row"><input id="recall" type="checkbox"><label for="recall" style="margin:0">Recall — <kbd>⌘⇧M</kbd> pulls memory into the box</label></div>
+<div class="row"><input id="capture" type="checkbox"><label for="capture" style="margin:0">Capture — offer what you type to the extractor</label></div>
+
+<button id="save">Save</button>
+<p id="status" class="note"></p>
+
+<div class="boundary">
+  <strong>What this reads</strong>
+  <p class="note">
+    Only the box you type into. It never reads the assistant's replies and never reads
+    conversation history — there is no code path that could, because the composer is the
+    only element it looks up.
+  </p>
+  <p class="note">
+    Recall is manual and visible: memory is written into the box above your text, so you
+    read it and send it yourself. Capture offers what you typed to the server, where a
+    precision-first extractor usually decides nothing durable was in it.
+  </p>
+</div>
+<script src="options.js"></script>
