@@ -372,22 +372,45 @@ category password managers, text expanders and spell checkers occupy. Reading th
 model's Output is what both providers' terms name. The extension does the first and
 has no ability to do the second.
 
-### M3.4 Claude Code acquisition — guaranteed capture
+### M3.4 Claude Code acquisition — guaranteed capture ✅
 
 Added Aug 2026, and placed ahead of the reliability harness deliberately: guaranteed
 capture on a surface the user works in daily is worth more than tuning the odds on a
 surface where we are a guest. This is the largest unclaimed row in §4.1's tier-1
 table, and OpenAI's Import feature validates the approach by doing the same thing.
 
-- [ ] Read Claude Code's own artifacts — `~/.claude` session `.jsonl`, project files,
-      `CLAUDE.md` — through the same extractor the proxy uses
-- [ ] Hooks in `settings.json` for live capture, since they fire on session events
-      regardless of what the model decides to call
-- [ ] Raw transcripts retained separately from derived objects, so extraction can
-      improve and be re-run (the same rule as M6's export parsing)
-- [ ] **Scope boundary, from §4.1:** documented user-facing artifacts only. Not a
+- [x] Reads `~/.claude/projects/*/*.jsonl` through the same extractor and the same
+      ingest path the proxy and the browser bridge use. A turn typed into Claude Code
+      is not a different kind of statement, so it gets no different treatment
+- [x] **Only human turns.** In a real session file, 930 records had `type: "user"`
+      and **873 were `tool_result`** — 94% of what looks like the user speaking is
+      tool output being fed back. The discriminator is the content shape, never the
+      record type, so pasted file contents and stack traces never reach the extractor
+- [x] Working directory becomes the project scope, so a fact stated while working on
+      one repository does not surface as global context in another. The scope id is
+      derived from the directory name, not the path, so the graph never records where
+      on disk someone works
+- [x] Incremental by line offset, and `--rescan` re-reads everything for after the
+      extractor improves — deduplication makes that safe
+- [x] Transcripts stay on disk; events point at the session file rather than the
+      graph holding a second copy of the conversation
+- [x] `--dry-run`, which earned itself immediately (below)
+- [ ] Hooks in `settings.json` for live capture, so a turn is seen within seconds
+      rather than at the next import
+- [x] **Scope boundary, from §4.1:** documented user-facing artifacts only. Not a
       desktop client's Electron cache — undocumented, unstable, and adjacent to
       session tokens. Never the rendered page.
+
+**What the dry run found, and why it matters more than the feature.** Against 257
+real human turns the extractor scored **0% precision** — all three of its extractions
+were first-person sentences quoted inside pasted JSON or prompt templates full of
+`[placeholders]`. The M2.2 labelled set was conversational turns; a developer's
+transcript is a different domain, and precision measured on one does not transfer to
+the other. Two guards and five new labelled negatives later: 0 junk from the same
+corpus, and the labelled set unchanged at 4.3% false positives with 100% recall.
+
+Had the import run instead of the dry run, three junk memories would be in the graph,
+one contradicting another.
 
 ### M3.5 Tool-use reliability harness
 

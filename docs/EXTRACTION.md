@@ -66,6 +66,45 @@ Storing that as its body alone — `classes when a function will do` — records
 preference *for* classes. **A memory that inverts its source is worse than no memory at
 all**, so negated triggers survive into the content.
 
+## The domain shift that M3.4 exposed
+
+The guards above were measured on conversational turns. Run against a **real Claude
+Code transcript** — 257 human turns from months of work — the same extractor scored
+**0% precision**. All three of its extractions were wrong:
+
+```
+[fact] my preferred language is Python."}]                    ← JSON fragment
+[goal] I'm working on [the larger task] for [who it's for]    ← a prompt template
+[fact] my preferred language is TypeScript."                  ← quoted docs, and it
+                                                                contradicts the first
+```
+
+A developer's transcript is not a chat. It is full of pasted JSON, code literals,
+documentation quotes and prompt templates, and those contain first-person sentences
+that nobody said. **Precision measured on one domain does not transfer to another**,
+which is the general lesson and worth more than the specific fix.
+
+Two more guards followed, and the cases are now negatives in the labelled set so the
+domain is represented rather than rediscovered:
+
+| Guard | Rejects | Because |
+|---|---|---|
+| Structural | `…my preferred language is Python."}]` | A sentence ending in `"}]` was never a sentence — it is a string literal inside a structure someone pasted. |
+| Placeholder | `I'm working on [the larger task]` | A bracketed or angled placeholder is a template, not a statement. |
+
+After them: still 4.3% on the labelled set with recall unchanged at 100%, and **0
+extractions** from the same 257 real turns.
+
+That zero is worth reading carefully. It is the right answer for *that* corpus —
+coding sessions are mostly technical questions, and durable personal facts are rare in
+them — but it also means Claude Code acquisition yields in proportion to how much
+someone tells the tool about themselves. Guaranteed capture is not the same as
+plentiful capture.
+
+Had the import run instead of a dry run, three junk memories would be in the graph,
+one contradicting another. `--dry-run` exists for that reason and should stay the
+first thing anyone runs against a new corpus.
+
 ## Measured
 
 Against the 50-turn labelled set. Roughly two thirds of the negatives contain the exact

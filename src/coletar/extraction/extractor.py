@@ -5,10 +5,18 @@ or a live turn into correctly-typed, correctly-scoped, correctly-confidence-scor
 objects is a much harder problem than "chunk and embed."
 
 What runs on the live-turn path is a deliberately conservative heuristic. It fires
-only on unambiguous first-person declarations, and it is guarded against the five
+only on unambiguous first-person declarations, and it is guarded against the seven
 ways a keyword match is *not* an assertion by the user -- which is what the M2.2
-labelled set measures. Precision over recall is not a slogan here: a wrong memory
-costs the user a deletion and some trust, a missing one costs almost nothing.
+labelled set measures.
+
+Two of those guards exist because of M3.4. The M2.2 set was clean conversational
+turns, and against a real Claude Code transcript the extractor scored **0%**: every
+match was a first-person sentence quoted inside pasted JSON, or a prompt template
+full of `[placeholders]`. A developer's transcript is a different domain from a chat,
+and precision measured on one does not transfer to the other.
+
+Precision over recall is not a slogan here: a wrong memory costs the user a deletion
+and some trust, a missing one costs almost nothing.
 
 Measured against `tests/fixtures/extraction_set.json`; the harness and the current
 numbers are in `tests/test_extraction_quality.py` and docs/EXTRACTION.md.
@@ -103,6 +111,16 @@ _PARTICLE_HEADS = frozenset({"up", "out", "off", "over", "down", "away", "back"}
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
 
+#: Residue of JSON, code or markup around a match. A first-person sentence that ends
+#: in `"}]` was never a sentence — it was a string literal inside a structure the
+#: user pasted. Measured against a real Claude Code transcript, where every single
+#: extraction was of this kind (see docs/EXTRACTION.md).
+_STRUCTURAL = re.compile(r'("\s*[}\])]|[{\[]\s*"|"\s*:|\\n|</?\w+>)')
+
+#: A bracketed placeholder is a template someone pasted, not a statement they made:
+#: "I'm working on [the larger task] for [who it's for]".
+_PLACEHOLDER = re.compile(r"[\[<]\s*[a-z][^\]>]{2,40}\s*[\]>]")
+
 
 def _sentences(text: str) -> list[str]:
     return [part for part in _SENTENCE_SPLIT.split(text.strip()) if part.strip()]
@@ -147,9 +165,19 @@ def _rejected(sentence: str, match: re.Match[str]) -> bool:
     if attribution is not None:
         return True
 
-    head = next(iter(_WORD.findall(match.group("body").lower())), "")
-    # 4. Anaphora: the memory would not survive leaving this conversation.
-    # 5. A particle makes it a different verb.
+    body = match.group("body")
+    # 4. Structure around the match means this is quoted or pasted material, not
+    #    something the user wrote as a sentence. Checked on the whole sentence,
+    #    because the residue often sits either side of the phrase that matched.
+    if _STRUCTURAL.search(sentence):
+        return True
+    # 5. A bracketed placeholder is a template, not a statement.
+    if _PLACEHOLDER.search(sentence):
+        return True
+
+    head = next(iter(_WORD.findall(body.lower())), "")
+    # 6. Anaphora: the memory would not survive leaving this conversation.
+    # 7. A particle makes it a different verb.
     return head in _ANAPHORIC_HEADS or head in _PARTICLE_HEADS
 
 

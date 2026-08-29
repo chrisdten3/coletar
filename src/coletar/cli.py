@@ -285,6 +285,48 @@ def propagation(
 
 
 @app.command()
+def import_claude_code(
+    tenant: str | None = TENANT_OPTION,
+    rescan: bool = typer.Option(False, help="Re-read every transcript from the start."),
+    dry_run: bool = typer.Option(False, help="Show what would be stored, store nothing."),
+    project_scopes: bool = typer.Option(True, help="Scope memories by working directory."),
+) -> None:
+    """Import what you typed into Claude Code (§4.1).
+
+    Claude Code writes every session to ~/.claude/projects as it works, so capture
+    here is guaranteed rather than left to a model's discretion — no connector, no
+    instruction snippet, no approval prompt. Only your own words are read; assistant
+    replies and tool results are never mined.
+    """
+    from coletar.acquisition import default_root, import_sessions, iter_turns, session_files
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        if dry_run:
+            from coletar.acquisition import scope_for
+            from coletar.extraction import extract_memories
+
+            turns = found = 0
+            for path in session_files(default_root()):
+                for turn in iter_turns(path):
+                    turns += 1
+                    scope = scope_for(turn.cwd, project_scopes=project_scopes)
+                    for memory in await extract_memories(user_text=turn.text, scope=scope):
+                        found += 1
+                        typer.echo(f"  [{memory.kind}] ({scope}) {memory.content}")
+            typer.echo(f"\n{turns} turns read, {found} would be stored — nothing written")
+            return
+
+        report = await import_sessions(
+            build_store(), resolved, rescan=rescan, project_scopes=project_scopes
+        )
+        typer.echo(f"tenant {resolved}")
+        typer.echo(json.dumps(report.as_dict(), indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
 def tenant() -> None:
     """Show which tenant the CLI and proxy resolve to, and what the store holds.
 
