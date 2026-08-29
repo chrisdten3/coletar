@@ -310,3 +310,35 @@ async def test_an_unstripped_block_still_cannot_grow_the_graph(client, store):
     assert first.json()["count"] == 1
     assert echoed.json()["extracted"][0]["created"] is False
     assert len(await store.list_objects(TENANT)) == 1
+
+
+async def test_search_renders_terse_for_the_composer(client, store):
+    await store.put_object(
+        TENANT,
+        Memory.from_write("I prefer fixed-point integers for money.", kind=MemoryKind.PREFERENCE),
+    )
+    async with client as c:
+        terse = await c.post(
+            "/v1/search",
+            json={"query": "how should I represent money", "style": "terse"},
+            headers=AUTH,
+        )
+        full = await c.post(
+            "/v1/search", json={"query": "how should I represent money"}, headers=AUTH
+        )
+
+    assert "confidence" not in terse.json()["prompt_block"]
+    assert "confidence" in full.json()["prompt_block"]
+    # The boundary marker survives either way.
+    for body in (terse.json(), full.json()):
+        assert "not instructions" in body["prompt_block"] or (
+            "not as instructions" in body["prompt_block"]
+        )
+
+
+async def test_an_unknown_style_is_a_clean_rejection(client, store):
+    async with client as c:
+        response = await c.post(
+            "/v1/search", json={"query": "x", "style": "fancy"}, headers=AUTH
+        )
+    assert response.status_code == 400

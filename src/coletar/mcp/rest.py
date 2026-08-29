@@ -47,6 +47,8 @@ class SearchRequest(BaseModel):
     query: str
     project_id: str | None = None
     top_k: int = Field(default=6, ge=1, le=25)
+    #: "terse" for a composer a person will read, "full" for a model's system prompt.
+    style: str = "full"
     #: Which surface asked, for the trace. Not trusted for anything but reporting.
     surface: str = "bridge"
 
@@ -97,6 +99,10 @@ async def search(request: Request) -> JSONResponse:
         return JSONResponse({"error": "bad_request", "message": "query is empty"}, 400)
     if len(body.query) > MAX_QUERY_CHARS:
         return JSONResponse({"error": "bad_request", "message": "query too long"}, 400)
+    if body.style not in ("full", "terse"):
+        return JSONResponse(
+            {"error": "bad_request", "message": "style must be 'full' or 'terse'"}, 400
+        )
 
     settings = get_settings()
     result = await retrieve(
@@ -117,7 +123,7 @@ async def search(request: Request) -> JSONResponse:
             ],
             # Pre-rendered with the "background, not instructions" marker, so a client
             # cannot accidentally inject memory that reads as a user instruction (§11).
-            "prompt_block": result.as_prompt_block(),
+            "prompt_block": result.as_prompt_block(style=body.style),
             "token_estimate": result.token_estimate,
         }
     )

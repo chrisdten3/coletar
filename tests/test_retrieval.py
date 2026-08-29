@@ -60,3 +60,54 @@ def test_the_prompt_block_never_contains_the_marker():
     # The header says "from coletar —", which is close enough to be worth asserting
     # explicitly rather than trusting to read correctly.
     assert "from coletar" in block
+
+
+def _one_memory_context():
+    from coletar.retrieval.context import RetrievedContext
+    from coletar.schema.objects import ExtractionMethod, Memory, MemoryKind
+
+    return RetrievedContext(
+        objects=[
+            Memory.from_write(
+                "Prefers fixed-point integers over floating point for money",
+                kind=MemoryKind.PREFERENCE,
+                extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
+            )
+        ],
+        scores=[0.9],
+        token_estimate=12,
+        truncated=False,
+    )
+
+
+def test_the_full_style_carries_metadata_a_model_can_use():
+    """A model that can see a fact is low-confidence hedges instead of asserting it."""
+    block = _one_memory_context().as_prompt_block(style="full")
+    assert "confidence 0.95" in block
+    assert "preference" in block
+
+
+def test_the_terse_style_drops_metadata_a_person_cannot_act_on():
+    """This one goes into a composer, where a person reads it before pressing send.
+    A confidence score is noise there and buries the sentence that matters."""
+    block = _one_memory_context().as_prompt_block(style="terse")
+    assert "confidence" not in block
+    assert "via " not in block
+    assert "- Prefers fixed-point integers over floating point for money" in block
+
+
+def test_both_styles_keep_the_injection_boundary():
+    """§11: retrieved memory is written by models and, transitively, by whatever
+    those models read. It must never arrive looking like an instruction, whichever
+    audience is reading it."""
+    for style in ("full", "terse"):
+        block = _one_memory_context().as_prompt_block(style=style)
+        assert "not instructions" in block or "not as instructions" in block, style
+        assert "from coletar" in block, style
+
+
+def test_an_unknown_style_is_refused():
+    import pytest
+
+    with pytest.raises(ValueError, match="unknown style"):
+        _one_memory_context().as_prompt_block(style="fancy")

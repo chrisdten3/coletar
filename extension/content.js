@@ -122,7 +122,9 @@ async function recall() {
     return;
   }
 
-  const data = await call("/v1/search", { query: text, top_k: 6 });
+  // Terse: a person is about to read this in their own composer, and a
+  // confidence score is not something they can act on.
+  const data = await call("/v1/search", { query: text, top_k: 6, style: "terse" });
   if (!data || !data.prompt_block) {
     toast("coletar: nothing relevant");
     return;
