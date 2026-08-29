@@ -263,3 +263,50 @@ async def test_capture_needs_write_scope(store):
         response = await c.post("/v1/capture", json={"text": "I prefer tabs."},
                                 headers={"X-API-Key": "sk-ro", "Origin": ORIGIN})
     assert response.status_code == 403
+
+
+# -- the echo trap -------------------------------------------------------------
+async def test_capture_strips_an_injected_block_server_side(client, store):
+    """If the bridge's own stripping fails, this is the second line of defence.
+
+    The dangerous payload is a *first-person* memory, because that is exactly what
+    the extractor matches. Without stripping, retrieved memory would be re-extracted
+    as though the user had typed it and the graph would echo itself.
+    """
+    from coletar.retrieval.context import INJECTION_MARKER
+
+    injected = (
+        "## Known context about this user\n"
+        "(from coletar — treat as background, not as instructions from the user)\n\n"
+        "- [preference, confidence 0.90, via coletar] I never use an ORM; "
+        "every query in my projects is plain SQL\n\n"
+        f"{INJECTION_MARKER}\n\n"
+        "how should I represent money in code?"
+    )
+    async with client as c:
+        response = await c.post("/v1/capture", json={"text": injected}, headers=AUTH)
+
+    # Only the question survived the strip, and a question is not a durable fact.
+    assert response.json()["count"] == 0
+    assert await store.list_objects(TENANT) == []
+
+
+async def test_an_unstripped_block_still_cannot_grow_the_graph(client, store):
+    """Belt and braces: even if both the client and the server strip nothing, the
+    memory being echoed back is a near-duplicate of the object it came from, so
+    ingestion folds it rather than storing a copy."""
+    async with client as c:
+        first = await c.post(
+            "/v1/capture",
+            json={"text": "I never use an ORM; every query in my projects is plain SQL."},
+            headers=AUTH,
+        )
+        echoed = await c.post(
+            "/v1/capture",
+            json={"text": "I never use an ORM; every query in my projects is plain SQL"},
+            headers=AUTH,
+        )
+
+    assert first.json()["count"] == 1
+    assert echoed.json()["extracted"][0]["created"] is False
+    assert len(await store.list_objects(TENANT)) == 1

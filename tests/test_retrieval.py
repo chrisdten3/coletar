@@ -27,3 +27,36 @@ async def test_token_budget_truncates():
     result = await retrieve(store, TENANT, "chris likes topic", top_k=20, token_budget=120)
     assert result.truncated
     assert result.token_estimate <= 120
+
+
+def test_the_prompt_block_never_contains_the_marker():
+    """The composer bridge splits an injected prompt on INJECTION_MARKER to recover
+    what the user actually typed. If the marker ever appeared inside the block
+    itself, the split would land in the wrong place, retrieved memory would be sent
+    back for extraction as though the user had written it, and the graph would
+    slowly become an echo of its own output.
+
+    Nothing about the current wording is accidental-proof, so this pins it: change
+    the block however you like, but it may not contain that string.
+    """
+    from coletar.retrieval.context import INJECTION_MARKER, RetrievedContext
+    from coletar.schema.objects import ExtractionMethod, Memory, MemoryKind
+
+    context = RetrievedContext(
+        objects=[
+            Memory.from_write(
+                "I never use an ORM — every query is plain SQL",
+                kind=MemoryKind.PREFERENCE,
+                extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
+            )
+        ],
+        scores=[0.9],
+        token_estimate=12,
+        truncated=False,
+    )
+    block = context.as_prompt_block()
+
+    assert INJECTION_MARKER not in block
+    # The header says "from coletar —", which is close enough to be worth asserting
+    # explicitly rather than trusting to read correctly.
+    assert "from coletar" in block

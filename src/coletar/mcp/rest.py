@@ -25,6 +25,7 @@ from coletar.ingest import remember
 from coletar.mcp.auth import SCOPE_READ, SCOPE_WRITE, Principal, current_principal
 from coletar.mcp.schemas import ObjectView
 from coletar.retrieval import retrieve
+from coletar.retrieval.context import INJECTION_MARKER
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
@@ -184,6 +185,13 @@ async def capture(request: Request) -> JSONResponse:
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
     text = body.text.strip()
+    # Defence in depth. The bridge strips the injected block before sending, but the
+    # bridge is the part that cannot be covered by this repository's tests — it runs
+    # in someone's browser against a page we do not control. If its stripping ever
+    # fails, this is what stops retrieved memory being re-extracted as though the
+    # user had typed it.
+    if INJECTION_MARKER in text:
+        text = text.split(INJECTION_MARKER)[-1].strip()
     if not text:
         return JSONResponse({"error": "bad_request", "message": "text is empty"}, 400)
     if len(text) > MAX_CONTENT_CHARS:

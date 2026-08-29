@@ -49,6 +49,15 @@ _CHARS_PER_TOKEN = 4
 #: phrased twice is the most expensive way to say nothing.
 NEAR_DUPLICATE_THRESHOLD = 0.9
 
+#: Separates injected context from what the user actually typed, when a client writes
+#: memory into a prompt box (the composer bridge). The client splits on it to send
+#: only the user's own words back for extraction — so if this string ever appeared
+#: *inside* `as_prompt_block` the split would land in the wrong place and retrieved
+#: memory would be fed back as though the user had typed it. The graph would slowly
+#: become an echo of itself. `test_the_prompt_block_never_contains_the_marker` makes
+#: that a failing test rather than a slow corruption.
+INJECTION_MARKER = "— coletar —"
+
 
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN)
