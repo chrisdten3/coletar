@@ -30,6 +30,11 @@ const settings = {
   apiKey: "",
   recall: true,
   capture: true,
+  // Chrome owns a lot of Cmd+Shift combinations on macOS — Cmd+Shift+M is the
+  // profile switcher, N is incognito, T reopens a tab. So the shortcut is
+  // configurable and defaults to one Chrome does not claim. The button below is the
+  // real affordance; this is for people who would rather not reach for the mouse.
+  shortcut: "Ctrl+Shift+M",
 };
 
 chrome.storage.sync.get(settings, (loaded) => Object.assign(settings, loaded));
@@ -98,10 +103,24 @@ function toast(message) {
 // RECALL. Explicit, and visible: the memory goes into the box above what you wrote,
 // so you read it and send it yourself. Nothing is added to a message you did not see.
 async function recall() {
+  if (!settings.endpoint || !settings.apiKey) {
+    toast("coletar: set the server and key in the extension options");
+    return;
+  }
   const el = composer();
-  if (!el) return;
+  if (!el) {
+    toast("coletar: could not find the prompt box on this page");
+    return;
+  }
   const text = readComposer(el);
-  if (!text || text.includes(MARKER)) return;
+  if (!text) {
+    toast("coletar: type something first, then press the button");
+    return;
+  }
+  if (text.includes(MARKER)) {
+    toast("coletar: memory already added");
+    return;
+  }
 
   const data = await call("/v1/search", { query: text, top_k: 6 });
   if (!data || !data.prompt_block) {
@@ -130,15 +149,28 @@ async function capture() {
   if (data && data.count) toast(`coletar: remembered ${data.count}`);
 }
 
+function matchesShortcut(event) {
+  const parts = (settings.shortcut || "").split("+").map((p) => p.trim().toLowerCase());
+  if (!parts.length) return false;
+  const key = parts[parts.length - 1];
+  if (event.key.toLowerCase() !== key) return false;
+  const want = (name) => parts.includes(name);
+  return (
+    want("ctrl") === event.ctrlKey &&
+    want("shift") === event.shiftKey &&
+    want("alt") === event.altKey &&
+    want("cmd") === event.metaKey
+  );
+}
+
 document.addEventListener(
   "keydown",
   (event) => {
     const el = composer();
     if (!el) return;
-    // Cmd/Ctrl+Shift+M — pull memory in.
-    if (event.key.toLowerCase() === "m" && event.shiftKey && (event.metaKey || event.ctrlKey)) {
+    if (settings.recall && matchesShortcut(event)) {
       event.preventDefault();
-      if (settings.recall) recall();
+      recall();
       return;
     }
     // Enter sends on both surfaces; read the box before the site clears it.
@@ -146,6 +178,36 @@ document.addEventListener(
   },
   true,
 );
+
+// The button. A hidden shortcut is a feature nobody finds, and every modifier
+// combination worth having is already claimed by the browser or the page.
+function mountButton() {
+  if (document.getElementById("coletar-recall")) return;
+  const button = document.createElement("button");
+  button.id = "coletar-recall";
+  button.type = "button";
+  button.textContent = "✦ memory";
+  button.title = "Bring your portable memory into the box (coletar)";
+  button.style.cssText =
+    "position:fixed;bottom:22px;right:22px;z-index:2147483646;padding:8px 14px;" +
+    "border-radius:999px;background:#1c1c1c;color:#eee;font:13px system-ui;" +
+    "border:1px solid #4a4a4a;cursor:pointer;opacity:0.85";
+  button.addEventListener("mouseenter", () => (button.style.opacity = "1"));
+  button.addEventListener("mouseleave", () => (button.style.opacity = "0.85"));
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    recall();
+  });
+  document.body.appendChild(button);
+}
+
+// These are single-page apps that rebuild the DOM as you navigate, so the button
+// has to be re-mounted rather than added once.
+new MutationObserver(() => mountButton()).observe(document.body, {
+  childList: true,
+  subtree: false,
+});
+mountButton();
 
 document.addEventListener(
   "click",

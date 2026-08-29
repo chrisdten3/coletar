@@ -15,6 +15,7 @@ import pytest
 
 from coletar.mcp.auth import (
     EXEMPT_PATHS,
+    EXEMPT_PREFIXES,
     SCOPE_READ,
     SCOPE_WRITE,
     ApiKeyAuthenticator,
@@ -163,14 +164,35 @@ async def test_a_server_with_no_keys_rejects_everything():
         assert (await client.post("/mcp", headers={"Authorization": "Bearer x"})).status_code == 401
 
 
-async def test_health_check_is_the_only_exemption():
-    """A liveness probe cannot carry a credential. Nothing else may claim that."""
+async def test_only_liveness_and_discovery_are_exempt():
+    """Two exemptions, each with a reason a credential cannot exist yet: a liveness
+    probe has none to send, and a client cannot authenticate before discovering how
+    to authenticate. Nothing else may claim that."""
     assert set(EXEMPT_PATHS) == {"/healthz"}
+    assert EXEMPT_PREFIXES == ("/.well-known/",)
 
     async with _client(ApiKeyAuthenticator.from_config(ALICE_KEY)) as client:
         assert (await client.get("/healthz")).status_code == 200
-        for path in ("/mcp", "/", "/healthz/../mcp", "/metrics"):
+        for path in ("/mcp", "/", "/healthz/../mcp", "/metrics", "/v1/search"):
             assert (await client.get(path)).status_code == 401, path
+
+
+async def test_discovery_reports_absence_rather_than_rejection():
+    """We implement no OAuth, so these should 404 — "this server does not do OAuth" —
+    rather than 401, which claims the caller's credentials are wrong for discovery
+    and turns a plain auth failure into an unexplained connection error."""
+    from starlette.applications import Starlette
+
+    app = AuthMiddleware(Starlette(), ApiKeyAuthenticator.from_config(ALICE_KEY))
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        for path in (
+            "/.well-known/oauth-protected-resource",
+            "/.well-known/oauth-authorization-server",
+            "/.well-known/oauth-protected-resource/mcp",
+        ):
+            assert (await client.get(path)).status_code == 404, path
 
 
 async def test_the_principal_does_not_leak_between_requests():

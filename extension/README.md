@@ -27,7 +27,8 @@ transcript, so no code path can reach one.
 
 ## What it does
 
-**Recall** — press <kbd>⌘⇧M</kbd> (or <kbd>Ctrl⇧M</kbd>) and relevant memory is written
+**Recall** — click the **✦ memory** button (bottom right), or press the configurable
+shortcut, and relevant memory is written
 into the box *above* what you typed. You read it and send it yourself. Nothing is ever
 added to a message you did not see, which is the difference between assistance and
 someone quietly editing your words.
@@ -44,6 +45,9 @@ mined if it were.
 2. Open the options page and set:
    - **Server** — `https://coletar-mcp.fly.dev`
    - **API key** — the same `sk-live-…` your MCP connector uses; it decides which tenant you reach
+   - **Shortcut** — optional. Chrome claims most `⌘⇧` combinations on macOS (`⌘⇧M` is
+     the profile switcher), so the default is `Ctrl+Shift+M` and the button is the
+     affordance that cannot collide
 
 The server must allow your surface's origin. Defaults cover claude.ai and chatgpt.com;
 change `COLETAR_CORS_ALLOW_ORIGINS` to add others. It is an allowlist and never a

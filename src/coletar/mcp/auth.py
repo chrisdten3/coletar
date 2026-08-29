@@ -48,9 +48,16 @@ SCOPE_READ = "read"
 SCOPE_WRITE = "write"
 DEFAULT_SCOPES = frozenset({SCOPE_READ, SCOPE_WRITE})
 
-#: Liveness probes cannot carry a credential. Exactly one path, and a test pins the
-#: size of this set so the exemption list cannot quietly grow.
+#: Liveness probes cannot carry a credential. A test pins this set so it cannot grow
+#: quietly; growing it deliberately, with a reason, is what this comment is for.
 EXEMPT_PATHS = frozenset({"/healthz"})
+
+#: Discovery is public by definition — a client cannot authenticate before finding
+#: out *how* to authenticate. We implement no OAuth, so these return 404, and that is
+#: the point: 404 tells a client "this server does not do OAuth", while the 401 they
+#: previously got says "your credentials are wrong for discovery too", which is false
+#: and turns a plain auth failure into an unexplained connection error.
+EXEMPT_PREFIXES = ("/.well-known/",)
 
 
 @dataclass(frozen=True)
@@ -253,7 +260,12 @@ class AuthMiddleware:
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
         # Lifespan and websocket scopes are not credentialed HTTP requests; passing
         # them through is what lets the app start at all.
-        if scope.get("type") != "http" or scope.get("path") in self.exempt_paths:
+        path = str(scope.get("path", ""))
+        if (
+            scope.get("type") != "http"
+            or path in self.exempt_paths
+            or path.startswith(EXEMPT_PREFIXES)
+        ):
             await self.app(scope, receive, send)
             return
 

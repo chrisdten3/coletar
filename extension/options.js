@@ -1,5 +1,11 @@
-const fields = ["endpoint", "apiKey", "recall", "capture"];
-const defaults = { endpoint: "", apiKey: "", recall: true, capture: true };
+const fields = ["endpoint", "apiKey", "shortcut", "recall", "capture"];
+const defaults = {
+  endpoint: "",
+  apiKey: "",
+  shortcut: "Ctrl+Shift+M",
+  recall: true,
+  capture: true,
+};
 
 chrome.storage.sync.get(defaults, (loaded) => {
   for (const f of fields) {
