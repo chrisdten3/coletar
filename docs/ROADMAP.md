@@ -356,6 +356,15 @@ This removes that requirement.
       message they did not see
 - [x] Capture runs the precision-first extractor server-side rather than storing
       turns, so most turns store nothing (4.3% false positives on the labelled set)
+- [x] **Verified end to end on claude.ai, 29 Aug 2026, with no Project and no
+      snippet.** Read: the button retrieved the stored preference and injected it
+      visibly (`surface=claude.ai`, 27ms). Write: typing *"I never use an ORM; every
+      query in my projects is plain SQL"* and pressing send stored it at
+      `explicit_statement` / confidence 0.95 / `origin=user` — the top tier, because
+      they are the user's own words rather than a model's inference of them. The
+      negation survived intact, which is the M4 trigger-preservation fix holding in
+      production. A money *question* sent earlier stored nothing, which is the
+      precision-first extractor declining correctly
 - [ ] Measure whether recall+capture in practice beats the Project snippet
 
 **The line, and why it holds.** Reading what a user types into a text field is the
