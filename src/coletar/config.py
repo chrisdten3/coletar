@@ -15,6 +15,12 @@ class Settings(BaseSettings):
         env_prefix="COLETAR_", env_file=".env", extra="ignore"
     )
 
+    # Tenant resolved by *application boundaries* only — the CLI and the local
+    # proxy. The MCP server never reads this: it derives the tenant from the
+    # authenticated principal, because a connector falling back to a configured
+    # tenant is a connector serving someone else's graph.
+    default_tenant_id: str = "tenant_local"
+
     # Canonical store. "memory" runs the full stack with no Postgres (tests, demos).
     store_backend: Literal["postgres", "memory"] = "memory"
     database_url: str = "postgresql://coletar:coletar@localhost:5433/coletar"
@@ -30,9 +36,22 @@ class Settings(BaseSettings):
     # Hosted MCP server (§9). ChatGPT only accepts remote HTTPS servers, so this
     # is always an HTTP transport, never stdio, outside of local development.
     mcp_port: int = 8788
+    # Loopback by default. A container sets 0.0.0.0 explicitly, and binding a public
+    # interface is gated on a real backend — see `coletar.mcp.server.run`.
+    mcp_host: str = "127.0.0.1"
+    # Public hostnames this service answers on, comma-separated. The MCP SDK enforces
+    # DNS-rebinding protection and trusts only localhost by default, so a deployment
+    # behind a real domain must name itself here or every request is refused with
+    # 421 Misdirected Request — after passing authentication, which makes it look
+    # like anything but a host check.
+    mcp_allowed_hosts: str = ""
     # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""
+    # Origins the browser bridge may call from. An allowlist, never a wildcard: these
+    # endpoints are authenticated, and a wildcard would let any page a user visits
+    # attempt to spend their token.
+    cors_allow_origins: str = "https://claude.ai,https://chatgpt.com,https://chat.openai.com"
 
     # Retrieval. "hashing" is the default because the in-process store has to work
     # with nothing installed; "ollama" is what a real deployment runs, against the

@@ -26,6 +26,7 @@ from coletar.schema.objects import (
 )
 from coletar.seed import seed
 from coletar.store.memory import InMemoryStore
+from conftest import TENANT
 
 #: SCOPE §2 lists these by name. If one disappears, the Context Inspector loses a
 #: column and the compiler loses a mapping input.
@@ -61,8 +62,8 @@ async def test_every_object_type_round_trips_exactly(object_type: ObjectType):
             provenance=Provenance(origin_type=OriginType.USER, provider=Provider.COLETAR),
         )
 
-    await store.put_object(original)
-    read_back = await store.get_object(original.id)
+    await store.put_object(TENANT, original)
+    read_back = await store.get_object(TENANT, original.id)
 
     assert read_back is not None
     assert read_back.model_dump() == original.model_dump()
@@ -73,9 +74,9 @@ async def test_round_trip_survives_the_snapshot_file(tmp_path):
     """The same equality has to hold across serialization, not just in one process."""
     path = tmp_path / "graph.json"
     original = Memory.from_write("Chris runs Postgres on port 5433.", kind=MemoryKind.FACT)
-    await InMemoryStore(path).put_object(original)
+    await InMemoryStore(path).put_object(TENANT, original)
 
-    read_back = await InMemoryStore(path).get_object(original.id)
+    read_back = await InMemoryStore(path).get_object(TENANT, original.id)
 
     assert read_back is not None
     assert read_back.model_dump() == original.model_dump()
@@ -83,10 +84,10 @@ async def test_round_trip_survives_the_snapshot_file(tmp_path):
 
 async def test_active_memories_exclude_superseded_objects():
     store = InMemoryStore()
-    result = await seed(store)
+    result = await seed(store, TENANT)
     original, corrected, current = result.supersedes_chain
 
-    active = {o.id for o in await store.list_objects(type=ObjectType.MEMORY)}
+    active = {o.id for o in await store.list_objects(TENANT, type=ObjectType.MEMORY)}
 
     assert current in active
     assert original not in active
@@ -97,11 +98,12 @@ async def test_superseded_objects_are_still_readable_for_provenance():
     """Never hard-delete: the Inspector has to be able to show what a fact used to
     say, even once something newer replaced it."""
     store = InMemoryStore()
-    result = await seed(store)
+    result = await seed(store, TENANT)
     original = result.supersedes_chain[0]
 
-    assert await store.get_object(original) is not None
-    everything = {o.id for o in await store.list_objects(include_superseded=True, limit=1000)}
+    assert await store.get_object(TENANT, original) is not None
+    everything = {o.id for o in await store.list_objects(
+        TENANT, include_superseded=True, limit=1000)}
     assert original in everything
 
 
@@ -127,35 +129,35 @@ async def test_object_without_extraction_method_is_rejected():
 
 async def test_duplicate_edge_is_idempotent():
     store = InMemoryStore()
-    a = await store.put_object(Memory.from_write("First."))
-    b = await store.put_object(Memory.from_write("Second."))
+    a = await store.put_object(TENANT, Memory.from_write("First."))
+    b = await store.put_object(TENANT, Memory.from_write("Second."))
     edge = Edge(src_id=a.id, dst_id=b.id, type=EdgeType.RELATES_TO)
 
-    await store.add_edge(edge)
-    await store.add_edge(edge)
-    await store.add_edge(Edge(src_id=a.id, dst_id=b.id, type=EdgeType.RELATES_TO))
+    await store.add_edge(TENANT, edge)
+    await store.add_edge(TENANT, edge)
+    await store.add_edge(TENANT, Edge(src_id=a.id, dst_id=b.id, type=EdgeType.RELATES_TO))
 
-    assert len(await store.edges_from(a.id)) == 1
-    edge_events = [e for e in await store.list_events() if e.type is EventType.EDGE_CREATED]
+    assert len(await store.edges_from(TENANT, a.id)) == 1
+    edge_events = [e for e in await store.list_events(TENANT) if e.type is EventType.EDGE_CREATED]
     assert len(edge_events) == 1
 
 
 async def test_edges_are_directional_and_queryable_both_ways():
     store = InMemoryStore()
-    a = await store.put_object(Memory.from_write("Newer."))
-    b = await store.put_object(Memory.from_write("Older."))
-    await store.add_edge(Edge(src_id=a.id, dst_id=b.id, type=EdgeType.SUPERSEDES))
+    a = await store.put_object(TENANT, Memory.from_write("Newer."))
+    b = await store.put_object(TENANT, Memory.from_write("Older."))
+    await store.add_edge(TENANT, Edge(src_id=a.id, dst_id=b.id, type=EdgeType.SUPERSEDES))
 
-    assert [e.dst_id for e in await store.edges_from(a.id)] == [b.id]
-    assert [e.src_id for e in await store.edges_to(b.id)] == [a.id]
-    assert await store.edges_from(b.id) == []
+    assert [e.dst_id for e in await store.edges_from(TENANT, a.id)] == [b.id]
+    assert [e.src_id for e in await store.edges_to(TENANT, b.id)] == [a.id]
+    assert await store.edges_from(TENANT, b.id) == []
 
 
 async def test_seed_populates_one_object_of_every_type_and_a_supersedes_chain():
     store = InMemoryStore()
-    result = await seed(store)
+    result = await seed(store, TENANT)
 
-    everything = await store.list_objects(include_superseded=True, limit=1000)
+    everything = await store.list_objects(TENANT, include_superseded=True, limit=1000)
     assert {o.type for o in everything} == set(ObjectType)
     assert len(result.supersedes_chain) == 3
     assert GLOBAL_SCOPE in {o.scope for o in everything}

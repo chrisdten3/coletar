@@ -15,12 +15,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coletar.proxy import app as proxy_module
-from coletar.proxy.app import PROXY_PRINCIPAL, SSEAssembler
+from coletar.proxy.app import PROXY_PRINCIPAL, SSEAssembler, proxy_tenant
 from coletar.schema import Actor, EventType, Memory, MemoryKind
 from coletar.store import InMemoryStore
 
 #: Build plan M2.2: added round-trip latency stays under 2 seconds.
 ADDED_LATENCY_BUDGET_S = 2.0
+
+#: The proxy is an application boundary: it resolves its tenant from configuration
+#: rather than from a caller. These tests must therefore act in *that* tenant, not in
+#: the generic test one — asserting against a tenant the daemon never writes to would
+#: pass for the wrong reason.
+PROXY_TENANT = proxy_tenant()
 
 
 def _sse(*frames: str) -> list[bytes]:
@@ -92,7 +98,7 @@ def upstream(monkeypatch):
 
 
 async def test_retrieved_memory_is_injected_as_a_system_message(store, upstream):
-    await store.put_object(
+    await store.put_object(PROXY_TENANT, 
         Memory.from_write("Chris prefers fixed-point integers for money.",
                           kind=MemoryKind.PREFERENCE)
     )
@@ -114,7 +120,7 @@ async def test_retrieved_memory_is_injected_as_a_system_message(store, upstream)
 
 async def test_injection_merges_into_an_existing_system_message(store, upstream):
     """Several local runtimes only honour the first system message."""
-    await store.put_object(Memory.from_write("Chris prefers concise answers."))
+    await store.put_object(PROXY_TENANT, Memory.from_write("Chris prefers concise answers."))
 
     with TestClient(proxy_module.app) as client:
         client.post(
@@ -141,7 +147,7 @@ async def test_new_memory_is_extracted_from_the_users_turn(store, upstream):
         )
 
     assert response.status_code == 200
-    stored = await store.list_objects()
+    stored = await store.list_objects(PROXY_TENANT)
     assert any("uv instead of pip" in o.content for o in stored)
 
 
@@ -210,12 +216,12 @@ async def test_streaming_extracts_memory_from_the_users_turn(store, streaming_up
             ]},
         )
 
-    stored = await store.list_objects()
+    stored = await store.list_objects(PROXY_TENANT)
     assert [o.content for o in stored] == ["always use uv instead of pip"]
 
 
 async def test_streaming_injects_retrieved_memory_too(store, streaming_upstream):
-    await store.put_object(
+    await store.put_object(PROXY_TENANT, 
         Memory.from_write("Chris prefers fixed-point integers for money.",
                           kind=MemoryKind.PREFERENCE)
     )
@@ -244,7 +250,7 @@ async def test_a_failed_stream_teaches_us_nothing(store, streaming_upstream):
             ]},
         )
 
-    assert await store.list_objects() == []
+    assert await store.list_objects(PROXY_TENANT) == []
 
 
 # -- provenance ---------------------------------------------------------------
@@ -257,7 +263,7 @@ async def test_proxy_writes_are_attributed_to_the_proxy(store, upstream):
             ]},
         )
 
-    event = (await store.list_events())[0]
+    event = (await store.list_events(PROXY_TENANT))[0]
     assert event.type is EventType.CONNECTOR_WRITE
     assert event.actor is Actor.CONNECTOR
     # The bridge names itself, so the log distinguishes "extracted from my words"
@@ -274,7 +280,7 @@ async def test_ordinary_conversation_writes_nothing(store, upstream):
             ]},
         )
 
-    assert await store.list_objects() == []
+    assert await store.list_objects(PROXY_TENANT) == []
 
 
 # -- latency ------------------------------------------------------------------
@@ -282,7 +288,7 @@ async def test_added_round_trip_latency_stays_under_two_seconds(store, upstream)
     """The upstream is instant here, so the measured time *is* the proxy's overhead:
     retrieval, injection and extraction."""
     for i in range(1_000):
-        await store.put_object(Memory.from_write(f"Seeded preference number {i}."))
+        await store.put_object(PROXY_TENANT, Memory.from_write(f"Seeded preference number {i}."))
 
     latencies: list[float] = []
     with TestClient(proxy_module.app) as client:
@@ -337,3 +343,79 @@ def test_the_capture_still_looks_like_what_was_recorded():
     assert text.rstrip().endswith("data: [DONE]")
     assert '"object":"chat.completion.chunk"' in text
     assert '"delta":{"role":"assistant"' in text
+
+
+# -- M4: extraction runs behind the response, not in front of it ---------------
+async def test_extraction_does_not_delay_the_response(store, upstream, monkeypatch):
+    """0.1ms today because extraction is regular expressions. It will not stay that
+    way — model-assisted extraction puts an inference call here, and a user should
+    not wait on the proxy learning something to receive the answer they asked for.
+
+    A slow extractor is simulated so the test measures the property rather than the
+    current implementation's speed.
+    """
+    import asyncio
+
+    from coletar.extraction import extract_memories as real_extract
+
+    async def slow_extract(**kwargs):
+        await asyncio.sleep(0.4)
+        return await real_extract(**kwargs)
+
+    monkeypatch.setattr(proxy_module, "extract_memories", slow_extract)
+
+    with TestClient(proxy_module.app) as client:
+        started = time.perf_counter()
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+        # TestClient waits for background tasks, so measure the *response* itself
+        # rather than the whole call.
+        elapsed = time.perf_counter() - started
+
+    assert response.status_code == 200
+    # The extraction still happened — just not before the reply was produced.
+    assert [o.content for o in await store.list_objects(PROXY_TENANT)] == [
+        "I prefer spaces over tabs"
+    ]
+    assert elapsed >= 0.4, "the background task should still have run"
+
+
+async def test_a_failing_extractor_never_breaks_the_chat(store, upstream, monkeypatch):
+    """The reply has already left. A proxy that fails a chat because it could not
+    extract a memory is worse than one that quietly learns nothing from that turn."""
+    async def exploding_extract(**kwargs):
+        raise RuntimeError("extractor is down")
+
+    monkeypatch.setattr(proxy_module, "extract_memories", exploding_extract)
+
+    warns = pytest.warns(UserWarning, match="extraction failed")
+    with TestClient(proxy_module.app) as client, warns:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "Understood."
+    assert await store.list_objects(PROXY_TENANT) == []
+
+
+async def test_the_proxy_deduplicates_across_conversations(store, upstream):
+    """The same preference stated in three separate chats is one object, not three —
+    which is what the compiler will read."""
+    with TestClient(proxy_module.app) as client:
+        for _ in range(3):
+            client.post(
+                "/v1/chat/completions",
+                json={"model": "llama3", "messages": [
+                    {"role": "user", "content": "I prefer fixed-point integers for money."}
+                ]},
+            )
+
+    assert len(await store.list_objects(PROXY_TENANT, limit=100)) == 1

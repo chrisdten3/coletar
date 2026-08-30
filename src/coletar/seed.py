@@ -29,6 +29,7 @@ from coletar.schema.objects import (
     Scope,
     ScopeType,
 )
+from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
 PROJECT_ID = "proj_ledger"
@@ -70,13 +71,13 @@ def _object(
     )
 
 
-async def seed(store: Store) -> SeedResult:
+async def seed(store: Store, tenant_id: TenantId) -> SeedResult:
     """Populate `store` with the canonical fixture graph. Idempotent per store
     instance only -- it mints fresh ids on every call."""
     result = SeedResult()
 
     async def put(role: str, obj: ContextObject) -> ContextObject:
-        stored = await store.put_object(obj)
+        stored = await store.put_object(tenant_id, obj)
         result.by_role[role] = stored.id
         return stored
 
@@ -217,6 +218,6 @@ async def seed(store: Store) -> SeedResult:
         (conversation.id, project.id, EdgeType.BELONGS_TO),
         (decision.id, project.id, EdgeType.BELONGS_TO),
     ):
-        await store.add_edge(Edge(src_id=src, dst_id=dst, type=edge_type))
+        await store.add_edge(tenant_id, Edge(src_id=src, dst_id=dst, type=edge_type))
 
     return result

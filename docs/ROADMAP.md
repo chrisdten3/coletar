@@ -182,17 +182,269 @@ narrowing and final context assembly observable enough to change safely.
 
 ## M3 — Claude connector (Live Sync)
 
-SCOPE §10 step 2. Can ship in parallel with M2; depends on no export-parsing work,
-since objects arrive already typed.
+SCOPE §10 step 2. The first time coletar does the thing it exists to do. Everything
+through M2 is substrate — a graph, two backends, measured retrieval, an authenticated
+server — and none of it has yet touched a frontier model. M3 is where the central
+claim gets tested: *a memory written on one surface is available to every other
+surface's next conversation.*
 
-- [ ] Deploy behind HTTPS and register as a Claude Custom Connector
-- [ ] Per-user scoped auth; user A's token cannot read user B's objects
+Claude is the only new provider, and deliberately so. It is the one frontier surface
+where the path is fully sanctioned — Custom Connectors are read **and** write on
+individual accounts, objects arrive already typed through `write_memory`, and no
+export parser or page reading is involved. ChatGPT is read-plus-confirmed-write until
+OpenAI extends write scope (M7.1); Gemini has no verified path at all. Claude tests
+the real integration with the fewest unrelated variables.
+
+**Two decisions taken, so they are not re-litigated mid-slice:**
+
+- **Tenancy is a flat `tenant_id`.** No user/org hierarchy. Hierarchy is easy to add
+  later and hard to remove, and nothing in §2 or §9 needs one yet.
+- **The MCP service deploys to Fly.io**, a long-running container host. Not
+  serverless: the server runs stateful streamable HTTP (`stateless_http=False`) and
+  holds a psycopg connection pool, and the in-process store cannot exist on
+  serverless at all. Making it work on functions means changing the transport and
+  re-verifying MCP session handling across invocations — real work whose only payoff
+  is the host. A consumer UI can live on Vercel later; the service should not.
+
+The ordering below front-loads everything that is testable for free. Propagation here
+is pull-based — there is no sync job, the next `search_context` simply sees the write
+— so the *mechanism* is graph-level and provable locally, before a single dollar of
+hosting. If cross-surface propagation is broken at the graph level, that should
+surface before deployment, not after.
+
+### M3.1 Tenant isolation — local, no infrastructure ✅
+
+The largest structural change since M1, and the one thing blocking any real
+deployment. Nothing in the codebase was tenant-aware: every table was unqualified and
+every query returned everything.
+
+**The rule everything follows from:** the Store never assumes a tenant; only
+application boundaries resolve one. Every `Store` method takes `tenant_id` explicitly
+and none of them defaults it. The call sites are noisier for it, and the noise is the
+point — each one names the tenant out loud, and a background job cannot drift into a
+shared graph.
+
+- [x] Migration `002`: `tenant_id` on all five tables, identity becomes
+      `(tenant_id, id)`, and the column's `DEFAULT` is dropped immediately after
+      back-filling — the implicit path exists only for the duration of the migration
+- [x] Tenant-aware foreign keys, so Postgres refuses a cross-tenant edge or
+      `supersedes` even when application code asks for one
+- [x] `TenantId` is a `NewType`, not a `str`: signatures read `(tenant_id, object_id)`
+      and a swapped pair would otherwise typecheck while reading another tenant's data
+- [x] `Principal` carries a `tenant_id`; the MCP server derives the tenant from it
+      alone, with no configuration fallback and no tenant argument on any tool
+- [x] API keys moved to JSON. Adding the tenant to the colon-delimited form would
+      have made it a four-field positional string whose third field silently decides
+      whose data you reach
+- [x] **All six read paths filtered**: `search`, `list_objects`, `get_object`,
+      `list_events` (and therefore `replay`), `edges_from`/`edges_to`, and retrieval
+      traces
+- [x] The in-process store implements *exactly* the same semantics, namespaced per
+      tenant with its own vector index — cross-tenant candidates never enter scoring,
+      rather than being filtered afterwards. A backend that isolates differently is
+      worse than one that does not isolate at all: the tests pass locally and the
+      graph leaks in production
+- [x] Both backends raise the same `CrossTenantError`, so a caller never has to know
+      which one it is talking to
+- [x] Snapshot `format_version` 2, with a version-1 file upgraded to the named legacy
+      tenant — visibly, via both a warning and a `store.migrated` event
+- [x] Adversarial isolation suite run against **both** backends: a known foreign id
+      pushed through every read path, cross-tenant `supersedes` and edges, retirement,
+      identical ids in two tenants, per-tenant scopes, and an empty tenant
+- [x] Auth validation p95 well under the 50ms budget at 500 configured keys
+- [x] Tenant is visible, not implied: `--tenant` on every graph command, writes report
+      where they landed, and `coletar tenant` prints what the default resolves to
+
+### M3.2 Cross-surface propagation — local, no infrastructure ✅
+
+The product's actual promise is cross-*surface*, not cross-conversation. This proves
+the mechanism with no deployment, no Anthropic API key and no cost, by pointing the
+local proxy and the MCP server at the same graph.
+
+- [x] Harness driving both **real** surfaces: a memory extracted from a conversation
+      turn by the proxy is returned by the connector's `search_context`, and a
+      connector's `write_memory` lands in the next local model's system prompt
+- [x] Latency **~0.2ms p50 / 0.4ms p95** against a 1s budget — because propagation is
+      pull-based and there is no sync job to wait for
+- [x] Both directions measured separately: a store propagating one way only would
+      still be broken
+- [x] Tenant-scoped both directions, including the misconfigured case
+- [x] Verified against Postgres as well, where the graph is genuinely out of process
+      rather than a dict two surfaces happen to share
+- [x] Runnable on demand (`uv run coletar propagation`) and in CI
+
+The harness takes **callables** rather than surfaces, so M3.3 measures the same thing
+against a deployed Claude connector by passing a different pair of functions instead
+of being rewritten.
+
+**Two things the harness found.** Writing the same fact from both directions into one
+graph propagates only once — M2.3's near-duplicate deduplication working correctly,
+and a reminder that a propagation test needs distinct facts per direction. And a
+proxy whose configured tenant disagrees with the connector's principal produces two
+surfaces that each work perfectly while nothing propagates: correct isolation,
+indistinguishable from a broken store unless you know to look, now pinned as
+documented behaviour rather than left as a debugging story.
+
+**Known shortcut, recorded rather than drifted into:** the proxy calls `build_store()`
+directly, so it bypasses authentication, tenant resolution and scope enforcement — it
+*is* the trusted process. That is acceptable for a single-user local daemon and
+unacceptable for anything else. See the M4 item.
+
+### M3.3 Deployment and the real Claude connector
+
+**What live testing showed (Aug 2026):** the connector works — a `write_memory` call
+from a Claude conversation landed in Postgres with the right tenant, principal,
+`mcp_live_write` provenance and embedding. But Claude used its **own** native memory
+first, and only called the connector when named explicitly. Our tool descriptions are
+the reason: `write_memory` reads as *"Record one durable fact, preference,
+instruction, goal or correction"*, which describes native memory exactly and gives a
+model no reason to prefer ours. They need to say *why* coletar — portability — since
+that is both true and the only actual differentiator (§3 correction).
+
+The consequence for sequencing: **on this surface, reads matter more than writes.**
+Writing competes with a free first-party feature and losing is cheap, because the
+fact still exists in Claude's memory. Reading has no competitor — Claude's memory
+cannot contain what a local model learned or what an import carried in. The graph
+fills from tier-1 surfaces (§4.1) regardless.
+
+
+- [x] Deployment artifacts: `Dockerfile` (multi-stage, `uv sync --frozen`, non-root,
+      ~93MB), `fly.toml` with migrations as a release command and `/healthz` as the
+      check, `.dockerignore`, and [DEPLOYMENT.md](DEPLOYMENT.md) with the exact
+      command sequence
+- [x] Two boot-time guards, verified in the container rather than asserted: no API
+      keys means no server, and a public bind on the in-process store is refused —
+      a reachable endpoint whose graph evaporates on restart is a configuration
+      mistake, not a choice
+- [x] Image verified end to end against Postgres over real HTTP: migrations ran as
+      the release command, `/healthz` open, `/mcp` 401 without a token, four tools
+      discovered by a real MCP client, and two keys in two tenants each blind to the
+      other
+- [ ] `fly deploy` itself — needs Fly credentials, which are the user's to enter
+- [ ] Registered as a Claude Custom Connector, completed from Claude's own settings
+- [ ] A simulated OAuth handshake issues a token scoped to one tenant
 - [ ] Ship the instruction snippets in `CONNECTORS.md` as a copy-paste flow
-- [ ] Tool-use reliability: ≥85% write-on-statement, ≥80% read-in-first-two-turns,
-      <10% spurious writes
-- [ ] Cross-conversation propagation harness — a fact written in conversation A is
-      retrievable in conversation B within 1s at p95. This is the direct proof of the
-      product's central claim.
+- [ ] Cross-conversation propagation: a fact written in Claude conversation A is
+      retrievable in a fresh conversation B, under 1s at p95. The build plan is
+      explicit that this is **not optional** before M3 is done — M3.2 is a
+      prerequisite step, never a substitute
+- [ ] **Synthetic data only** until isolation, fail-closed auth, secret handling and
+      log inspection have all been verified against the deployment
+
+No Anthropic API key is needed for any of this. Claude's cloud calls *our* endpoint;
+the credential that matters is a coletar token.
+
+### M3.6 Composer bridge — web capture without a Project ✅
+
+Measured in M3.3: reliable unprompted reads on claude.ai require the instruction
+snippet in a Project, and the MCP server's own `instructions` field is not enough.
+This removes that requirement.
+
+- [x] REST surface on the same app, same auth, same tenancy: `/v1/search`,
+      `/v1/capture`, `/v1/remember`. Three endpoints and deliberately nothing for
+      enumerating a graph or reading conversations — an extension has no business
+      doing either (§4.1)
+- [x] CORS as an allowlist with an unauthenticated preflight. A browser strips
+      credentials from a preflight by definition, so gating it on auth would fail
+      every cross-origin call before the real request was sent. Rejections carry the
+      headers too, or the browser hides a 401 and it looks like a network failure
+- [x] MV3 extension reading **only the composer**. `COMPOSERS` is the single DOM
+      lookup in the file; there is no selector for a message, a response or a
+      transcript, so no code path can reach one
+- [x] Recall is explicit and visible — memory is written into the box above the
+      user's text, so they read it and send it themselves. Nothing is added to a
+      message they did not see
+- [x] Capture runs the precision-first extractor server-side rather than storing
+      turns, so most turns store nothing (4.3% false positives on the labelled set)
+- [x] **Verified end to end on claude.ai, 29 Aug 2026, with no Project and no
+      snippet.** Read: the button retrieved the stored preference and injected it
+      visibly (`surface=claude.ai`, 27ms). Write: typing *"I never use an ORM; every
+      query in my projects is plain SQL"* and pressing send stored it at
+      `explicit_statement` / confidence 0.95 / `origin=user` — the top tier, because
+      they are the user's own words rather than a model's inference of them. The
+      negation survived intact, which is the M4 trigger-preservation fix holding in
+      production. A money *question* sent earlier stored nothing, which is the
+      precision-first extractor declining correctly
+- [ ] Measure whether recall+capture in practice beats the Project snippet
+
+**The line, and why it holds.** Reading what a user types into a text field is the
+category password managers, text expanders and spell checkers occupy. Reading the
+model's Output is what both providers' terms name. The extension does the first and
+has no ability to do the second.
+
+### M3.4 Claude Code acquisition — guaranteed capture ✅
+
+Added Aug 2026, and placed ahead of the reliability harness deliberately: guaranteed
+capture on a surface the user works in daily is worth more than tuning the odds on a
+surface where we are a guest. This is the largest unclaimed row in §4.1's tier-1
+table, and OpenAI's Import feature validates the approach by doing the same thing.
+
+- [x] Reads `~/.claude/projects/*/*.jsonl` through the same extractor and the same
+      ingest path the proxy and the browser bridge use. A turn typed into Claude Code
+      is not a different kind of statement, so it gets no different treatment
+- [x] **Only human turns.** In a real session file, 930 records had `type: "user"`
+      and **873 were `tool_result`** — 94% of what looks like the user speaking is
+      tool output being fed back. The discriminator is the content shape, never the
+      record type, so pasted file contents and stack traces never reach the extractor
+- [x] Working directory becomes the project scope, so a fact stated while working on
+      one repository does not surface as global context in another. The scope id is
+      derived from the directory name, not the path, so the graph never records where
+      on disk someone works
+- [x] Incremental by line offset, and `--rescan` re-reads everything for after the
+      extractor improves — deduplication makes that safe
+- [x] Transcripts stay on disk; events point at the session file rather than the
+      graph holding a second copy of the conversation
+- [x] `--dry-run`, which earned itself immediately (below)
+- [ ] Hooks in `settings.json` for live capture, so a turn is seen within seconds
+      rather than at the next import
+- [x] **Scope boundary, from §4.1:** documented user-facing artifacts only. Not a
+      desktop client's Electron cache — undocumented, unstable, and adjacent to
+      session tokens. Never the rendered page.
+
+**What the dry run found, and why it matters more than the feature.** Against 257
+real human turns the extractor scored **0% precision** — all three of its extractions
+were first-person sentences quoted inside pasted JSON or prompt templates full of
+`[placeholders]`. The M2.2 labelled set was conversational turns; a developer's
+transcript is a different domain, and precision measured on one does not transfer to
+the other. Two guards and five new labelled negatives later: 0 junk from the same
+corpus, and the labelled set unchanged at 4.3% false positives with 100% recall.
+
+Had the import run instead of the dry run, three junk memories would be in the graph,
+one contradicting another.
+
+### M3.5 Tool-use reliability harness
+
+**The bars need a qualifier before they are measured.** Testing on 28 Aug 2026 showed
+`search_context` fires unprompted *inside a Project carrying the instruction snippet*
+and does not fire without one — with the MCP server's own `instructions` field set and
+saying the same thing. So "≥80% read-at-start" is only meaningful as "≥80% inside a
+Project with the snippet". Measured any other way it would describe a configuration
+the product cannot deliver.
+
+
+
+A different kind of measurement from anything so far. Every bar to date is
+deterministic — same input, same output. This measures whether a *model chooses* to
+call a tool, which is non-deterministic and needs enough trials to be a rate rather
+than an anecdote.
+
+- [ ] Scripted conversations driven through the Messages API against the deployed
+      connector. **This is where an Anthropic API key becomes necessary** — a
+      separate credential from the coletar token, pointing the other way
+- [ ] `write_memory` fires on ≥85% of clear preference statements
+- [ ] `search_context` called within the first two turns ≥80% of the time
+- [ ] Spurious writes under 10% on neutral conversations
+- [ ] Versioned instruction snippet, so a reliability number is attributable to the
+      prompt that produced it
+
+### Not satisfiable in code
+
+Stated here rather than discovered at the end:
+
+- **"Connector setup completes without support intervention ≥90% of the time in an
+  internal dogfood test"** needs real people doing setup. The flow and its
+  documentation can be built; the statistic cannot be manufactured.
+- Registering a real Custom Connector needs a deployed endpoint and a Claude account.
 
 ---
 
@@ -201,6 +453,27 @@ since objects arrive already typed.
 SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
 
 - [x] Compression job: superseded-chain retirement, schedulable and on-demand
+- [ ] **The local proxy becomes an MCP client.** It calls `build_store()` directly
+      today, so it bypasses authentication, tenant resolution and scope enforcement.
+      Fine for a single-user local daemon, wrong for anything else: both surfaces
+      should pass through the same auth, tenancy and event semantics rather than one
+      of them holding database credentials
+- [x] **Dedup/merge on write** (`coletar.ingest`). Near-duplicates used to be dropped
+      only at *assembly* time, which protects retrieval and not the compiler:
+      `list_objects` is what a compile reads, so True Migration would have emitted
+      every duplicate the proxy ever wrote. Ten restatements are now one object.
+      A duplicate **corroborates** — the existing object gets an
+      `object.corroborated` event, because "the user said it again in a different
+      session" is real provenance — and confidence is deliberately *not* inflated,
+      since repetition is weak evidence. Corrections are never folded into what they
+      correct, which would discard the correction and leave the stale fact standing.
+      Lives at the ingest boundary rather than in `Store`, so a compiler or replay
+      can still write exact objects
+- [x] **Extraction off the response path.** The proxy queues extraction as a
+      background task; the streaming path already had this property. 0.1ms today
+      with the regex extractor, seconds once M6.2's model does the extracting — and
+      a failing extractor can no longer break a chat, since the reply has already
+      left
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract

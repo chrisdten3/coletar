@@ -16,6 +16,7 @@ from datetime import datetime
 
 from coletar.schema.events import Event
 from coletar.schema.objects import ContextObject, object_from_record
+from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
 #: Replay has to see an object's whole history, not a page of it.
@@ -30,14 +31,16 @@ class Revision:
 
 
 async def replay_object(
-    store: Store, object_id: str, *, at: datetime | None = None
+    store: Store, tenant_id: TenantId, object_id: str, *, at: datetime | None = None
 ) -> ContextObject | None:
     """The object's state as of `at` (default: now).
 
     Returns None when the log holds no revision for it at or before that moment --
     which is the honest answer for "what did this look like before it existed".
     """
-    events = await store.list_events(object_id=object_id, until=at, limit=_HISTORY_LIMIT)
+    events = await store.list_events(
+        tenant_id, object_id=object_id, until=at, limit=_HISTORY_LIMIT
+    )
     # list_events is newest-first, so the first revision we meet is the latest one
     # at or before `at`.
     for event in events:
@@ -46,9 +49,9 @@ async def replay_object(
     return None
 
 
-async def replay_history(store: Store, object_id: str) -> list[Revision]:
+async def replay_history(store: Store, tenant_id: TenantId, object_id: str) -> list[Revision]:
     """Every recorded state of one object, oldest first — the Inspector's timeline."""
-    events = await store.list_events(object_id=object_id, limit=_HISTORY_LIMIT)
+    events = await store.list_events(tenant_id, object_id=object_id, limit=_HISTORY_LIMIT)
     return [
         Revision(at=event.at, event=event, state=object_from_record(event.after))
         for event in reversed(events)

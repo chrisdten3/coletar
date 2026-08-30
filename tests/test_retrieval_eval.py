@@ -24,6 +24,7 @@ from coletar.retrieval.evaluation import (
     seed_corpus,
 )
 from coletar.store.memory import InMemoryStore
+from conftest import TENANT
 
 FIXTURES = Path(__file__).parent / "fixtures"
 EVAL_SET = FIXTURES / "retrieval_eval.json"
@@ -52,8 +53,8 @@ def baselines() -> dict:
 @pytest.fixture
 async def measured(eval_set) -> EvaluationResult:
     store = InMemoryStore(embedder=HashingEmbedder(768))
-    ids = await seed_corpus(store, eval_set["corpus"])
-    return await evaluate(store, eval_set, ids)
+    ids = await seed_corpus(store, TENANT, eval_set["corpus"])
+    return await evaluate(store, TENANT, eval_set, ids)
 
 
 # -- the fixture itself -------------------------------------------------------
@@ -148,13 +149,14 @@ async def test_corrections_resolve_to_the_superseding_object(eval_set):
     """The corpus builds real supersedes chains, so the eval exercises the same
     retirement semantics production does rather than a flat corpus."""
     store = InMemoryStore(embedder=HashingEmbedder(768))
-    ids = await seed_corpus(store, eval_set["corpus"])
+    ids = await seed_corpus(store, TENANT, eval_set["corpus"])
 
-    stale = await store.get_object(ids["employer_v1"])
-    current = await store.get_object(ids["employer_v2"])
+    stale = await store.get_object(TENANT, ids["employer_v1"])
+    current = await store.get_object(TENANT, ids["employer_v2"])
 
     assert current is not None and current.supersedes == ids["employer_v1"]
     assert stale is not None, "never hard-delete"
     assert ids["employer_v1"] not in {
-        hit.obj.id for hit in await store.search("who does chris work for", top_k=CANDIDATE_DEPTH)
+        hit.obj.id for hit in await store.search(
+            TENANT, "who does chris work for", top_k=CANDIDATE_DEPTH)
     }

@@ -1,4 +1,12 @@
-"""coletar CLI. Thin — every command is a few lines over the same substrate."""
+"""coletar CLI. Thin — every command is a few lines over the same substrate.
+
+The CLI is an *application boundary*, so it is allowed to resolve a configured
+tenant — but never silently. `--tenant` is on every command that touches the graph,
+writes report where they landed, and `coletar tenant` prints what the configured
+default currently resolves to. A tenant that only exists in a `.env` file is implied,
+not visible, and the whole point of M3.1 is that whose graph you are touching is
+never a guess.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +18,18 @@ import typer
 from coletar.config import get_settings
 from coletar.retrieval import retrieve
 from coletar.schema.objects import GLOBAL_SCOPE, MemoryKind, Scope, ScopeType
+from coletar.schema.tenancy import TenantId
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
+
+TENANT_OPTION = typer.Option(
+    None, "--tenant", help="Tenant to act on. Defaults to COLETAR_DEFAULT_TENANT_ID."
+)
+
+
+def _tenant(explicit: str | None) -> TenantId:
+    """Resolve the tenant, preferring an explicit flag over configuration."""
+    return parse_tenant_id(explicit or get_settings().default_tenant_id)
 
 app = typer.Typer(help="coletar — a portable AI workspace.", no_args_is_help=True)
 
@@ -40,6 +59,7 @@ def remember(
     content: str,
     kind: str = typer.Option("fact", help="fact|preference|instruction|goal|correction"),
     project: str | None = typer.Option(None, help="Scope to a project id."),
+    tenant: str | None = TENANT_OPTION,
 ) -> None:
     """Write one memory directly, bypassing any model."""
     from coletar.schema.objects import ExtractionMethod, Memory, OriginType, Provider
@@ -53,25 +73,33 @@ def remember(
             extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
             origin_type=OriginType.USER,
         )
-        await build_store().put_object(memory)
-        typer.echo(memory.id)
+        resolved = _tenant(tenant)
+        await build_store().put_object(resolved, memory)
+        typer.echo(f"{memory.id}  (tenant {resolved})")
 
     asyncio.run(_run())
 
 
 @app.command()
-def search(query: str, project: str | None = typer.Option(None)) -> None:
+def search(
+    query: str,
+    project: str | None = typer.Option(None),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
     """Search the canonical graph the way a connected model would."""
 
     async def _run() -> None:
         settings = get_settings()
+        resolved = _tenant(tenant)
         result = await retrieve(
             build_store(),
+            resolved,
             query,
             scope=_scope(project),
             token_budget=settings.retrieval_token_budget,
             surface="cli",
         )
+        typer.echo(f"tenant {resolved}")
         for obj, s in zip(result.objects, result.scores, strict=True):
             typer.echo(f"{s:.3f}  [{obj.confidence:.2f}] {obj.content}")
 
@@ -79,13 +107,18 @@ def search(query: str, project: str | None = typer.Option(None)) -> None:
 
 
 @app.command()
-def compress(project: str | None = typer.Option(None)) -> None:
+def compress(
+    project: str | None = typer.Option(None), tenant: str | None = TENANT_OPTION
+) -> None:
     """Run the compression job (§6) over one scope."""
     from coletar.jobs import compress as run_compress
 
     async def _run() -> None:
-        report = await run_compress(build_store(), scope=_scope(project) if project else None)
-        typer.echo(json.dumps(report.as_dict(), indent=2))
+        resolved = _tenant(tenant)
+        report = await run_compress(
+            build_store(), resolved, scope=_scope(project) if project else None
+        )
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
 
     asyncio.run(_run())
 
@@ -103,28 +136,31 @@ def migrate() -> None:
 
 
 @app.command()
-def seed() -> None:
+def seed(tenant: str | None = TENANT_OPTION) -> None:
     """Populate the store with the fixture graph: one object of every type, plus a
     supersedes chain. Useful for trying the Inspector and the compilers."""
     from coletar.seed import seed as run_seed
 
     async def _run() -> None:
-        result = await run_seed(build_store())
+        resolved = _tenant(tenant)
+        result = await run_seed(build_store(), resolved)
+        typer.echo(f"seeded {len(result.by_role)} objects into tenant {resolved}")
         typer.echo(json.dumps(result.by_role, indent=2))
 
     asyncio.run(_run())
 
 
 @app.command()
-def history(object_id: str) -> None:
+def history(object_id: str, tenant: str | None = TENANT_OPTION) -> None:
     """Replay one object's revisions from the event log — what a fact used to say
     and when it changed (§6). Reads the log only, never the object table."""
     from coletar.store.replay import replay_history
 
     async def _run() -> None:
-        revisions = await replay_history(build_store(), object_id)
+        resolved = _tenant(tenant)
+        revisions = await replay_history(build_store(), resolved, object_id)
         if not revisions:
-            typer.echo(f"no revisions recorded for {object_id}")
+            typer.echo(f"no revisions recorded for {object_id} in tenant {resolved}")
             return
         for revision in revisions:
             typer.echo(
@@ -164,9 +200,12 @@ def evaluate(
         eval_set = load_eval_set(
             Path(__file__).parent.parent.parent / "tests" / "fixtures" / "retrieval_eval.json"
         )
+        # A fixed, isolated tenant: an evaluation run must never touch real data,
+        # and its numbers must not depend on what happens to be in one.
+        eval_tenant = parse_tenant_id("tenant_eval")
         store = InMemoryStore(embedder=embedder)
-        ids = await seed_corpus(store, eval_set["corpus"])
-        result = await run_eval(store, eval_set, ids)
+        ids = await seed_corpus(store, eval_tenant, eval_set["corpus"])
+        result = await run_eval(store, eval_tenant, eval_set, ids)
         typer.echo(f"embedder: {embedder.model}")
         typer.echo(result.report())
         for miss in result.misses:
@@ -176,11 +215,141 @@ def evaluate(
 
 
 @app.command()
-def events(limit: int = 50) -> None:
+def propagation(
+    tenant: str | None = TENANT_OPTION,
+    trials: int = typer.Option(5, help="Facts to send in each direction."),
+) -> None:
+    """Prove the central claim: a memory written on one surface is readable on the
+    other (§3.1). Writes through the local proxy's extraction path and reads through
+    the MCP retrieval path, and back.
+
+    Runnable on demand as well as in CI, because "memory is portable across models"
+    is the one property worth being able to re-check at any moment.
+    """
+    from coletar.propagation import Direction, measure_round_trip
+    from coletar.retrieval import retrieve
+    from coletar.retrieval.embedding import tokenize
+
+    outbound = [
+        "I prefer fixed-point integers over doubles for money.",
+        "From now on, always use uv instead of pip.",
+        "Remember that Ledger deploys to Fly.io on every merge.",
+        "I never use an ORM in this project.",
+        "My name is Christopher, but everyone calls me Chris.",
+    ][:trials]
+    inbound = [
+        "Priya owns the invoicing module and reviews its pull requests.",
+        "Standups happen at 09:30 Lisbon time on Tuesdays.",
+        "The staging database is restored from production every Sunday night.",
+        "Design documents live in Notion, not in the repository.",
+        "Chris bills hourly rather than per project.",
+    ][:trials]
+
+    async def _run() -> None:
+        from coletar.extraction import extract_memories
+        from coletar.schema.objects import ExtractionMethod, Memory, MemoryKind, OriginType
+
+        resolved = _tenant(tenant)
+        store = build_store()
+
+        async def local_write(content: str) -> str:
+            extracted = await extract_memories(user_text=content)
+            memory = extracted[0] if extracted else Memory.from_write(content)
+            return (await store.put_object(resolved, memory)).id
+
+        async def connector_write(content: str) -> str:
+            memory = Memory.from_write(
+                content,
+                kind=MemoryKind.FACT,
+                extraction_method=ExtractionMethod.MCP_LIVE_WRITE,
+                origin_type=OriginType.AGENT,
+            )
+            return (await store.put_object(resolved, memory)).id
+
+        async def read(query: str) -> set[str]:
+            context = await retrieve(store, resolved, query, top_k=25, trace=False)
+            return {obj.id for obj in context.objects}
+
+        report = await measure_round_trip(
+            directions=[
+                Direction("local->connector", local_write, read, outbound),
+                Direction("connector->local", connector_write, read, inbound),
+            ],
+            query_for=lambda content: " ".join(tokenize(content)[:6]),
+        )
+        typer.echo(f"tenant {resolved}")
+        typer.echo(report.report())
+        raise typer.Exit(0 if report.propagated == report.total else 1)
+
+    asyncio.run(_run())
+
+
+@app.command()
+def import_claude_code(
+    tenant: str | None = TENANT_OPTION,
+    rescan: bool = typer.Option(False, help="Re-read every transcript from the start."),
+    dry_run: bool = typer.Option(False, help="Show what would be stored, store nothing."),
+    project_scopes: bool = typer.Option(True, help="Scope memories by working directory."),
+) -> None:
+    """Import what you typed into Claude Code (§4.1).
+
+    Claude Code writes every session to ~/.claude/projects as it works, so capture
+    here is guaranteed rather than left to a model's discretion — no connector, no
+    instruction snippet, no approval prompt. Only your own words are read; assistant
+    replies and tool results are never mined.
+    """
+    from coletar.acquisition import default_root, import_sessions, iter_turns, session_files
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        if dry_run:
+            from coletar.acquisition import scope_for
+            from coletar.extraction import extract_memories
+
+            turns = found = 0
+            for path in session_files(default_root()):
+                for turn in iter_turns(path):
+                    turns += 1
+                    scope = scope_for(turn.cwd, project_scopes=project_scopes)
+                    for memory in await extract_memories(user_text=turn.text, scope=scope):
+                        found += 1
+                        typer.echo(f"  [{memory.kind}] ({scope}) {memory.content}")
+            typer.echo(f"\n{turns} turns read, {found} would be stored — nothing written")
+            return
+
+        report = await import_sessions(
+            build_store(), resolved, rescan=rescan, project_scopes=project_scopes
+        )
+        typer.echo(f"tenant {resolved}")
+        typer.echo(json.dumps(report.as_dict(), indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
+def tenant() -> None:
+    """Show which tenant the CLI and proxy resolve to, and what the store holds.
+
+    "Visible rather than implied" has to mean more than a setting in `.env`.
+    """
+    settings = get_settings()
+    typer.echo(f"configured default : {settings.default_tenant_id}")
+    typer.echo(f"store backend      : {settings.store_backend}")
+    store = build_store()
+    known = getattr(store, "tenants", None)
+    if callable(known):
+        found = sorted(known())
+        typer.echo(f"tenants in store   : {', '.join(found) if found else '(none yet)'}")
+
+
+@app.command()
+def events(limit: int = 50, tenant: str | None = TENANT_OPTION) -> None:
     """Tail the Event/Revision Log — the raw feed behind the dashboard (§6)."""
 
     async def _run() -> None:
-        for event in await build_store().list_events(limit=limit):
+        resolved = _tenant(tenant)
+        typer.echo(f"tenant {resolved}")
+        for event in await build_store().list_events(resolved, limit=limit):
             typer.echo(
                 f"{event.at.isoformat()}  {event.actor:<9} {event.type:<22} "
                 f"{event.object_id or '-'}"

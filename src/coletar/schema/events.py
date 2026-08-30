@@ -38,6 +38,8 @@ class EventType(StrEnum):
     EDGE_CREATED = "edge.created"
     COMPRESSION_RUN = "compression.run"
     RETRIEVAL_TRACE = "retrieval.trace"
+    STORE_MIGRATED = "store.migrated"
+    OBJECT_CORROBORATED = "object.corroborated"
     COMPILE_RUN = "compile.run"
     CONNECTOR_WRITE = "connector.write"
 

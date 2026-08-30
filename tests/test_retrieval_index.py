@@ -16,7 +16,7 @@ from coletar.retrieval.embedding import HashingEmbedder, cosine, stem, tokenize
 from coletar.retrieval.index import VectorIndex
 from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
 from coletar.store.memory import InMemoryStore
-from conftest import RelevanceSet, scope_from
+from conftest import TENANT, RelevanceSet, scope_from
 
 #: The build plan's bar: the expected object in the top 5 for at least 90% of the
 #: 20 queries.
@@ -106,31 +106,32 @@ async def test_a_write_is_searchable_on_the_very_next_call():
     """The bound on 'when does a write become visible' is one embed call: embedding
     happens on the write path, not in a background window."""
     store = InMemoryStore()
-    memory = await store.put_object(
+    memory = await store.put_object(TENANT, 
         Memory.from_write("Chris deploys Ledger to Fly.io.", kind=MemoryKind.FACT)
     )
-    assert memory.id in {hit.obj.id for hit in await store.search("where does ledger deploy")}
+    assert memory.id in {hit.obj.id for hit in await store.search(
+        TENANT, "where does ledger deploy")}
 
 
 async def test_an_updated_object_is_found_by_its_new_content():
     store = InMemoryStore()
-    memory = await store.put_object(Memory.from_write("Chris uses pip."))
+    memory = await store.put_object(TENANT, Memory.from_write("Chris uses pip."))
     memory.content = "Chris uses uv exclusively."
-    await store.put_object(memory)
+    await store.put_object(TENANT, memory)
 
-    assert {hit.obj.id for hit in await store.search("uv")} == {memory.id}
-    assert not await store.search("pip")
+    assert {hit.obj.id for hit in await store.search(TENANT, "uv")} == {memory.id}
+    assert not await store.search(TENANT, "pip")
 
 
 async def test_retired_and_superseded_objects_are_absent_from_search():
     store = InMemoryStore()
-    old = await store.put_object(Memory.from_write("Ledger deploys to Heroku."))
-    new = await store.put_object(
+    old = await store.put_object(TENANT, Memory.from_write("Ledger deploys to Heroku."))
+    new = await store.put_object(TENANT, 
         Memory.from_write(
             "Ledger deploys to Fly.io.", kind=MemoryKind.CORRECTION, supersedes=old.id
         )
     )
-    found = {hit.obj.id for hit in await store.search("where does ledger deploy")}
+    found = {hit.obj.id for hit in await store.search(TENANT, "where does ledger deploy")}
     assert found == {new.id}
 
 
@@ -144,7 +145,7 @@ async def test_top_five_relevance_meets_the_bar(
     hits: list[str] = []
     misses: list[str] = []
     for query in relevance_set.queries:
-        results = await store.search(
+        results = await store.search(TENANT, 
             str(query["query"]), scope=scope_from(query.get("scope")), top_k=TOP_K
         )
         found = [by_id[hit.obj.id] for hit in results]
@@ -161,7 +162,7 @@ async def test_project_scoped_search_sees_global_but_not_another_project(
     store, ids = relevance_store
     ledger = Scope(type=ScopeType.PROJECT, id="proj_ledger")
 
-    results = await store.search("what language is this written in", scope=ledger, top_k=30)
+    results = await store.search(TENANT, "what language is this written in", scope=ledger, top_k=30)
     found = {hit.obj.id for hit in results}
 
     assert ids["atlas_language"] not in found  # another project's object
@@ -175,7 +176,7 @@ async def test_global_scoped_search_excludes_every_project(
     from coletar.schema.objects import GLOBAL_SCOPE
 
     store, ids = relevance_store
-    results = await store.search("ledger invoicing database", scope=GLOBAL_SCOPE, top_k=30)
+    results = await store.search(TENANT, "ledger invoicing database", scope=GLOBAL_SCOPE, top_k=30)
     found = {hit.obj.id for hit in results}
 
     assert ids["db_choice"] not in found
@@ -195,13 +196,13 @@ async def test_search_p95_stays_under_300ms_at_ten_thousand_objects():
     store = InMemoryStore()
     for i in range(10_000):
         body = " ".join(rng.choices(vocabulary, k=12))
-        await store.put_object(Memory.from_write(f"{body} number {i}"))
+        await store.put_object(TENANT, Memory.from_write(f"{body} number {i}"))
 
     latencies: list[float] = []
     for _ in range(30):
         query = " ".join(rng.choices(vocabulary, k=6))
         start = time.perf_counter()
-        await store.search(query, top_k=12)
+        await store.search(TENANT, query, top_k=12)
         latencies.append((time.perf_counter() - start) * 1000)
 
     latencies.sort()

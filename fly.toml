@@ -1,0 +1,53 @@
+# coletar MCP service.
+#
+# `fly launch` will rewrite this file — it normalises quoting and strips comments.
+# Everything below is semantically what it produced, with the reasoning put back.
+#
+# Nothing secret lives here. COLETAR_DATABASE_URL and COLETAR_MCP_API_KEYS are set
+# with `fly secrets set`, which keeps them out of the repository and the image.
+# See docs/DEPLOYMENT.md.
+
+app = 'coletar-mcp'
+primary_region = 'iad'
+
+[build]
+
+# Migrations run once per release, before the new version takes traffic. Running them
+# at boot instead would mean every instance racing every other one for the same
+# ALTER TABLE.
+[deploy]
+  release_command = 'coletar migrate'
+
+[env]
+  COLETAR_MCP_HOST = '0.0.0.0'
+  COLETAR_MCP_PORT = '8788'
+  COLETAR_STORE_BACKEND = 'postgres'
+  COLETAR_EMBEDDING_BACKEND = 'hashing'
+  COLETAR_EMBEDDING_DIM = '768'
+  # The MCP SDK enforces DNS-rebinding protection and trusts only localhost by
+  # default. Without this a real domain is refused with 421 Misdirected Request —
+  # and it happens *after* authentication succeeds, so the logs show a valid session
+  # being created and then the request rejected, which looks like anything except a
+  # host check.
+  COLETAR_MCP_ALLOWED_HOSTS = 'coletar-mcp.fly.dev'
+
+[http_service]
+  internal_port = 8788
+  force_https = true
+  # Claude's connector requests come from Anthropic's cloud, and MCP sessions are
+  # stateful over streamable HTTP — so instances must not stop between requests.
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '10s'
+    method = 'GET'
+    # The one unauthenticated path. It reports liveness and nothing about the graph.
+    path = '/healthz'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '512mb'

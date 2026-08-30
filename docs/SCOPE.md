@@ -9,12 +9,45 @@
 
 ## 1. Two Customers, One Substrate
 
-Every competitor you found last time picked one lane:
+Every competitor picked one lane:
 
-- **Mem0, Zep, Supermemory** — developer infra. API/SDK only. No consumer-facing product; you'd never send your mom to mem0.ai.
-- **Echo, MemoryLake, Anuma** — consumer-facing, but thin: a shared bucket + a browser extension. No SDK depth, no real graph, no compiler.
+- **Mem0, Zep, Supermemory** — developer infra. API/SDK first. Mem0's own docs are
+  explicit that it *"sits between your application and your model"*: **you** call
+  `add` after a turn and `search` before the next one. That works wherever you own
+  the loop and reaches nothing else — for claude.ai and chatgpt.com they ship an MCP
+  server with exactly the same discretionary property everyone's has.
+- **MemoryLake** — consumer-facing. **Correction, Aug 2026:** this was previously
+  described here as "a shared bucket + a browser extension." That is wrong on
+  mechanism. MemoryLake exposes one project as an **MCP endpoint** with a Key ID,
+  Secret and bearer token, and Claude, ChatGPT and Gemini all read from it — the
+  same architecture this document proposes. The extension is a secondary bridge for
+  injecting context into ChatGPT prompts. What *is* still true: the store is flat
+  entries ("individual Memory entries"), there is no typed graph, and their
+  ChatGPT↔Claude "migration" pages are how-to guides rather than a compiler.
+- **Anuma, Echo** — Echo could not be verified in an Aug 2026 search and may be
+  defunct or renamed. Treat the earlier characterisation as unsupported.
 
-Nobody serves both off the *same* underlying object model. That's the wedge, and it's also why "memory as a first-class object" has to come first — if memory is a schema, not a feature, both audiences read/write the same substrate through different doors:
+**Live Sync is not a differentiator and this document should stop implying it is.**
+Convergent architecture on a sanctioned protocol is expected: there is one way to do
+capture-by-tool-call, and everyone doing it correctly looks alike. What still
+differs is *underneath* — a typed graph with scope, provenance, confidence and
+supersession versus flat entries — and *afterwards*, in the compiler.
+
+Two places the substrate is genuinely stronger than the field, worth naming because
+they are cheap to lose:
+
+- **Scoping is enforced, not conventional.** Mem0's docs say *"Always scope searches
+  with filters such as `user_id`"* — a rule the developer must remember. Here
+  `tenant_id` is a required argument on every store method with no default, typed so
+  a swapped pair will not typecheck (§9, M3.1). Impossible to forget beats important
+  to remember.
+- **Corrections are typed.** Mem0's extraction path is *"ADD ONLY"*: both facts are
+  stored and the application must issue an explicit update or delete. Here a
+  correction carries `supersedes`, and supersession excludes the stale fact from
+  retrieval the moment it is written.
+
+Nobody serves both audiences off the *same* underlying object model. That's the
+wedge, and it's also why "memory as a first-class object" has to come first — if memory is a schema, not a feature, both audiences read/write the same substrate through different doors:
 
 ```
                     CANONICAL MEMORY SUBSTRATE
@@ -65,10 +98,46 @@ This is the part every competitor blurs, and it's worth making a literal UI togg
 **Live Sync Mode** (table stakes — this is what Mem0/MemoryLake/Echo already do)
 The canonical store stays authoritative. Every connected surface — Claude Desktop over MCP, a local Ollama model through the proxy, a developer's agent through the SDK — queries it in real time. Nothing is ever "moved." You're always a client of your own memory.
 
-**True Migration Mode** (the actual product — nobody does this today)
+**True Migration Mode** (the actual product — but see the correction below)
 A directional, point-in-time **compile**: canonical objects → the destination's *actual native containers*. Not a pasted text blob — a real Claude Project (via Anthropic's existing memory import/export surface), a real ChatGPT Custom GPT + Memory entries (best-effort, since OpenAI has no import API), or a native system-prompt/profile file for a local model. After compiling, the user can disconnect from you entirely and the destination product works on its own. You produce a **Migration Manifest** (object counts, native vs. reconstructed vs. unsupported) and a **Continuity Score** — see §7.
 
 This distinction is also your answer to "isn't this just Mem0" — Mem0's founder literally calls his product "Plaid for memory," but Plaid never asks a bank to *become* your new primary bank. Live Sync is Plaid-for-memory. True Migration is closer to an actual bank-switching product — more like ACH-transfer-and-close-the-old-account than balance-checking.
+
+### Correction, Aug 2026: "nobody does this today" is no longer true
+
+OpenAI shipped **Import** in ChatGPT: *"Bring setup, projects, and chats from other AI
+apps into ChatGPT"*, with an **autosync** toggle — *"Automatically sync new and updated
+content from connected sources"* — and automatic detection of locally installed AI
+apps (observed detecting Claude Code and Claude Cowork, with an import history showing
+repeated session imports). It appears to work by reading what those apps write to the
+local filesystem.
+
+This is §11's platform risk arriving, and it has to be said plainly rather than
+absorbed: a lab shipped cross-vendor context movement natively, for free, with
+continuous sync.
+
+**What it is, precisely.** It is *one-directional, into ChatGPT*. It does not make a
+user's context portable; it makes it OpenAI's. It is an acquisition funnel — the same
+lock-in with a better on-ramp — and there is no corresponding "export my ChatGPT
+context to somewhere else."
+
+**What it costs this product.** The highest-demand corridor in §10 step 4 —
+"I want my Claude context inside ChatGPT" — is now solved by the destination vendor,
+natively, at no cost. That specific pitch is gone. Building it anyway would be
+building a worse version of a free feature.
+
+**What survives, and it is the more defensible half.** A *neutral* store the user
+owns, readable by anything, compilable *out* to any destination including back out of
+ChatGPT. OpenAI will happily import your context; it will not help you leave. The
+interesting product is the one that takes it out again — which makes the compiler
+(§7, and still entirely unbuilt) more central than before, not less.
+
+**Same week, smaller version of the same force:** Claude ships native memory, and
+Claude Code has shipped Auto Memory on by default since Feb 2026, writing its own
+`MEMORY.md`. In live testing, Claude preferred its own memory over an installed
+connector's `write_memory` tool until told explicitly to use the connector. Any
+third-party memory layer now competes with a first-party feature that needs no setup
+and no approval prompt. See §4's revised acquisition table for the consequence.
 
 ---
 
@@ -112,6 +181,49 @@ This table covers **Migration-mode acquisition** — the one-time or periodic ex
 | **ChatGPT** | Human-initiated: deep-link the user to Settings → Data Controls → Export, they click, they download. Your desktop agent then auto-detects the ZIP in Downloads and parses it. No automated clicking, no session reuse, no page reading — OpenAI's terms flatly prohibit automated/programmatic extraction | Best-effort: a downloadable Custom GPT configuration package (instructions + knowledge files) the user uploads themselves via GPT Builder, plus a Memory-entries text file the user pastes in — not an automated UI-driving script, since OpenAI's terms cover destination-side automation too | No export/import API exists. Highest-demand corridor (per earlier research), least official support — the most fragile leg, and explicitly one where "automate everything" is off the table. Live *writes* from ChatGPT happen through the connector in §3.1, not through this pipeline |
 | **Gemini** | Google's Data Portability API is real and OAuth-scoped, built specifically for service-switching — but Gemini conversation/memory data isn't confirmed in its supported scopes. Fall back to a user-initiated Google Takeout archive | Best-effort text/instruction reconstruction only, no Workspace replay | Test the actual supported scopes before building against this API; don't assume Gemini coverage. Deprioritize until validated |
 | **Local models (Ollama, LM Studio, vLLM, llama.cpp servers)** | You control the whole loop — no export/scrape needed | A lightweight local proxy that sits in front of the model's OpenAI-compatible endpoint, injects retrieved memory into the system prompt on the way in, and extracts new memory on the way out | **Still your cleanest wedge.** No ToS risk, no missing API, ships first — and it doubles as the reference implementation for the connector pattern in §3.1, since Ollama needs the same kind of bridge you're already building here |
+
+### 4.1 Capture is tiered, and no single mechanism covers everything (Aug 2026)
+
+The question "how do we capture every interaction on every surface" has no single
+answer, and it is worth writing down why rather than re-asking it. Everything depends
+on **whether we own the loop**:
+
+| Surface | Own the loop? | Capture | Mechanism |
+|---|---|---|---|
+| Local models | Yes | **Guaranteed** | Proxy sits in the request path |
+| **Claude Code** | Yes | **Guaranteed** | Hooks + the session `.jsonl` and project files it writes to disk |
+| A developer's own app | Yes | **Guaranteed** | SDK, the Mem0 pattern (§9) |
+| ChatGPT export | — | Guaranteed, delayed | User-initiated archive (§10 step 4) |
+| claude.ai / Claude Desktop | No | **Discretionary** | MCP; the model decides |
+| ChatGPT web | No | **Discretionary** | MCP read + confirmed writes |
+
+Mem0's "automatic" capture is the first row of this table, not a mechanism this
+product lacks. Their docs are explicit: the *application* calls `add` and `search`. It
+is the same position the local proxy occupies, and it reaches claude.ai exactly as
+well as ours does, which is to say through MCP, at the model's discretion.
+
+**The strategic consequence: maximise the rows where we own the loop.** Guaranteed
+capture on a surface the user works in daily is worth more than tuning the odds on a
+surface where we are a guest. Claude Code is the largest unclaimed such surface, and
+it is where a great deal of real work now happens.
+
+**Reading local files is not the prohibited thing, and the line matters.** §8.1 and
+§11 prohibit automating a click on a provider's site or reading an authenticated page.
+Files an app writes to the user's own disk, at the user's instruction, are the user's
+— reading them is closer to reading your own shell history than to scraping. OpenAI's
+Import feature (§3) is exactly this, which is a useful validation of the approach.
+
+That said, not all local data is one category, and the boundary should be drawn
+deliberately:
+
+- **Documented, user-facing artifacts** — Claude Code's `~/.claude` session
+  transcripts, `CLAUDE.md`, an exported archive. These are yours. **In scope.**
+- **An application's internal cache** — e.g. a desktop client's Electron
+  `Session Storage`/LevelDB. Undocumented, unstable across releases, and it sits
+  beside session tokens, so reading it means handling credentials to reach content.
+  **Out of scope**, closer in spirit to reading an authenticated session.
+- **The rendered page in a browser.** **Never.** This is the acquisition boundary,
+  and Anthropic has enforcement history against exactly it (§11).
 
 The local-model leg deserves more weight than it's getting in most people's mental model of this space — it's the one place where "first-class memory object across every model" isn't fighting anyone's walled garden, because there's no garden. It's a good place to get the graph, compression, and compiler logic *right* before you touch anyone else's ToS.
 
@@ -278,7 +390,19 @@ Concretely, this means:
 - **No official export APIs from OpenAI or Google, and the ToS language is unambiguous, not gray.** Both OpenAI ("automatically or programmatically extract data or Output") and Anthropic ("access through automated or non-human means... except via an API key or where explicitly permitted") explicitly prohibit exactly the kind of browser automation Echo-style products lean on. Anthropic has real enforcement history here — they suspended accounts running third-party automation tools (OpenClaw/Clawdbot) in early 2026, against a user's *own* subscription, not just scraping. Design to the human-initiated-click boundary in §8, not around it.
 - **ChatGPT write-capable connectors are currently gated above the individual tier.** Full read/write custom MCP connectors are, as of mid-2026, restricted to Business/Enterprise/Edu workspaces; individual Plus/Pro users get read (search/fetch). This caps the ChatGPT leg of Live Sync at read-plus-confirmed-writes until OpenAI extends the write scope — plan §10 around that, not against it.
 - **Gemini's consumer-app connector story is unvalidated.** Don't commit engineering time to a Gemini connector, or to the Data Portability API for Gemini specifically, until you've confirmed the real supported scopes.
-- **Platform risk cuts both ways.** Interoperability regulation could be a tailwind; a lab shipping native portability itself (which would be trivial for them) erases the wedge overnight. Worth monitoring, not worth blocking on.
+- **Platform risk cuts both ways — and it has now cut. (Updated Aug 2026.)** This
+  entry used to say a lab shipping native portability "would be trivial for them" and
+  was "worth monitoring, not worth blocking on." Monitoring is over. OpenAI shipped
+  Import-with-autosync into ChatGPT; Claude ships native memory; Claude Code ships
+  Auto Memory by default. Three first-party features in the same quarter, each eating
+  part of this product's stated territory.
+
+  The correct response is not to abandon the thesis but to move to the part labs have
+  no incentive to build. Every one of those features moves context **toward** its own
+  vendor. None helps a user leave. Neutrality and exit are structurally unattractive
+  to a platform and structurally the whole point here — so the compiler (§7) stops
+  being the differentiator-in-waiting and becomes the reason to exist. It should be
+  built earlier than §10 currently sequences it.
 - **Extraction cost at consumer scale.** LLM-assisted typed extraction on every export is real inference spend — model this before pricing the consumer tier.
 - **Retrieval telemetry can become a second copy of the user's private history.** Do
   not persist raw queries or returned content by default, and do not turn SDK
