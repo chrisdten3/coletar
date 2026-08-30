@@ -73,3 +73,24 @@ def test_upload_rejects_bad_json_without_crashing() -> None:
 
     assert response.status_code == 200
     assert "Could not read this snapshot" in response.text
+
+
+def test_upload_skips_malformed_rows_but_keeps_the_rest() -> None:
+    """A hand-written edge using `source`/`target` instead of `src_id`/`dst_id`
+    should not blank out objects that parsed fine."""
+    good = Memory.from_write("John is an architect who lives in Baltimore.")
+    snapshot = {
+        "objects": [good.model_dump(mode="json"), {"type": "memory"}],
+        "edges": [{"type": "employed_by", "source": "John", "target": "Acme"}],
+        "events": [{"type": "not_a_real_event"}],
+    }
+    files = {"snapshot": ("snapshot.json", json.dumps(snapshot), "application/json")}
+
+    response = client.post("/upload", files=files)
+
+    assert response.status_code == 200
+    body = response.text
+    assert good.id in body
+    assert "1 objects skipped" in body
+    assert "1 edges skipped" in body
+    assert "1 events skipped" in body

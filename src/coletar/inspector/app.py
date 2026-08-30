@@ -12,6 +12,7 @@ out, nothing kept on the server.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from html import escape
 from typing import Any
 
@@ -21,6 +22,11 @@ from fastapi.responses import HTMLResponse
 from coletar.retrieval.embedding import tokenize
 from coletar.schema.events import Event
 from coletar.schema.objects import Edge, object_from_record
+
+#: A record failing one of these means it's malformed, not that the process is
+#: broken -- caught per-row so one bad edge doesn't blank out the objects that
+#: parsed fine.
+_ROW_ERRORS = (KeyError, ValueError, AttributeError, TypeError)
 
 app = FastAPI(title="coletar context inspector", version="0.1.0")
 
@@ -103,12 +109,35 @@ def _search_index(objects: list[Any]) -> str:
     return _outline(rows)
 
 
-def _render(snapshot: dict[str, Any]) -> str:
-    objects = [object_from_record(r) for r in snapshot.get("objects", [])]
-    edges = [Edge.model_validate(r) for r in snapshot.get("edges", [])]
-    events = [Event.model_validate(r) for r in snapshot.get("events", [])]
+def _parse_rows[T](records: list[Any], parse: Callable[[Any], T]) -> tuple[list[T], list[str]]:
+    parsed: list[T] = []
+    errors: list[str] = []
+    for index, record in enumerate(records):
+        try:
+            parsed.append(parse(record))
+        except _ROW_ERRORS as exc:
+            errors.append(f"#{index}: {str(exc).splitlines()[0]}")
+    return parsed, errors
+
+
+def _skipped(label: str, errors: list[str]) -> str:
+    if not errors:
+        return ""
     return (
-        "<h2>Canonical Context Graph</h2>" + _context_graph(objects, edges)
+        f'<p class="error">{len(errors)} {label} skipped (malformed):</p>'
+        + _outline([escape(e) for e in errors])
+    )
+
+
+def _render(snapshot: dict[str, Any]) -> str:
+    objects, object_errors = _parse_rows(snapshot.get("objects", []), object_from_record)
+    edges, edge_errors = _parse_rows(snapshot.get("edges", []), Edge.model_validate)
+    events, event_errors = _parse_rows(snapshot.get("events", []), Event.model_validate)
+    return (
+        _skipped("objects", object_errors)
+        + _skipped("edges", edge_errors)
+        + _skipped("events", event_errors)
+        + "<h2>Canonical Context Graph</h2>" + _context_graph(objects, edges)
         + "<h2>Event/Revision Log</h2>" + _event_log(events)
         + "<h2>Search Index</h2>" + _search_index(objects)
     )
@@ -124,7 +153,7 @@ async def upload(snapshot: UploadFile) -> str:
     raw = await snapshot.read()
     try:
         body = _render(json.loads(raw))
-    except (json.JSONDecodeError, KeyError, ValueError, AttributeError) as exc:
+    except (json.JSONDecodeError, *_ROW_ERRORS) as exc:
         body = f'<p class="error">Could not read this snapshot: {escape(str(exc))}</p>'
     return _PAGE.format(body=body)
 
