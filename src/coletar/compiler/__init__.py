@@ -9,6 +9,7 @@ from coletar.compiler.continuity import (
     MigrationManifest,
     score,
 )
+from coletar.compiler.local import LocalModelCompiler, compile_eligible
 
 __all__ = [
     "WEIGHTS",
@@ -16,7 +17,9 @@ __all__ = [
     "Compiler",
     "ContinuityScore",
     "Fidelity",
+    "LocalModelCompiler",
     "ManifestEntry",
     "MigrationManifest",
+    "compile_eligible",
     "score",
 ]

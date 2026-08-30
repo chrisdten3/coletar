@@ -132,6 +132,66 @@ def compress(
 
 
 @app.command()
+def compile(
+    destination: str = typer.Option("local", help="Which provider compiler to run."),
+    out: str = typer.Option("build/compile", help="Directory to write artifacts into."),
+    base_model: str = typer.Option("llama3.1", help="FROM line for the Ollama Modelfile."),
+    project: str | None = typer.Option(None, help="Compile one project scope only."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """True Migration: compile the graph into a destination's native containers.
+
+    Reads the graph and writes files; it never mutates an object. The one thing it
+    does write back is the `compile.run` event, because a compile is a fact about
+    the graph's history even though it changed nothing in it.
+    """
+    from pathlib import Path
+
+    from coletar.compiler import LocalModelCompiler
+    from coletar.schema.events import Actor, Event, EventType
+
+    compilers = {"local": LocalModelCompiler}
+    if destination not in compilers:
+        raise typer.BadParameter(
+            f"unknown destination {destination!r}; have {sorted(compilers)}"
+        )
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        store = build_store()
+        objects = await store.list_objects(
+            resolved, scope=_scope(project) if project else None, limit=10_000
+        )
+        compiler = LocalModelCompiler(base_model=base_model)
+        out_dir = Path(out)
+        result = await compiler.compile(objects, out_dir=out_dir)
+
+        await store.append_event(
+            resolved,
+            Event(
+                type=EventType.COMPILE_RUN,
+                actor=Actor.COMPILER,
+                object_id=None,
+                detail={
+                    "destination": destination,
+                    "out_dir": str(out_dir),
+                    **result.manifest.summary(),
+                    "continuity_score": result.score.total,
+                },
+            ),
+        )
+
+        typer.echo(f"tenant: {resolved}")
+        typer.echo(json.dumps(result.manifest.summary(), indent=2))
+        typer.echo("")
+        typer.echo(result.score.explain())
+        typer.echo("")
+        typer.echo(result.instructions)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
     from coletar.store.migrate import run_migrations

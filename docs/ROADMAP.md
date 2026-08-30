@@ -520,9 +520,17 @@ surface built against an *official* format rather than a reverse-engineered one.
 - [ ] Migration Manifest rendering (native / reconstructed / unsupported)
 - [ ] `object_coverage` ≥95%, `scope_preservation` = 100% (a hard gate — it is the
       actual differentiator)
-- [ ] `LocalModelCompiler` → Ollama Modelfile `SYSTEM` block + knowledge directory.
-      Build this first: it is the one compiler with no third-party constraint, so it
-      is where manifest and score semantics get settled.
+- [x] `LocalModelCompiler` → Ollama Modelfile `SYSTEM` block + knowledge directory.
+      Built first, as planned: the one compiler with no third-party constraint, so
+      manifest and score semantics got settled here. **Scope compiles into model
+      identity** — Ollama has one system prompt per model and no notion of a
+      project, so each scope becomes its own model and globals are inherited into
+      project models rather than project objects being lifted into the global one.
+      That fan-out is the mechanism behind `scope_preservation`, and it is checked
+      as an absence in the emitted file rather than a flag on a struct. Verified
+      end to end against a real `ollama create`: the project model answers its
+      project question, the global model says it was not told, and the unmodified
+      base model answers neither. See [docs/COMPILER.md](COMPILER.md)
 
 ---
 

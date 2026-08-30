@@ -46,8 +46,20 @@ box you type into. The store is multi-tenant end to end (M3.1): `tenant_id` is
 required on every store call, enforced by composite keys in Postgres, and proved by an
 adversarial suite run against both backends.
 
-**Not yet built:** every provider compiler (still scaffolding with contracts fixed and
-bodies unwritten) and the observability dashboard. The Context Inspector has a
+**True Migration works on one destination.** The local-model compiler (M5.1) emits
+real Ollama containers — one model per scope, a Migration Manifest naming every
+object's destination, and a Continuity Score computed from manifest facts. Verified
+the only way that claim can be verified: compiled, `ollama create`d, then queried
+with coletar not running.
+
+| | Measured |
+|---|---|
+| `object_coverage` on the seeded graph | **1.00** |
+| `scope_preservation` (hard gate) | **1.00** — no project fact reaches the global model |
+| `fidelity` | 0.69 — 11 of 16 objects in a real container, the rest preserved as files |
+
+**Not yet built:** the Claude and ChatGPT compilers (scaffolding with contracts
+fixed and bodies unwritten) and the observability dashboard. The Context Inspector has a
 read-only first cut (below); review, edit, merge, re-scope and compile-gating are
 still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
@@ -130,6 +142,20 @@ unknown key is ignored rather than rejected — so it looks correct instead of f
 Fine for a single-tenant snapshot, misleading for anything else, and the first thing
 to fix when the Inspector is picked back up.
 
+### True Migration
+
+```bash
+uv run coletar compile --out build/compile --base-model llama3.1
+```
+
+Compiles the graph into Ollama's *actual* native containers: one model per scope,
+a `SYSTEM` block for what the destination can genuinely assert, knowledge files for
+what it can only preserve, plus `MANIFEST.md` and `PROVENANCE.md`. Then
+`ollama create` and coletar is out of the loop entirely — which is the point.
+
+Where each object lands and why is published in
+[docs/COMPILER.md](docs/COMPILER.md).
+
 ### With Postgres
 
 ```bash
@@ -198,6 +224,7 @@ demand. A black-box percentage is a badge, not a differentiator — see
 - [docs/SCOPE.md](docs/SCOPE.md) — the v0.2 product scope this repo implements
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones, and what is stubbed today
 - [docs/CONNECTORS.md](docs/CONNECTORS.md) — per-provider connector reality + snippets
+- [docs/COMPILER.md](docs/COMPILER.md) — True Migration: native containers, fidelity, scope
 - [docs/CONTINUITY_SCORE.md](docs/CONTINUITY_SCORE.md) — the score, defined
 - [AGENTS.md](AGENTS.md) — the working agreement for this repo
 
