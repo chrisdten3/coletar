@@ -36,6 +36,14 @@ def serve_mcp() -> None:
 
 
 @app.command()
+def serve_inspector() -> None:
+    """Run the read-only Context Inspector: upload a store snapshot, browse it."""
+    from coletar.inspector.app import run
+
+    run()
+
+
+@app.command()
 def remember(
     content: str,
     kind: str = typer.Option("fact", help="fact|preference|instruction|goal|correction"),

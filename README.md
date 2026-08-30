@@ -40,9 +40,10 @@ better. The compression job and the Continuity Score exist and work; their remai
 acceptance criteria are M4.
 
 **Not yet built:** every provider compiler (still scaffolding with contracts fixed and
-bodies unwritten), the Context Inspector, the observability dashboard, and per-user
-tenancy — the store is single-tenant, so the MCP server should not yet be deployed for
-more than one person. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
+bodies unwritten), the observability dashboard, and per-user tenancy — the store is
+single-tenant, so the MCP server should not yet be deployed for more than one person.
+The Context Inspector has a read-only first cut (below); review, edit, merge and
+re-scope are still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
 
@@ -100,6 +101,19 @@ over streamable HTTP. This is the same server consumers add as a Claude Custom
 Connector and developers call directly. See
 [docs/CONNECTORS.md](docs/CONNECTORS.md) for the per-provider setup and the
 instruction snippets that make tool use actually reliable.
+
+### The Context Inspector
+
+A read-only first cut: upload a store snapshot and browse the three boxes from
+the architecture diagram below as plain outlines.
+
+```bash
+uv run coletar serve-inspector
+```
+
+Then open `http://localhost:8789` and upload the file at `COLETAR_STORE_PATH`
+(`data/coletar.json` by default). The full Inspector — review, edit, merge,
+re-scope, gating compile — is still [M5](docs/ROADMAP.md).
 
 ### With Postgres
 

@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""
 
+    # Read-only Context Inspector (§8.2). Local-only, so no auth of its own.
+    inspector_port: int = 8789
+
     # Retrieval. "hashing" is the default because the in-process store has to work
     # with nothing installed; "ollama" is what a real deployment runs, against the
     # user's own model server where inference is free (§4, §11).
