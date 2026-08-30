@@ -39,10 +39,20 @@ succeeds — corrections are the weak leg, and a better embedder is not uniforml
 better. The compression job and the Continuity Score exist and work; their remaining
 acceptance criteria are M4.
 
+**Live Sync is working on a frontier surface.** A memory written in one Claude
+conversation is retrievable in another, and the browser bridge does the same with no
+Project and no instruction snippet — read *and* write on claude.ai, touching only the
+box you type into. The store is multi-tenant end to end (M3.1): `tenant_id` is
+required on every store call, enforced by composite keys in Postgres, and proved by an
+adversarial suite run against both backends.
+
 **Not yet built:** every provider compiler (still scaffolding with contracts fixed and
-bodies unwritten), the Context Inspector, the observability dashboard, and per-user
-tenancy — the store is single-tenant, so the MCP server should not yet be deployed for
-more than one person. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
+bodies unwritten) and the observability dashboard. The Context Inspector has a
+read-only first cut (below); review, edit, merge, re-scope and compile-gating are
+still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
+
+The Inspector does not yet show which tenant an object belongs to, so a snapshot
+holding more than one renders them merged — see the note in its section below.
 
 ## Quickstart
 
@@ -100,6 +110,25 @@ over streamable HTTP. This is the same server consumers add as a Claude Custom
 Connector and developers call directly. See
 [docs/CONNECTORS.md](docs/CONNECTORS.md) for the per-provider setup and the
 instruction snippets that make tool use actually reliable.
+
+### The Context Inspector
+
+A read-only first cut: upload a store snapshot and browse the three boxes from
+the architecture diagram below as plain outlines.
+
+```bash
+uv run coletar serve-inspector
+```
+
+Then open `http://localhost:8789` and upload the file at `COLETAR_STORE_PATH`
+(`data/coletar.json` by default). The full Inspector — review, edit, merge,
+re-scope, gating compile — is still [M5](docs/ROADMAP.md).
+
+**Known gap:** it does not render `tenant_id`. A snapshot containing more than one
+tenant shows their objects merged into a single list with no indication, because the
+unknown key is ignored rather than rejected — so it looks correct instead of failing.
+Fine for a single-tenant snapshot, misleading for anything else, and the first thing
+to fix when the Inspector is picked back up.
 
 ### With Postgres
 
