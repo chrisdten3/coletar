@@ -40,6 +40,7 @@ from coletar.mcp.auth import (
     Principal,
     current_principal,
 )
+from coletar.mcp.ratelimit import RateLimiter
 from coletar.mcp.schemas import (
     ObjectView,
     OpenLoopsResponse,
@@ -444,7 +445,16 @@ def build_app() -> AuthMiddleware:
     # auth gate and one place a route can be exposed by accident.
     for path, endpoint, methods in rest.routes():
         app.router.routes.append(Route(path, endpoint, methods=[*methods, "OPTIONS"]))
-    return AuthMiddleware(app, build_authenticator(), allowed_origins=allowed_origins())
+    settings = get_settings()
+    return AuthMiddleware(
+        app,
+        build_authenticator(),
+        allowed_origins=allowed_origins(),
+        rate_limiter=RateLimiter(
+            requests_per_minute=settings.rate_limit_per_minute,
+            burst=settings.rate_limit_burst,
+        ),
+    )
 
 
 #: Hosts that mean "reachable from outside this machine".

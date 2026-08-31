@@ -76,6 +76,12 @@ class Settings(BaseSettings):
     # any other way at consumer scale.
     extraction_model: str = "llama3.1"
 
+    # M7: per-principal rate limit on the hosted surfaces. Keyed by credential,
+    # not by IP — an office NAT is not one caller and a rotating client is not
+    # several.
+    rate_limit_per_minute: int = 120
+    rate_limit_burst: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

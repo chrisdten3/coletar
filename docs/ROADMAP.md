@@ -678,10 +678,27 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 SCOPE §10 steps 5–6.
 
-- [ ] Developer Mode remote connector, read path; write attempts rejected
-      server-side, not merely hidden client-side
-- [ ] REST API + thin async Python/JS SDKs over the canonical graph, released only
-      after auth and tenant isolation, with rate limiting
+- [x] Developer Mode remote connector, read path; write attempts rejected
+      server-side, not merely hidden client-side. This turned out to already hold
+      from M2.1's scopes, so the work was proving it rather than building it — and
+      the test asserts `write_memory` **stays in the tool list** a read-only principal
+      sees. Hiding it would make the refusal a client-side courtesy, and anything
+      speaking the protocol directly could call it anyway. The server says no, and
+      says why
+- [~] REST API + thin async Python/JS SDKs over the canonical graph, released only
+      after auth and tenant isolation, **with rate limiting** — the limiting is done,
+      the SDKs are not. A token bucket per *credential*, not per IP: several users
+      behind one office NAT are not one caller and one caller rotating addresses is
+      not several, and the credential is what the server actually knows. Applied in
+      the middleware both surfaces mount behind, because a limit one surface can walk
+      around is not a limit. Refills continuously rather than on a window edge, so
+      quota cannot be saved up and spent at once, and a 429 carries a truthful
+      `Retry-After` because a client told only "no" retries immediately and makes the
+      problem worse. `/healthz` is exempt: a liveness probe that can be throttled
+      eventually takes the service down by reporting it unhealthy under exactly the
+      load it should survive. **In-process, which is a real limitation** — two workers
+      mean two buckets, and the honest fix when that matters is a shared counter, not
+      a smaller number
 - [ ] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
       and `compile`; it preserves canonical IDs, provenance and event semantics and
       deliberately exposes no hard-delete shortcut

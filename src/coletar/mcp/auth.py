@@ -37,6 +37,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from coletar.mcp.ratelimit import RateLimiter
 from coletar.schema.objects import Provider
 from coletar.schema.tenancy import InvalidTenantId, TenantId
 from coletar.schema.tenancy import tenant_id as parse_tenant_id
@@ -253,6 +254,12 @@ def _origin(headers: Iterable[tuple[bytes, bytes]]) -> str | None:
     return None
 
 
+_TOO_MANY_BODY = (
+    b'{"error": "rate limited", "detail": "too many requests for this key; '
+    b'see Retry-After"}'
+)
+
+
 class AuthMiddleware:
     """Pure ASGI middleware. Wraps the app so every HTTP request is gated."""
 
@@ -263,10 +270,14 @@ class AuthMiddleware:
         *,
         exempt_paths: frozenset[str] = EXEMPT_PATHS,
         allowed_origins: frozenset[str] = frozenset(),
+        rate_limiter: RateLimiter | None = None,
     ) -> None:
         self.app = app
         self.authenticator = authenticator
         self.exempt_paths = exempt_paths
+        # Applied here rather than per-route so MCP and REST are limited by the
+        # same bucket. A limit one surface can walk around is not a limit.
+        self.rate_limiter = rate_limiter or RateLimiter()
         # An allowlist, never a wildcard. These endpoints are authenticated, and a
         # wildcard would let any page the user visits attempt to spend their token.
         self.allowed_origins = allowed_origins
@@ -329,6 +340,26 @@ class AuthMiddleware:
                 }
             )
             await send({"type": "http.response.body", "body": _UNAUTHORIZED_BODY})
+            return
+
+        retry_after = self.rate_limiter.check(principal.id)
+        if retry_after is not None:
+            body = _TOO_MANY_BODY
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 429,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        # Truthful, so a client told "no" waits instead of retrying
+                        # immediately and making the problem worse.
+                        (b"retry-after", str(max(1, int(retry_after + 0.5))).encode()),
+                        (b"content-length", str(len(body)).encode()),
+                        *cors,
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
             return
 
         async def send_with_cors(message: dict[str, Any]) -> None:
