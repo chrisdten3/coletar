@@ -351,3 +351,48 @@ async def test_page_shows_which_surfaces_may_receive_an_object(live_store: None)
     body = _get()
     assert "every surface" in body
     assert "local to local" in body
+
+
+# --- the dashboard and agentic pages --------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_dashboard_page_renders_the_live_store(live_store: None) -> None:
+    from coletar.retrieval import retrieve
+    from coletar.store import build_store
+
+    store = build_store()
+    await store.put_object(TENANT, Memory.from_write("Chris prefers tabs."))
+    await retrieve(store, TENANT, "tabs", surface="mcp")
+
+    body = _get("/dashboard")
+    assert "Retrieval by surface" in body
+    assert "Why the last search returned what it did" in body
+    assert "mcp" in body
+
+
+@pytest.mark.asyncio
+async def test_the_dashboard_escapes_object_ids_and_content(live_store: None) -> None:
+    from coletar.store import build_store
+
+    await build_store().put_object(
+        TENANT, Memory.from_write('<script>alert("x")</script>')
+    )
+    body = _get("/agentic")
+    assert "<script>alert" not in body
+
+
+@pytest.mark.asyncio
+async def test_the_agentic_page_says_it_is_a_filter_not_a_store(live_store: None) -> None:
+    """The claim is load-bearing enough to be on the page: a second graph appearing
+    behind the first is the failure §6 forbids."""
+    body = _get("/agentic")
+    assert "not a second store" in body
+    assert "Episode lineage" in body
+
+
+def test_every_page_offers_the_others(live_store: None) -> None:
+    for path in ("/", "/dashboard", "/agentic"):
+        body = _get(path)
+        assert 'href="/dashboard"' in body
+        assert 'href="/agentic"' in body
