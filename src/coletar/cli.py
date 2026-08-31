@@ -396,10 +396,18 @@ def mirror(
 def as_of(
     at: str = typer.Argument(..., help="ISO date or timestamp, e.g. 2026-03-03."),
     query: str | None = typer.Option(None, help="Search the graph as it stood then."),
+    in_force: str | None = typer.Option(
+        None, help="Second axis: what was true in the world at this date."
+    ),
     project: str | None = typer.Option(None, help="Scope to one project."),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
     """What the graph said at a past moment.
+
+    Two axes, and the pair is what an audit needs. The argument is *transaction
+    time* — when coletar recorded something. `--in-force` is *valid time* — when the
+    fact was true in the world. Together they answer "on 3 March, what did we believe
+    was in force on 1 January?", which neither axis alone can express.
 
     Reconstructed from the event log alone, never from the object table — if the two
     ever disagree, the log is what you can defend. Supersession is evaluated *as of
@@ -416,18 +424,32 @@ def as_of(
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
 
+    force = None
+    if in_force:
+        try:
+            force = datetime.fromisoformat(in_force)
+        except ValueError as exc:
+            raise typer.BadParameter(f"{in_force!r} is not an ISO date") from exc
+        if force.tzinfo is None:
+            force = force.replace(tzinfo=UTC)
+
     async def _run() -> None:
         resolved = _tenant(tenant)
         store = build_store()
         scope = _scope(project) if project else None
         if query:
-            hits = await search_as_of(store, resolved, query, moment, scope=scope)
+            hits = await search_as_of(
+                store, resolved, query, moment, scope=scope, in_force_at=force
+            )
             typer.echo(f"as of {moment.isoformat()} — {len(hits)} hits")
             for hit in hits:
                 typer.echo(f"  {hit.score:.4f}  [{hit.obj.scope}] {hit.obj.content}")
             return
-        objects = await graph_as_of(store, resolved, moment, scope=scope)
-        typer.echo(f"as of {moment.isoformat()} — {len(objects)} objects")
+        objects = await graph_as_of(
+            store, resolved, moment, scope=scope, in_force_at=force
+        )
+        label = f" (in force {force.date()})" if force else ""
+        typer.echo(f"as of {moment.isoformat()}{label} — {len(objects)} objects")
         for obj in objects:
             typer.echo(f"  [{obj.scope}] {obj.content}")
 

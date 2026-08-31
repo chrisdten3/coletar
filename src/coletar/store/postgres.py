@@ -55,6 +55,7 @@ _OBJECT_COLUMNS = """
     o.id, o.type, o.content, o.scope_type, o.scope_id, o.locality_mode,
     o.locality_surfaces, o.kind, o.confidence,
     o.extraction_method, o.sensitivity, o.supersedes, o.provenance,
+    o.valid_from, o.valid_until,
     o.provider_mappings, o.payload, o.version, o.created_at, o.updated_at,
     o.retired_at, o.ttl_days
 """
@@ -96,6 +97,8 @@ def _to_record(row: dict[str, Any]) -> ContextObject:
         "confidence": row["confidence"],
         "extraction_method": row["extraction_method"],
         "sensitivity": row["sensitivity"],
+        "valid_from": row["valid_from"],
+        "valid_until": row["valid_until"],
         "supersedes": row["supersedes"],
         "provenance": row["provenance"],
         "provider_mappings": row["provider_mappings"],
@@ -185,12 +188,14 @@ class PostgresStore:
                     tenant_id, id, type, content, scope_type, scope_id,
                     locality_mode, locality_surfaces, kind, confidence,
                     extraction_method, sensitivity, supersedes, provenance,
+                    valid_from, valid_until,
                     provider_mappings, payload, version, created_at, updated_at,
                     retired_at, ttl_days
                 ) VALUES (
                     %(tenant_id)s, %(id)s, %(type)s, %(content)s, %(scope_type)s,
                     %(scope_id)s, %(locality_mode)s, %(locality_surfaces)s, %(kind)s,
                     %(confidence)s, %(extraction_method)s, %(sensitivity)s, %(supersedes)s,
+                    %(valid_from)s, %(valid_until)s,
                     %(provenance)s, %(provider_mappings)s, %(payload)s, %(version)s,
                     %(created_at)s, %(updated_at)s, %(retired_at)s, %(ttl_days)s
                 )
@@ -204,6 +209,8 @@ class PostgresStore:
                     confidence = EXCLUDED.confidence,
                     extraction_method = EXCLUDED.extraction_method,
                     sensitivity = EXCLUDED.sensitivity,
+                    valid_from = EXCLUDED.valid_from,
+                    valid_until = EXCLUDED.valid_until,
                     supersedes = EXCLUDED.supersedes,
                     provenance = EXCLUDED.provenance,
                     provider_mappings = EXCLUDED.provider_mappings,
@@ -573,6 +580,8 @@ def _object_params(
         "confidence": obj.confidence,
         "extraction_method": str(obj.extraction_method),
         "sensitivity": str(obj.sensitivity),
+        "valid_from": obj.valid_from,
+        "valid_until": obj.valid_until,
         "supersedes": obj.supersedes,
         "provenance": Jsonb(dump["provenance"]),
         "provider_mappings": Jsonb(dump["provider_mappings"]),

@@ -252,7 +252,31 @@ class ContextObject(BaseModel):
     retired_at: datetime | None = None
     ttl_days: int | None = None
 
+    # Valid time, which is not the same axis as `created_at`. `created_at` is when we
+    # *recorded* a fact; these are when it is *true in the world*. A policy effective
+    # 1 April recorded on 15 March differs on both axes, and an audit that conflates
+    # them answers "what did we know" when it was asked "what was in force".
+    #
+    # Both default to None, meaning "as far as we know, always" — which is the honest
+    # reading of a preference someone stated without dating it, and keeps every
+    # existing object's behaviour unchanged.
+    valid_from: datetime | None = None
+    valid_until: datetime | None = None
+
     payload: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _valid_interval_is_ordered(self) -> Self:
+        """An interval ending before it starts is a data-entry error, not an odd
+        fact. Postgres refuses it with a CHECK; refusing it here too is what keeps
+        the two backends telling the same story."""
+        if (
+            self.valid_from is not None
+            and self.valid_until is not None
+            and self.valid_from >= self.valid_until
+        ):
+            raise ValueError("valid_from must be before valid_until")
+        return self
 
     @model_validator(mode="after")
     def _assign_id(self) -> Self:
@@ -264,6 +288,18 @@ class ContextObject(BaseModel):
     @property
     def is_active(self) -> bool:
         return self.retired_at is None
+
+    def in_force_at(self, moment: datetime) -> bool:
+        """Was this true in the world at `moment`?
+
+        Half-open on purpose: `valid_until` is when a fact stopped being true, so a
+        policy superseded at midnight was not in force at midnight. Closing the
+        interval would make two successive policies both apply for one instant, which
+        is exactly the ambiguity an auditor is trying to resolve.
+        """
+        if self.valid_from is not None and moment < self.valid_from:
+            return False
+        return not (self.valid_until is not None and moment >= self.valid_until)
 
     def touch(self) -> None:
         self.__dict__["version"] = self.version + 1

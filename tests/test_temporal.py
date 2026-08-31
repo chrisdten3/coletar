@@ -16,7 +16,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
+from coletar.schema.objects import (
+    ExtractionMethod,
+    Memory,
+    MemoryKind,
+    OriginType,
+    Provenance,
+    Provider,
+    Scope,
+    ScopeType,
+)
 from coletar.store.memory import InMemoryStore
 from coletar.temporal import changes_between, graph_as_of, search_as_of
 from conftest import TENANT
@@ -212,3 +221,114 @@ async def test_a_retirement_is_reported_as_one() -> None:
 
     changes = await changes_between(store, TENANT, start, datetime.now(UTC))
     assert "retired" in {c.kind for c in changes}
+
+
+# --- the second axis: what was in force, as against what we knew ------------------
+
+
+def test_validity_is_half_open() -> None:
+    """`valid_until` is when a fact stopped being true, so a policy superseded at
+    midnight was not in force at midnight. Closing the interval would make two
+    successive policies both apply for one instant — exactly the ambiguity an auditor
+    is trying to resolve."""
+    start = datetime(2026, 4, 1, tzinfo=UTC)
+    end = datetime(2026, 7, 1, tzinfo=UTC)
+    policy = Memory.from_write("Q2 rate is 4%.")
+    policy.valid_from, policy.valid_until = start, end
+
+    assert not policy.in_force_at(start - timedelta(seconds=1))
+    assert policy.in_force_at(start)
+    assert policy.in_force_at(end - timedelta(seconds=1))
+    assert not policy.in_force_at(end)
+
+
+def test_an_undated_fact_is_always_in_force() -> None:
+    """The honest reading of a preference stated without a date, and what keeps every
+    object written before this existed behaving as it did."""
+    preference = Memory.from_write("Chris prefers tabs.")
+    assert preference.in_force_at(datetime(1999, 1, 1, tzinfo=UTC))
+    assert preference.in_force_at(datetime(2099, 1, 1, tzinfo=UTC))
+
+
+def test_an_interval_that_ends_before_it_starts_is_refused() -> None:
+    """A data-entry error, not a fact with a strange shape. Postgres refuses it with
+    a CHECK; the model refuses it too, so the backends tell the same story."""
+    with pytest.raises(ValueError, match="valid_from must be before valid_until"):
+        Memory(
+            content="Backwards.",
+            extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
+            provenance=Provenance(origin_type=OriginType.USER, provider=Provider.LOCAL),
+            valid_from=datetime(2026, 7, 1, tzinfo=UTC),
+            valid_until=datetime(2026, 4, 1, tzinfo=UTC),
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_two_axes_answer_different_questions() -> None:
+    """The query compliance actually poses, which neither axis alone can express:
+    *on 3 March, what did we believe was in force on 1 January?*"""
+    store = InMemoryStore()
+
+    q1 = Memory.from_write("Rate is 3%.")
+    q1.valid_from = datetime(2026, 1, 1, tzinfo=UTC)
+    q1.valid_until = datetime(2026, 4, 1, tzinfo=UTC)
+    await store.put_object(TENANT, q1)
+
+    q2 = Memory.from_write("Rate is 5%.")
+    q2.valid_from = datetime(2026, 4, 1, tzinfo=UTC)
+    await store.put_object(TENANT, q2)
+    recorded = datetime.now(UTC)
+
+    january = await graph_as_of(
+        store, TENANT, recorded, in_force_at=datetime(2026, 2, 1, tzinfo=UTC)
+    )
+    assert [o.content for o in january] == ["Rate is 3%."]
+
+    may = await graph_as_of(
+        store, TENANT, recorded, in_force_at=datetime(2026, 5, 1, tzinfo=UTC)
+    )
+    assert [o.content for o in may] == ["Rate is 5%."]
+
+    # Transaction time alone sees both, because both are recorded and neither
+    # supersedes the other — which is precisely why the second axis is needed.
+    assert len(await graph_as_of(store, TENANT, recorded)) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_fact_recorded_before_it_takes_effect() -> None:
+    """A policy announced in March, effective in April. Transaction time says we knew
+    in March; valid time says nothing changed until April."""
+    store = InMemoryStore()
+    future = Memory.from_write("From April, approvals need two signatures.")
+    future.valid_from = datetime(2026, 4, 1, tzinfo=UTC)
+    await store.put_object(TENANT, future)
+    recorded = datetime.now(UTC)
+
+    assert await graph_as_of(
+        store, TENANT, recorded, in_force_at=datetime(2026, 3, 15, tzinfo=UTC)
+    ) == []
+    assert len(
+        await graph_as_of(
+            store, TENANT, recorded, in_force_at=datetime(2026, 4, 2, tzinfo=UTC)
+        )
+    ) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_can_be_asked_on_both_axes() -> None:
+    store = InMemoryStore()
+    old = Memory.from_write("Retention policy is 3 years.")
+    old.valid_until = datetime(2026, 4, 1, tzinfo=UTC)
+    await store.put_object(TENANT, old)
+    new = Memory.from_write("Retention policy is 7 years.")
+    new.valid_from = datetime(2026, 4, 1, tzinfo=UTC)
+    await store.put_object(TENANT, new)
+
+    hits = await search_as_of(
+        store,
+        TENANT,
+        "retention policy",
+        datetime.now(UTC),
+        in_force_at=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+    assert [h.obj.content for h in hits] == ["Retention policy is 3 years."]
