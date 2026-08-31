@@ -41,9 +41,22 @@ _LOG_LIMIT = 200_000
 
 
 async def graph_as_of(
-    store: Store, tenant_id: TenantId, at: datetime, *, scope: Scope | None = None
+    store: Store,
+    tenant_id: TenantId,
+    at: datetime,
+    *,
+    scope: Scope | None = None,
+    in_force_at: datetime | None = None,
 ) -> list[ContextObject]:
     """Every object as it stood at `at`, active and un-superseded *as of then*.
+
+    `in_force_at` adds the second temporal axis, and the pair is what an auditor
+    actually needs. `at` is **transaction time** — when coletar recorded something.
+    `in_force_at` is **valid time** — when the fact was true in the world. Asking both
+    answers the question compliance actually poses: *"on 3 March, what did we believe
+    was in force on 1 January?"* Neither axis alone can express that, and a system
+    carrying only one will answer a different question than the one asked without
+    ever saying so.
 
     One pass over the log rather than a replay per object: `list_events` is
     newest-first, so the first revision seen for an id is its latest state at or
@@ -63,6 +76,9 @@ async def graph_as_of(
     superseded = {obj.supersedes for obj in objects if obj.supersedes}
     current = [obj for obj in objects if obj.is_active and obj.id not in superseded]
 
+    if in_force_at is not None:
+        current = [obj for obj in current if obj.in_force_at(in_force_at)]
+
     if scope is not None:
         current = [
             obj
@@ -80,6 +96,7 @@ async def search_as_of(
     at: datetime,
     *,
     scope: Scope | None = None,
+    in_force_at: datetime | None = None,
     top_k: int = 12,
 ) -> list[Scored]:
     """Retrieval against the graph as it stood at `at`.
@@ -92,7 +109,7 @@ async def search_as_of(
     `CandidateSource` on every hit records that this came from lexical alone, so a
     reader can see the difference rather than assume parity with live search.
     """
-    objects = await graph_as_of(store, tenant_id, at, scope=scope)
+    objects = await graph_as_of(store, tenant_id, at, scope=scope, in_force_at=in_force_at)
     query_tokens = set(tokenize(query))
     scored: list[Scored] = []
     for obj in objects:
