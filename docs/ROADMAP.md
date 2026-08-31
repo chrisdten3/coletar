@@ -539,10 +539,24 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       Revisit against a corpus with real redundancy — a raw import — rather than
       shipping a lossy default
 - [ ] Low-confidence clustering pass (needs embeddings — now available)
-- [ ] Observability dashboard over the event log: TTL, object size, last access,
-      live activity feed, retrieval score explanation, token use and latency
-- [ ] Agentic graph explorer (entity / fact / episode — a filtered rendering of the
-      same graph, not a second store)
+- [x] Observability dashboard over the event log: TTL, object size, last access,
+      live activity feed, retrieval score explanation, token use and latency — all of
+      it at `/dashboard` on the Inspector's server, because a second port with its own
+      auth story to show numbers about the same graph is not worth it. **A view, not
+      a subsystem**: every figure is derived from objects and events that already
+      exist, and producing a reading writes nothing, which is pinned by a test.
+      **Last access is derived from retrieval traces rather than from an access
+      event** — `OBJECT_ACCESSED` is declared and nothing emits it, which turns out to
+      be right: an event per object per search would multiply the log by the width of
+      every result set to record what the traces already imply. The health table
+      opens on never-read and largest first, since the objects worth retiring are the
+      ones costing tokens without earning them
+- [x] Agentic graph explorer at `/agentic` — entity / fact / episode rendered as
+      what they are, three object types filtered out of the one graph. Episode-to-
+      derived-object lineage is preserved and shown, because without it the view is
+      pretty and unfalsifiable: you cannot check what an episode actually produced.
+      The page says "not a second store" in the page itself, since that is the claim
+      §6 forbids breaking
 - [ ] Evaluate entity overlap, graph-distance and temporal-validity signals against
       the labelled suite before enabling them; preserve episode-to-derived-object
       lineage and never introduce a parallel graph store

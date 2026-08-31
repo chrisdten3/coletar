@@ -69,8 +69,8 @@ context (a system prompt you control, versus a memory import Anthropic documents
 experimental and re-extracted). On the global-heavy seeded graph that nets out to
 local **0.906** vs Claude **0.869**.
 
-**Not yet built:** the observability dashboard and the agentic graph explorer (M4.4),
-and the developer SDK (M7).
+**Not yet built:** M7 — the ChatGPT read connector, the REST API and SDKs, and
+webhooks on the event log.
 See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
@@ -144,7 +144,13 @@ uv run coletar serve-inspector
 ```
 
 Open `http://localhost:8789`. Bound to the live store: review, edit, merge and
-re-scope objects, with the Event/Revision Log beside them.
+re-scope objects, with the Event/Revision Log beside them. Two more views on the same
+server — `/dashboard` for TTL, object size, last access, token use, latency and an
+explanation of the last search, and `/agentic` for the entity / fact / episode
+rendering with episode lineage.
+
+Both are **views**: every number is derived from objects and events that already
+exist, and opening a page writes nothing.
 
 **Nothing compiles until you have seen it.** A compile is blocked while any
 compile-eligible object has not been reviewed since it last changed — a review is a

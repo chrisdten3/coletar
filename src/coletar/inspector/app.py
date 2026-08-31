@@ -23,6 +23,12 @@ from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from coletar.config import get_settings
+from coletar.inspector.metrics import (
+    AgenticView,
+    Dashboard,
+    build_agentic_view,
+    build_dashboard,
+)
 from coletar.inspector.review import (
     InspectorError,
     ReviewStatus,
@@ -68,8 +74,18 @@ h2 {{ margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; 
 input[type=text] {{ width: 28rem; font-family: inherit; }}
 form.inline {{ display: inline; }}
 code {{ background: #f5f5f5; padding: 0 .2rem; }}
+nav {{ margin: .4rem 0 1rem; }}
+nav a {{ margin-right: .4rem; }}
+table {{ border-collapse: collapse; width: 100%; margin: .6rem 0; }}
+th, td {{ text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #eee; }}
+th {{ color: #666; font-weight: normal; }}
+.stat {{ display: inline-block; margin: 0 1.6rem .6rem 0; }}
+.stat b {{ display: block; font-size: 1.5rem; }}
+.cold {{ color: #8a4a00; }}
 </style></head><body>
 <h1>coletar context inspector</h1>
+<nav><a href="/">graph</a> · <a href="/dashboard">dashboard</a>
+ · <a href="/agentic">entity / fact / episode</a></nav>
 <p class="meta">tenant <code>{tenant}</code> — everything below is the live store.</p>
 {flash}
 {body}
@@ -229,6 +245,145 @@ async def post_merge(
     survivor_id: Annotated[str, Form()], absorbed_id: Annotated[str, Form()]
 ) -> RedirectResponse:
     return await _act("merge", survivor_id=survivor_id, absorbed_id=absorbed_id.strip())
+
+
+def _stat(label: str, value: object) -> str:
+    return f'<span class="stat"><b>{escape(str(value))}</b>{escape(label)}</span>'
+
+
+def _table(headers: list[str], rows: list[list[str]]) -> str:
+    if not rows:
+        return '<p class="meta">(none)</p>'
+    head = "".join(f"<th>{escape(h)}</th>" for h in headers)
+    body = "".join("<tr>" + "".join(f"<td>{c}</td>" for c in row) + "</tr>" for row in rows)
+    return f"<table><tr>{head}</tr>{body}</table>"
+
+
+def _render_dashboard(board: Dashboard) -> str:
+    kb = board.total_bytes / 1024
+    stats = (
+        _stat("objects", board.total_objects)
+        + _stat("retired", board.retired)
+        + _stat("superseded", board.superseded)
+        + _stat("KB of content", f"{kb:.1f}")
+        + _stat("never read", board.never_read)
+        + _stat("past TTL", board.expired)
+    )
+
+    usage = _table(
+        ["surface", "searches", "mean tokens", "p50", "p95", "truncated", "deduped"],
+        [
+            [
+                f"<code>{escape(u.surface)}</code>",
+                str(u.searches),
+                f"{u.mean_tokens:.0f}",
+                f"{u.p50_ms:.1f}ms",
+                f"{u.p95_ms:.1f}ms",
+                str(u.truncated),
+                str(u.deduplicated),
+            ]
+            for u in board.usage
+        ],
+    )
+
+    # Coldest and largest first: the objects worth retiring are the ones costing
+    # tokens without ever having been read.
+    health = _table(
+        ["object", "type", "scope", "confidence", "bytes", "last read", "TTL"],
+        [
+            [
+                f"<code>{escape(row.object_id)}</code>",
+                escape(row.type),
+                escape(row.scope),
+                f"{row.confidence:.2f}",
+                str(row.size_bytes),
+                '<span class="cold">never</span>'
+                if row.never_read
+                else escape(row.last_access.isoformat()),  # type: ignore[union-attr]
+                '<span class="cold">expired</span>'
+                if row.expired
+                else (escape(row.expires_at.date().isoformat()) if row.expires_at else "—"),
+            ]
+            for row in board.health[:40]
+        ],
+    )
+
+    explanation = _table(
+        ["component", "value"],
+        [[escape(k), escape(f"{v}")] for k, v in (board.last_explanation[0] or {}).items()]
+        if board.last_explanation
+        else [],
+    )
+
+    return (
+        f"<h2>Graph</h2>{stats}"
+        f"<h2>Retrieval by surface</h2>{usage}"
+        "<h2>Why the last search returned what it did</h2>"
+        '<p class="meta">Component scores from the most recent retrieval trace.</p>'
+        f"{explanation}"
+        "<h2>Object health</h2>"
+        '<p class="meta">Never-read and largest first — the objects costing tokens '
+        "without earning them.</p>"
+        f"{health}"
+        "<h2>Activity</h2>"
+        f"{_event_log(board.feed)}"
+    )
+
+
+def _render_agentic(view: AgenticView) -> str:
+    sections = []
+    for object_type, rows in view.by_type.items():
+        listed = _table(
+            ["id", "scope", "confidence", "content"],
+            [
+                [
+                    f"<code>{escape(o.id)}</code>",
+                    escape(str(o.scope)),
+                    f"{o.confidence:.2f}",
+                    _preview(o.content),
+                ]
+                for o in rows
+            ],
+        )
+        sections.append(
+            f"<h2>{escape(object_type)} "
+            f"<span class='meta'>({len(rows)})</span></h2>{listed}"
+        )
+
+    lineage = _table(
+        ["episode", "produced"],
+        [
+            [
+                f"<code>{escape(episode)}</code>",
+                ", ".join(f"<code>{escape(o.id)}</code>" for o in derived),
+            ]
+            for episode, derived in sorted(view.derived_from.items())
+        ],
+    )
+    return (
+        '<p class="meta">A filtered rendering of the same graph — entity, fact and '
+        "episode are three object types, not a second store.</p>"
+        + "".join(sections)
+        + "<h2>Episode lineage</h2>"
+        '<p class="meta">Which objects an episode produced. §6 requires this to '
+        "survive; losing it would make the view pretty and unfalsifiable.</p>"
+        f"{lineage}"
+    )
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard(error: str = "") -> str:
+    tenant = _tenant()
+    board = await build_dashboard(build_store(), tenant)
+    flash = f'<p class="error">{escape(error)}</p>' if error else ""
+    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_dashboard(board))
+
+
+@app.get("/agentic", response_class=HTMLResponse)
+async def agentic() -> str:
+    tenant = _tenant()
+    view = await build_agentic_view(build_store(), tenant)
+    return _PAGE.format(tenant=escape(tenant), flash="", body=_render_agentic(view))
 
 
 def run() -> None:
