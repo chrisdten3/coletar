@@ -621,6 +621,19 @@ surface built against an *official* format rather than a reverse-engineered one.
 
 SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is proven.
 
+- [x] **Model-assisted extraction (M6.2).** The model proposes, the existing
+      guards dispose: every candidate is located in the transcript and run
+      through the same sentence guards the regex path uses, so a model changes
+      recall and cannot change what counts as a durable assertion. Grounding is
+      the anti-fabrication guard and it is structural — a model that invents
+      cannot point at a sentence containing its claim. Measured on `qwen2.5:0.5b`
+      against the M6.1 set: **100% precision, 96.7% recall** against the regex
+      path's 31.4%, over 30 of 100 turns before the 8GB measuring machine ran out
+      of memory — reported partial rather than extrapolated. `kind` is unreliable
+      at 0.5b (both samples labelled `goal`), which the score does not capture.
+      Grounding does **not** stop injection, only fabrication; that boundary is
+      pinned by a test and held by user-turns-only upstream and M5.3's gate
+      downstream
 - [ ] Desktop folder-watcher for the user-initiated export ZIP — detection within
       10s, zero false positives across 50 unrelated files
 - [x] ZIP parser → typed objects at `account_export_parse` confidence. **Precision

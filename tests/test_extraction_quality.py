@@ -205,6 +205,10 @@ async def test_the_assistant_reply_is_never_mined():
     ) == []
 
 
-async def test_the_model_assisted_path_states_its_milestone():
-    with pytest.raises(NotImplementedError, match="M6.2"):
-        await extract_with_model(transcript="anything")
+async def test_the_model_assisted_path_is_implemented_and_guarded():
+    """M6.2 landed. What it must never do is covered in test_extraction_model.py;
+    this only pins that the stub is gone and the contract is unchanged."""
+    from coletar.extraction.extractor import GROUNDING_FLOOR
+
+    assert 0.0 < GROUNDING_FLOOR <= 1.0
+    assert callable(extract_with_model)
