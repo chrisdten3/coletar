@@ -261,7 +261,7 @@ async def test_a_trace_records_the_components_that_produced_it(store, caller):
     ).detail
     assert set(detail["versions"]) == {"embedder", "ranking", "backend"}
     assert detail["versions"]["ranking"] == RANKING_VERSION
-    assert set(detail["stage_ms"]) == {"candidates", "assembly", "total"}
+    assert set(detail["stage_ms"]) == {"candidates", "rerank", "assembly", "total"}
 
 
 async def test_explain_adds_arithmetic_without_changing_the_results(store, caller):

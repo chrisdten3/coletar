@@ -487,9 +487,12 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       prompts, the MCP tool and the browser bridge. Only `restricted` is withheld;
       the Inspector opts back in, because an object nobody can review is one
       nobody can delete
-- [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
+- [x] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
-      default and backend-parity contract
+      default and backend-parity contract. The suite measures identically with the
+      default, which is the point. The trace now carries a `rerank` stage time and
+      the strategy name, because M4.1's diagnosis depended on telling narrowing apart
+      from ranking and a stage with no number is a stage nobody can blame
 - [x] **Supersession-aware candidate generation.** Corrections **50% -> 90%**,
       temporal 80% -> 90%, hit@5 85.8% -> 89.6%, MRR 0.676 -> 0.741, leaks still 0,
       and both backends identical to three decimals. Superseded objects are
@@ -509,16 +512,32 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       from those two sentences, not from the category name
 - [ ] Postgres sparse/full-text candidate path supplements HNSW ANN; trigram matching
       remains an identifier/fuzzy-match signal rather than the lexical retriever
-- [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded
-      local cross-encoder only if it improves the labelled suite within the latency
-      budget. No reranker may bypass scope, sensitivity, retirement or supersession
+- [x] Configurable reranking: RRF and MMR ship behind the interface and **off**.
+      MMR is a generalisation of the default rather than an alternative — at
+      `lambda_=1.0` it reproduces the published order exactly — and RRF fuses by
+      position because scores from different retrievers share no scale, which is the
+      seam the Postgres sparse path plugs into. Neither improves this corpus, and
+      that is documented rather than hidden. No reranker can bypass policy
+      structurally: strategies only ever see what `Store.search` already filtered.
+      The bounded cross-encoder stays unbuilt — it was conditional on improving the
+      labelled suite, and the two cheaper rerankers did not
 - [x] Context assembly deduplicates near-identical results and skips an oversized hit
       when a later useful hit still fits, instead of terminating packing immediately
       — **delivered in M2.3**, since the retrieval trace could not report
       `deduplicated` and `skipped_oversized` without the assembly stage that produces
       them
-- [ ] Token budget honoured at retrieval time, with ≥40% token reduction on the
-      seeded corpus and no loss from the M1.2 top-5 set
+- [~] Token budget honoured at retrieval time — it truncates, reports `truncated`,
+      and skips an oversized hit rather than terminating the pack, all pinned by
+      tests. **The ≥40% reduction with no loss is not reachable on this corpus**, and
+      three approaches were measured to establish that: a relative score floor
+      (-40.2%, costs 2 queries), a confidence-gated floor (-35.9%, costs 2), and a
+      lower near-duplicate threshold (-0.0%, costs 1 — dropping a duplicate frees no
+      tokens because the next candidate backfills the slot). The cause is measured,
+      not guessed: 55 objects averaging 16 tokens, and 5 of 1485 pairs overlapping by
+      half or more. M4's dedup-on-write already collected this win at the *ingest*
+      boundary, so assembly is being asked to compress what is already compressed.
+      Revisit against a corpus with real redundancy — a raw import — rather than
+      shipping a lossy default
 - [ ] Low-confidence clustering pass (needs embeddings — now available)
 - [ ] Observability dashboard over the event log: TTL, object size, last access,
       live activity feed, retrieval score explanation, token use and latency

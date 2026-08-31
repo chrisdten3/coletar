@@ -238,3 +238,64 @@ The two failures are different from each other and neither is a contest:
 Both survive `nomic-embed-text`, so this is not purely vocabulary either. Whatever
 fixes `scope_isolation` is not a scope feature, and the next attempt should start
 from these two sentences rather than from the category name.
+
+
+## M4.3 — strategy boundaries, and a bar that is not reachable here
+
+§5.1 names four boundaries — candidate generation, fusion, reranking, context
+assembly — and three of them were the same function. They are now separable, with
+`PublishedOrder` as the default so **nothing changes unless a caller opts in**: the
+suite measures identically to M4.1 (hit@5 89.6%, MRR 0.741). A strategy that changed
+results by existing would make every published baseline ambiguous.
+
+The separation earns its keep by making a question askable. M4.1 could only diagnose
+`scope_isolation` by distinguishing "narrowing discarded it" from "ranking ranked it
+badly", and the trace now carries a `rerank` stage time and the strategy name beside
+the ranking version.
+
+**No strategy can reach past the policy filter**, structurally rather than by review:
+everything in `strategy.py` reorders or drops what `Store.search` already returned,
+and the store applies scope, locality, sensitivity, retirement and supersession
+first. This is the same property that made supersession a *candidate generation* fix
+in M4.1 rather than a ranking one.
+
+### MMR and RRF ship available and off
+
+`MaximalMarginalRelevance` is a generalisation of the default rather than an
+alternative to it — at `lambda_=1.0` the diversity term is multiplied by zero and the
+two orders coincide, which is what makes it safe to add. `reciprocal_rank_fusion`
+fuses by position because scores from different retrievers share no scale, and it is
+the seam the Postgres sparse candidate path plugs into when that lands.
+
+Neither improves this corpus. That is reported rather than hidden.
+
+### The ≥40% token bar is not reachable without recall loss, and here is why
+
+Three approaches, measured on the 106-query set:
+
+| approach | best reduction | cost |
+|---|---|---|
+| relative score floor | −40.2% | 2 queries |
+| confidence-gated floor | −35.9% | 2 queries |
+| lower near-duplicate threshold | **−0.0%** | 1 query |
+
+The dedup row is the informative one: dropping a near-duplicate does not save tokens,
+because the next candidate backfills into the slot. Count is what costs tokens, not
+redundancy.
+
+The root cause is measurable. The corpus is 55 objects averaging **16 tokens each**,
+and of 1485 object pairs only **5 (0.34%)** overlap by at least half:
+
+```
+overlap >=0.5: 5    >=0.7: 3    >=0.9: 2
+```
+
+**There is no redundancy left to compress.** M4's dedup-on-write already collected
+that win at the ingest boundary — ten restatements became one object before they
+ever reached retrieval — so an assembly-time budget is being asked to compress
+something already compressed. Cutting 40% here means dropping distinct facts, and on
+this corpus the correct answer is often a weak hit that barely made the top five.
+
+The budget *is* honoured — a tight budget truncates, reports `truncated`, and skips
+an oversized hit rather than terminating the pack — and that is pinned by tests. What
+is not shipped is a lossy default dressed up as an efficiency win.

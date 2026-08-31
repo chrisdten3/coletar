@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 from coletar.retrieval.embedding import tokenize
 from coletar.retrieval.ranking import RANKING_VERSION, ScoreComponents, Scored
+from coletar.retrieval.strategy import PublishedOrder, Reranker
 from coletar.schema.objects import ContextObject, Provider, Scope
 from coletar.schema.tenancy import TenantId
 
@@ -207,6 +208,7 @@ async def retrieve(
     caller_surface: Provider | None = None,
     top_k: int = 12,
     token_budget: int = 1500,
+    reranker: Reranker | None = None,
     surface: str = "unknown",
     principal: str | None = None,
     record_query_text: bool = False,
@@ -222,12 +224,22 @@ async def retrieve(
     `trace=False` exists for the evaluation harness and for callers replaying a
     corpus, where a trace per query would be noise rather than observability. It is
     deliberately not the default: every real retrieval should leave a record.
+
+    `reranker` is the §5.1 reranking boundary. It defaults to the published order, so
+    a caller that asks for nothing gets exactly what every published baseline was
+    measured with. A strategy can reorder and drop; it cannot add, because it only
+    ever sees what the store already policy-filtered.
     """
     started = time.perf_counter()
     hits = await store.search(
         tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k
     )
     candidates_ms = (time.perf_counter() - started) * 1000.0
+
+    rerank_started = time.perf_counter()
+    strategy = reranker or PublishedOrder()
+    hits = strategy.rerank(hits, limit=top_k)
+    rerank_ms = (time.perf_counter() - rerank_started) * 1000.0
 
     assembly_started = time.perf_counter()
     assembled = _assemble(hits, token_budget=token_budget)
@@ -243,8 +255,9 @@ async def retrieve(
         skipped_oversized=assembled.skipped_oversized,
         stage_ms={
             "candidates": round(candidates_ms, 3),
+            "rerank": round(rerank_ms, 3),
             "assembly": round(assembly_ms, 3),
-            "total": round(candidates_ms + assembly_ms, 3),
+            "total": round(candidates_ms + rerank_ms + assembly_ms, 3),
         },
     )
 
@@ -265,6 +278,7 @@ async def retrieve(
                 embedder_model=store.embedder_model,
                 surface=surface,
                 principal=principal,
+                strategy=strategy.name,
                 record_query_text=record_query_text,
             ),
         )

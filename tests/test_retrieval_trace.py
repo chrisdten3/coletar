@@ -81,7 +81,7 @@ async def test_a_trace_records_what_is_needed_to_reproduce_the_decision():
     assert stored.id in detail["returned_ids"]
     assert detail["versions"]["embedder"] == "hashing-768"
     assert detail["versions"]["ranking"] == RANKING_VERSION
-    assert set(detail["stage_ms"]) == {"candidates", "assembly", "total"}
+    assert set(detail["stage_ms"]) == {"candidates", "rerank", "assembly", "total"}
     assert detail["result_count"] == len(detail["returned_ids"])
 
 
