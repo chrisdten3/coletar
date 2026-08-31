@@ -66,12 +66,8 @@ context (a system prompt you control, versus a memory import Anthropic documents
 experimental and re-extracted). On the global-heavy seeded graph that nets out to
 local **0.906** vs Claude **0.869**.
 
-**Not yet built:** the ChatGPT compiler (M6) and the observability dashboard. The Context Inspector has a
-read-only first cut (below); review, edit, merge, re-scope and compile-gating are
-still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
-
-The Inspector does not yet show which tenant an object belongs to, so a snapshot
-holding more than one renders them merged — see the note in its section below.
+**Not yet built:** the ChatGPT compiler (M6) and the observability dashboard.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
 
@@ -132,22 +128,25 @@ instruction snippets that make tool use actually reliable.
 
 ### The Context Inspector
 
-A read-only first cut: upload a store snapshot and browse the three boxes from
-the architecture diagram below as plain outlines.
-
 ```bash
 uv run coletar serve-inspector
 ```
 
-Then open `http://localhost:8789` and upload the file at `COLETAR_STORE_PATH`
-(`data/coletar.json` by default). The full Inspector — review, edit, merge,
-re-scope, gating compile — is still [M5](docs/ROADMAP.md).
+Open `http://localhost:8789`. Bound to the live store: review, edit, merge and
+re-scope objects, with the Event/Revision Log beside them.
 
-**Known gap:** it does not render `tenant_id`. A snapshot containing more than one
-tenant shows their objects merged into a single list with no indication, because the
-unknown key is ignored rather than rejected — so it looks correct instead of failing.
-Fine for a single-tenant snapshot, misleading for anything else, and the first thing
-to fix when the Inspector is picked back up.
+**Nothing compiles until you have seen it.** A compile is blocked while any
+compile-eligible object has not been reviewed since it last changed — a review is a
+statement about what an object said at the time, so editing it withdraws the
+approval. The gate is enforced in the CLI too (`--skip-review` overrides it, and the
+override is recorded in the `compile.run` event), because a gate one surface can walk
+around is not a gate.
+
+Review state is derived from the event log rather than stored on the object: the log
+is already the provenance record, and a `reviewed` column would be a second source of
+truth that replay could not reconstruct.
+
+Binds loopback only — it performs authenticated-user actions with no auth of its own.
 
 ### True Migration
 

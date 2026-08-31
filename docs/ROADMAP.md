@@ -514,8 +514,19 @@ SCOPE §10 step 3. The first real True Migration proof point, and the only front
 surface built against an *official* format rather than a reverse-engineered one.
 
 - [x] Continuity Score with published weights and `explain()`
-- [ ] Context Inspector: review, edit, merge, re-scope — and no compile action until
-      every compile-eligible object has been shown at least once
+- [x] Context Inspector: review, edit, merge, re-scope — and no compile action until
+      every compile-eligible object has been shown at least once. **Review state is
+      derived from the event log, never stored on the object**: §2 says a property
+      that applies to one workflow does not earn a column, and the log is already the
+      provenance record, so a boolean would have been a second source of truth that
+      replay could not reconstruct. A review is a statement about an object *as it
+      was then*, so it stops counting once the object changes — otherwise the gate
+      certifies text no human ever read. The gate imports the compiler's own
+      `compile_eligible`, so it can never guard a different population than the one
+      that leaves, and it is enforced in the CLI as well as the UI (`--skip-review`
+      overrides it and is recorded in the `compile.run` event). Now bound to the live
+      store rather than an uploaded snapshot, which retires the read-only first cut
+      and removes its tenancy gap structurally
 - [x] `ClaudeCompiler` → native Claude containers. The scaffolding assumed an
       "official memory import/export format" to target; checking that before
       building found something more specific. There is **no Projects import API** —

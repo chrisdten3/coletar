@@ -137,6 +137,9 @@ def compile(
     out: str = typer.Option("build/compile", help="Directory to write artifacts into."),
     base_model: str = typer.Option("llama3.1", help="FROM line for the Ollama Modelfile."),
     project: str | None = typer.Option(None, help="Compile one project scope only."),
+    skip_review: bool = typer.Option(
+        False, "--skip-review", help="Compile without the Inspector review gate."
+    ),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
     """True Migration: compile the graph into a destination's native containers.
@@ -148,6 +151,7 @@ def compile(
     from pathlib import Path
 
     from coletar.compiler import ClaudeCompiler, LocalModelCompiler
+    from coletar.inspector.review import review_status
     from coletar.schema.events import Actor, Event, EventType
 
     compilers: dict[str, type] = {"local": LocalModelCompiler, "claude": ClaudeCompiler}
@@ -159,6 +163,19 @@ def compile(
     async def _run() -> None:
         resolved = _tenant(tenant)
         store = build_store()
+
+        # The M5 gate. Enforced here rather than only in the Inspector's UI: a gate
+        # one surface can walk around is not a gate, and the CLI is the surface an
+        # automation would reach for.
+        status = await review_status(store, resolved)
+        if not status.can_compile and not skip_review:
+            raise typer.BadParameter(
+                f"{len(status.unreviewed)} of {len(status.eligible)} eligible objects "
+                "have not been reviewed since they last changed. Run "
+                "`coletar serve-inspector` and look at them, or pass --skip-review to "
+                "compile anyway (recorded in the compile.run event)."
+            )
+
         objects = await store.list_objects(
             resolved, scope=_scope(project) if project else None, limit=10_000
         )
@@ -181,6 +198,10 @@ def compile(
                     "out_dir": str(out_dir),
                     **result.manifest.summary(),
                     "continuity_score": result.score.total,
+                    # An override has to be visible afterwards, or the gate teaches
+                    # the user nothing about what was in the package.
+                    "review_skipped": skip_review and not status.can_compile,
+                    "unreviewed_at_compile": len(status.unreviewed),
                 },
             ),
         )
