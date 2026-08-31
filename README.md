@@ -210,6 +210,21 @@ surface writes through, so they land as real events rather than as a silent chan
 
 Deterministic, so the vault can live in git and a diff means the graph moved.
 
+### Auditable context
+
+```bash
+uv run coletar as-of 2026-03-03                      # the graph as it stood
+uv run coletar as-of 2026-03-03 --query "retention"  # search the past
+uv run coletar changes 2026-03-01 --until 2026-04-01 # what moved, as a diff
+```
+
+Reconstructed from the event log alone, never the object table — if the two disagree,
+the log is what you can defend. **Supersession is evaluated as of then**: a fact
+corrected last week was still the current answer in March.
+
+This is what an immutable log with full before/after state buys, and it is the part a
+memory layer storing only current values cannot retrofit.
+
 ### True Migration
 
 ```bash

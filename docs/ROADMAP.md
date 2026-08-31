@@ -731,8 +731,34 @@ provenance, supersession, an immutable event log, replay.
 - [x] Obsidian — supersession renders as a wikilink, so a correction chain is
       navigable in the graph view, which is the one thing a file tree does better
       than a database. VS Code needs nothing: it is a folder of Markdown
-- [ ] Temporal validity on facts — "what did this policy say on 3 March" is the
-      Extraordinary use case, and `replay_object` already answers most of it
+- [x] **As-of queries.** `graph_as_of`, `search_as_of` and `changes_between`, with
+      `coletar as-of` and `coletar changes` over them. Two of the four questions a
+      compliance reader asks cannot be answered by a memory layer that stores only
+      the current value — *what did this say on 3 March*, and *what changed between
+      these dates* — and both need an immutable log carrying full before/after state,
+      which is why constraint 5 exists.
+
+      **Supersession is evaluated as of *then*, not now.** A fact corrected last week
+      was still the current answer in March, so filtering the reconstruction against
+      today's supersession would report that March believed something it did not:
+      confidently wrong rather than visibly broken, which is the worst kind of answer
+      for an audit. That is the test to read first.
+
+      Reconstruction reads only the log, never the object table. If the two ever
+      disagree, the log is the thing you can show someone.
+
+      As-of search is **lexical only and documented as such**: the vector index holds
+      current state, a historical one would have to be versioned per moment, and an
+      audit asks about exact terms. The `CandidateSource` on every hit records it, so
+      a reader sees the difference rather than assuming parity with live search.
+- [ ] Temporal *validity* — `valid_from`/`valid_until` distinct from `created_at`. A
+      policy effective 1 April is a different thing from one recorded 1 April, and
+      that distinction is the whole compliance question. As-of queries answer "what
+      did we record when"; this answers "what was in force when"
+- [ ] Source documents as provenance — attach the PDF a fact came from, so "prove
+      today's answer derives from today's policy" is a link rather than an argument.
+      Deliberately narrow: documents that are the source of a fact, not a multimodal
+      vault
 
 ---
 

@@ -393,6 +393,84 @@ def mirror(
 
 
 @app.command()
+def as_of(
+    at: str = typer.Argument(..., help="ISO date or timestamp, e.g. 2026-03-03."),
+    query: str | None = typer.Option(None, help="Search the graph as it stood then."),
+    project: str | None = typer.Option(None, help="Scope to one project."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """What the graph said at a past moment.
+
+    Reconstructed from the event log alone, never from the object table — if the two
+    ever disagree, the log is what you can defend. Supersession is evaluated *as of
+    then*: a fact corrected last week was still the current answer in March.
+    """
+    from datetime import UTC, datetime
+
+    from coletar.temporal import graph_as_of, search_as_of
+
+    try:
+        moment = datetime.fromisoformat(at)
+    except ValueError as exc:
+        raise typer.BadParameter(f"{at!r} is not an ISO date or timestamp") from exc
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        store = build_store()
+        scope = _scope(project) if project else None
+        if query:
+            hits = await search_as_of(store, resolved, query, moment, scope=scope)
+            typer.echo(f"as of {moment.isoformat()} — {len(hits)} hits")
+            for hit in hits:
+                typer.echo(f"  {hit.score:.4f}  [{hit.obj.scope}] {hit.obj.content}")
+            return
+        objects = await graph_as_of(store, resolved, moment, scope=scope)
+        typer.echo(f"as of {moment.isoformat()} — {len(objects)} objects")
+        for obj in objects:
+            typer.echo(f"  [{obj.scope}] {obj.content}")
+
+    asyncio.run(_run())
+
+
+@app.command()
+def changes(
+    since: str = typer.Argument(..., help="ISO date the window starts after."),
+    until: str | None = typer.Option(None, help="ISO date the window ends at (default now)."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """What changed between two dates, as a diff of the sentences that moved."""
+    from datetime import UTC, datetime
+
+    from coletar.temporal import changes_between
+
+    def _parse(raw: str) -> datetime:
+        try:
+            moment = datetime.fromisoformat(raw)
+        except ValueError as exc:
+            raise typer.BadParameter(f"{raw!r} is not an ISO date") from exc
+        return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+    start = _parse(since)
+    end = _parse(until) if until else datetime.now(UTC)
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        found = await changes_between(build_store(), resolved, start, end)
+        typer.echo(f"{len(found)} changes between {start.date()} and {end.date()}")
+        for change in found:
+            typer.echo(f"  {change.at.isoformat()}  {change.kind:<11} {change.object_id}")
+            if change.kind == "changed":
+                typer.echo(f"      - {change.before}")
+                typer.echo(f"      + {change.after}")
+            elif change.after:
+                typer.echo(f"      {change.after}")
+
+    asyncio.run(_run())
+
+
+@app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
     from coletar.store.migrate import run_migrations
