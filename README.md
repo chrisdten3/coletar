@@ -168,14 +168,21 @@ Binds loopback only — it performs authenticated-user actions with no auth of i
 ### Importing a ChatGPT export
 
 ```bash
-uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip   # a file you already have
-uv run coletar watch-downloads                                 # or notice it landing
+uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip
+uv run coletar import-claude  ~/Downloads/claude-export.zip
+uv run coletar import-claude-code                              # local transcripts
+uv run coletar watch-downloads                                 # or notice one landing
 ```
 
-You click your own export button in ChatGPT's settings and OpenAI emails you the
-archive; automation starts once the file is on your disk (§8.1). The parser walks
-only the **active branch** of each conversation — `conversations.json` is a tree, and
-an answer the user edited away should not enter the graph beside one they kept.
+You click your own export button — ChatGPT's settings, or Claude's Settings >
+Privacy > Export Data — and they email you the archive; automation starts once the
+file is on your disk (§8.1).
+
+Both providers ship a file called `conversations.json` holding **different shapes**,
+so the watcher discriminates on structure and routes to the matching importer. For
+ChatGPT the parser walks only the **active branch** of each conversation, because
+that file is a tree and an answer you edited away should not enter the graph beside
+one you kept. Claude's memory is not in its export — only conversations.
 
 Everything imported lands at `account_export_parse` confidence (0.60), through the
 same extractor and the same ingest boundary as every other surface, so a preference

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import typer
 
@@ -255,29 +256,41 @@ def watch_downloads(
     project: str | None = typer.Option(None, help="Scope everything to one project."),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
-    """Watch for a ChatGPT export you downloaded, and import it when it lands.
+    """Watch for a ChatGPT or Claude export you downloaded, and import it when it lands.
 
     coletar never asks a provider for anything (§8.1): you click your own export
-    button, OpenAI emails you a link, you download it. This only notices the file
-    arriving so the import is not a second manual step. Detection is by content — a
-    ZIP that actually contains conversations.json — never by filename.
+    button, they email you a link, you download it. This only notices the file
+    arriving so the import is not a second manual step.
+
+    Both providers ship a file called `conversations.json` holding different shapes,
+    so detection reads the structure and routes to the matching importer — a Claude
+    export handed to the ChatGPT parser finds nothing and looks like success.
     """
     from pathlib import Path
 
+    from coletar.acquisition import chatgpt_export, claude_export
     from coletar.acquisition.archive import store_archive
-    from coletar.acquisition.chatgpt_export import import_export
-    from coletar.acquisition.watcher import POLL_SECONDS, watch
+    from coletar.acquisition.watcher import POLL_SECONDS, detect, watch
 
     async def _run() -> None:
         resolved = _tenant(tenant)
         store = build_store()
         folder = Path(directory).expanduser()
-        typer.echo(f"watching {folder} for a ChatGPT export (tenant {resolved})")
+        typer.echo(f"watching {folder} for a ChatGPT or Claude export (tenant {resolved})")
+
+        # Two ImportReport types with the same shape; the CLI only renders them.
+        importers: dict[str, Any] = {
+            "chatgpt": chatgpt_export.import_export,
+            "claude": claude_export.import_export,
+        }
 
         async def on_export(path: Path) -> None:
+            provider = detect(path)
+            if provider is None:  # pragma: no cover - scan already filtered these
+                return
             held = store_archive(path)
-            typer.echo(f"  found {path.name} -> archive {held.short_id}")
-            report = await import_export(
+            typer.echo(f"  found a {provider} export: {path.name} -> {held.short_id}")
+            report = await importers[provider](
                 store, resolved, held.path, scope=_scope(project)
             )
             typer.echo(json.dumps(report.as_dict(), indent=2))
@@ -288,6 +301,35 @@ def watch_downloads(
         asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("stopped")
+
+
+@app.command()
+def import_claude(
+    archive: str,
+    project: str | None = typer.Option(None, help="Scope everything to one project."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Import a claude.ai conversation export you downloaded yourself.
+
+    Settings > Privacy > Export Data in Claude; Anthropic emails a link and this
+    starts once the ZIP is on your disk (§8.1). Note that Claude's *memory* is not in
+    that export — only conversations.
+    """
+    from pathlib import Path
+
+    from coletar.acquisition.claude_export import ClaudeExportError, import_export
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        try:
+            report = await import_export(
+                build_store(), resolved, Path(archive), scope=_scope(project)
+            )
+        except ClaudeExportError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
 
 
 @app.command()

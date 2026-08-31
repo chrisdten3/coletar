@@ -28,9 +28,41 @@ from coletar.acquisition.watcher import (
 FIXTURE = Path(__file__).parent / "fixtures" / "chatgpt_export.zip"
 
 
-def make_export(path: Path) -> Path:
+def make_export(path: Path, provider: str = "chatgpt") -> Path:
+    """A minimally realistic export. An *empty* conversations.json is no longer
+    enough, because detection reads structure — and an archive that names the file
+    but holds nothing recognisable is exactly the ambiguous case worth refusing."""
+    if provider == "chatgpt":
+        body = [
+            {
+                "id": "c1",
+                "title": "t",
+                "current_node": "n",
+                "mapping": {
+                    "n": {
+                        "id": "n",
+                        "parent": None,
+                        "children": [],
+                        "message": {
+                            "author": {"role": "user"},
+                            "content": {"content_type": "text", "parts": ["I prefer tabs."]},
+                        },
+                    }
+                },
+            }
+        ]
+    else:
+        body = [
+            {
+                "uuid": "c1",
+                "name": "t",
+                "chat_messages": [
+                    {"uuid": "m1", "sender": "human", "text": "I prefer tabs."}
+                ],
+            }
+        ]
     with zipfile.ZipFile(path, "w") as bundle:
-        bundle.writestr("conversations.json", json.dumps([]))
+        bundle.writestr("conversations.json", json.dumps(body))
     return path
 
 

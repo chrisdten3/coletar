@@ -688,6 +688,40 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 ---
 
+## M8 — Claude acquisition, and the Markdown mirror
+
+Competitive research after M7 changed what this milestone is for. Acquisition is not
+open ground: MemoryPlugin imports ChatGPT, Claude and TypingMind exports *and* syncs
+six surfaces live; Basic Memory stores everything as plain Markdown you own and
+indexes it as a typed graph; dropdat captures per-conversation capsules. What none of
+them do is compile *out*, and what none of them have is an auditable record —
+provenance, supersession, an immutable event log, replay.
+
+- [x] **claude.ai conversation export importer.** Human-initiated like every other
+      acquisition path: Settings > Privacy > Export Data, Anthropic emails a link,
+      automation starts once the ZIP lands. Same extractor, guards and ingest
+      boundary as the ChatGPT importer, so the two differ only in provenance
+- [x] **The watcher tells the two providers apart by structure.** Both ship a file
+      called `conversations.json` holding different shapes — a `mapping` tree versus
+      a flat `chat_messages` list. Detecting on the filename made a Claude export
+      look like a ChatGPT one: the parser found zero conversations, the watcher
+      marked the file seen, and a user's whole history was dropped while every
+      message reported success. Silent and shaped exactly like it worked, which is
+      the failure mode worth a regression test. A parser handed the wrong format now
+      refuses loudly rather than returning nothing, because "nothing" presents to the
+      user as "you had no history"
+- [ ] **Markdown mirror.** Basic Memory's best idea, taken deliberately rather than
+      copied: the typed graph stays canonical and every object is *mirrored* to
+      Markdown with frontmatter, plus the event log to an append-only file. That buys
+      the ownership story and Obsidian without giving up supersession, provenance and
+      atomic events — the things Markdown-as-primary cannot hold cleanly, and exactly
+      the things the compliance use case is buying
+- [ ] Obsidian / VS Code, which falls out of the mirror
+- [ ] Temporal validity on facts — "what did this policy say on 3 March" is the
+      Extraordinary use case, and `replay_object` already answers most of it
+
+---
+
 ## M7 — ChatGPT connector + general release + polish
 
 SCOPE §10 steps 5–6.
