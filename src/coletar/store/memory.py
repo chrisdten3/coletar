@@ -32,6 +32,7 @@ from coletar.schema.objects import (
     Edge,
     EdgeType,
     ObjectType,
+    Provider,
     Scope,
     ScopeType,
     object_from_record,
@@ -207,9 +208,13 @@ class InMemoryStore:
         )
         return stored.model_copy(deep=True)
 
-    async def get_object(self, tenant_id: TenantId, object_id: str) -> ContextObject | None:
+    async def get_object(
+        self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
+    ) -> ContextObject | None:
         obj = self._objects.get((tenant_id, object_id))
-        return obj.model_copy(deep=True) if obj is not None else None
+        if obj is None or not obj.locality.visible_to(caller_surface):
+            return None
+        return obj.model_copy(deep=True)
 
     def _superseded_ids(self, tenant_id: TenantId) -> set[str]:
         return {
@@ -224,6 +229,7 @@ class InMemoryStore:
         *,
         type: ObjectType | None = None,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         include_retired: bool = False,
         include_superseded: bool = False,
         limit: int = 200,
@@ -235,6 +241,7 @@ class InMemoryStore:
             if tenant == tenant_id
             and (type is None or obj.type == type)
             and (scope is None or obj.scope == scope)
+            and obj.locality.visible_to(caller_surface)
             and (include_retired or obj.is_active)
             and obj.id not in superseded
         ]
@@ -332,6 +339,7 @@ class InMemoryStore:
         query: str,
         *,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         top_k: int = 12,
     ) -> list[Scored]:
         await self._ensure_embeddings(tenant_id)
@@ -354,6 +362,8 @@ class InMemoryStore:
             if not obj.is_active or object_id in superseded:
                 continue
             if not _in_search_scope(obj.scope, scope):
+                continue
+            if not obj.locality.visible_to(caller_surface):
                 continue
             lexical = lexical_score(query_tokens, self._tokens.get((tenant_id, object_id), set()))
             vector = similarities.get(object_id, 0.0)

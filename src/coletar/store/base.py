@@ -34,6 +34,15 @@ a project. `list_objects` is the opposite: an exact filter, because
 `get_project_state` has to be able to answer "what is in this container". Scopes live
 *inside* a tenant, so two tenants may both hold a project called `proj_ledger`
 without any relationship between them.
+
+**Locality.** Independent of scope: `Locality` on the object decides which connected
+*surfaces* may read it back, not which project it belongs to. `search`,
+`list_objects` and `get_object` all take `caller_surface`, filtered the same way
+`scope` is -- an object whose locality is `local_only` and does not name the calling
+surface is invisible to it, exactly as if it belonged to another tenant. `None` means
+a trusted internal caller (the CLI, a background job, the compiler) and applies no
+restriction, the same convention `scope=None` already uses. An authenticated
+connector always passes its surface; nothing in this protocol infers one.
 """
 
 from __future__ import annotations
@@ -43,7 +52,7 @@ from typing import Protocol, runtime_checkable
 
 from coletar.retrieval.ranking import Scored
 from coletar.schema.events import Event
-from coletar.schema.objects import ContextObject, Edge, ObjectType, Scope
+from coletar.schema.objects import ContextObject, Edge, ObjectType, Provider, Scope
 from coletar.schema.tenancy import TenantId
 
 
@@ -73,9 +82,12 @@ class Store(Protocol):
         """
         ...
 
-    async def get_object(self, tenant_id: TenantId, object_id: str) -> ContextObject | None:
-        """None when the object does not exist *or* belongs to another tenant. The
-        two are deliberately indistinguishable to the caller."""
+    async def get_object(
+        self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
+    ) -> ContextObject | None:
+        """None when the object does not exist, belongs to another tenant, *or* is
+        `local_only` to a surface other than `caller_surface`. All three are
+        deliberately indistinguishable to the caller."""
         ...
 
     async def list_objects(
@@ -84,6 +96,7 @@ class Store(Protocol):
         *,
         type: ObjectType | None = None,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         include_retired: bool = False,
         include_superseded: bool = False,
         limit: int = 200,
@@ -128,10 +141,11 @@ class Store(Protocol):
         query: str,
         *,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         top_k: int = 12,
     ) -> list[Scored]:
         """Hybrid vector + lexical retrieval over one tenant's active objects, scope
-        per the module docstring. Returns `Scored` descending.
+        and locality per the module docstring. Returns `Scored` descending.
 
         Backends narrow candidates however they can -- the in-process store keeps a
         vector index per tenant, Postgres filters on `tenant_id` before the ANN scan
