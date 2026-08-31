@@ -163,6 +163,28 @@ async def test_search_is_tenant_scoped(client, store):
     assert response.json()["results"] == []
 
 
+async def test_search_never_returns_something_local_only_to_another_surface(client, store):
+    """These endpoints exist only for the claude.ai composer, so the trusted
+    surface here is always `Provider.CLAUDE` -- never the client-supplied
+    `surface` field, which is trace-only and would otherwise be a hole."""
+    from coletar.schema.objects import Locality, LocalityMode, Provider
+
+    await store.put_object(
+        TENANT,
+        Memory.from_write(
+            "Only the local model should see this.",
+            locality=Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.LOCAL})),
+        ),
+    )
+    async with client as c:
+        response = await c.post(
+            "/v1/search",
+            json={"query": "only the local model should see this", "surface": "claude"},
+            headers=AUTH,
+        )
+    assert response.json()["results"] == []
+
+
 async def test_remember_records_the_users_own_words_at_the_highest_tier(client, store):
     async with client as c:
         response = await c.post(

@@ -20,7 +20,7 @@ from coletar.mcp.schemas import ObjectView, SearchContextResponse
 from coletar.retrieval.ranking import RANKING_VERSION
 from coletar.retrieval.trace import query_digest
 from coletar.schema.events import Actor, EventType
-from coletar.schema.objects import Memory, MemoryKind, Scope, ScopeType
+from coletar.schema.objects import Memory, MemoryKind, Provider, Scope, ScopeType
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
@@ -66,7 +66,7 @@ async def test_tool_schemas_declare_the_documented_arguments():
     write = by_name["write_memory"].input_schema
     assert write["required"] == ["content"]
     assert set(write["properties"]) == {
-        "content", "kind", "project_id", "sensitivity", "supersedes"
+        "content", "kind", "project_id", "sensitivity", "supersedes", "local_only"
     }
 
     assert by_name["get_project_state"].input_schema["required"] == ["project_id"]
@@ -433,6 +433,93 @@ async def test_project_state_is_tenant_scoped(store):
     with principal_scope(alice):
         mine = await mcp_server.mcp.call_tool("get_project_state", {"project_id": "proj_ledger"})
     assert mine.structured_content["count"] == 1
+
+
+# -- locality: pick and choose context ------------------------------------------
+async def test_local_only_write_is_invisible_to_a_different_surface(store):
+    claude = Principal(id="alice-claude", tenant_id=TENANT, surface=Provider.CLAUDE)
+    chatgpt = Principal(id="alice-chatgpt", tenant_id=TENANT, surface=Provider.CHATGPT)
+
+    with principal_scope(claude):
+        written = await mcp_server.mcp.call_tool(
+            "write_memory",
+            {"content": "Only Claude should see this.", "project_id": "x", "local_only": True},
+        )
+    assert written.structured_content["locality"] == "local_only:claude"
+
+    with principal_scope(chatgpt):
+        found = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "only claude should see this", "project_id": "x"}
+        )
+        assert found.structured_content["results"] == []
+        state = await mcp_server.mcp.call_tool("get_project_state", {"project_id": "x"})
+        assert state.structured_content["count"] == 0
+
+    with principal_scope(claude):
+        mine = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "only claude should see this", "project_id": "x"}
+        )
+        assert written.structured_content["id"] in {
+            r["id"] for r in mine.structured_content["results"]
+        }
+
+
+async def test_local_only_defaults_to_false(store, caller):
+    with principal_scope(caller):
+        written = await mcp_server.mcp.call_tool("write_memory", {"content": "Ships everywhere."})
+    assert written.structured_content["locality"] == "synced"
+
+
+async def test_local_only_is_refused_for_a_principal_with_no_declared_surface(store, caller):
+    """`caller` (like any key that never named a surface) defaults to
+    `Provider.COLETAR` -- writing local_only for it would create an object nothing
+    could ever read back."""
+    with principal_scope(caller), pytest.raises(ToolError, match="declared surface"):
+        await mcp_server.mcp.call_tool(
+            "write_memory", {"content": "x", "local_only": True}
+        )
+
+
+async def test_a_correction_cannot_target_an_object_hidden_from_this_surface(store):
+    """The supersedes existence check is locality-filtered too: a correction naming
+    an id this surface cannot see must fail the same way a nonexistent id does."""
+    claude = Principal(id="alice-claude", tenant_id=TENANT, surface=Provider.CLAUDE)
+    chatgpt = Principal(id="alice-chatgpt", tenant_id=TENANT, surface=Provider.CHATGPT)
+
+    with principal_scope(claude):
+        written = await mcp_server.mcp.call_tool(
+            "write_memory", {"content": "Claude-only fact.", "local_only": True}
+        )
+
+    with principal_scope(chatgpt), pytest.raises(ToolError, match="id of an object that exists"):
+        await mcp_server.mcp.call_tool(
+            "write_memory",
+            {"content": "Correcting it.", "supersedes": written.structured_content["id"]},
+        )
+
+
+async def test_restating_local_only_content_from_another_surface_creates_its_own_object(store):
+    """The dedup fold that would otherwise hide this: a restatement from ChatGPT must
+    not silently corroborate into an object local_only to Claude, which would leave
+    ChatGPT's own write invisible to ChatGPT."""
+    claude = Principal(id="alice-claude", tenant_id=TENANT, surface=Provider.CLAUDE)
+    chatgpt = Principal(id="alice-chatgpt", tenant_id=TENANT, surface=Provider.CHATGPT)
+
+    with principal_scope(claude):
+        await mcp_server.mcp.call_tool(
+            "write_memory", {"content": "I prefer dark mode.", "local_only": True}
+        )
+    with principal_scope(chatgpt):
+        written = await mcp_server.mcp.call_tool(
+            "write_memory", {"content": "I prefer dark mode."}
+        )
+        assert written.structured_content["stored"] is True
+        found = await mcp_server.mcp.call_tool("search_context", {"query": "dark mode"})
+        assert written.structured_content["id"] in {
+            r["id"] for r in found.structured_content["results"]
+        }
+
+    assert len(await store.list_objects(TENANT)) == 2
 
 
 # -- what the model actually reads ---------------------------------------------

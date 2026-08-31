@@ -75,6 +75,32 @@ def test_keys_parse_with_and_without_explicit_scopes():
     assert not dashboard.can(SCOPE_WRITE)
 
 
+def test_a_keys_declared_surface_is_the_principals():
+    from coletar.schema.objects import Provider
+
+    auth = ApiKeyAuthenticator.from_config(
+        _keys({"id": "alice-claude", "secret": "sk-alice", "tenant_id": "tenant_alice",
+              "surface": "claude"})
+    )
+    assert auth.authenticate("sk-alice").surface is Provider.CLAUDE
+
+
+def test_a_key_with_no_declared_surface_gets_the_generic_default():
+    """`Provider.COLETAR` is the safe default: such a principal reads every synced
+    object as before, and no local_only object at all, rather than a guess."""
+    from coletar.schema.objects import Provider
+
+    assert ApiKeyAuthenticator.from_config(ALICE_KEY).authenticate("sk-alice").surface \
+        is Provider.COLETAR
+
+
+def test_an_unknown_surface_is_refused_at_startup():
+    with pytest.raises(AuthError, match="surface"):
+        ApiKeyAuthenticator.from_config(
+            _keys({"id": "a", "secret": "s", "tenant_id": "tenant_a", "surface": "bluesky"})
+        )
+
+
 def test_every_principal_belongs_to_exactly_one_tenant():
     """The tenant comes from the key and from nowhere else — there is no
     configuration fallback reachable from the MCP server."""

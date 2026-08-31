@@ -151,6 +151,31 @@ async def test_new_memory_is_extracted_from_the_users_turn(store, upstream):
     assert any("uv instead of pip" in o.content for o in stored)
 
 
+async def test_a_claude_only_memory_is_never_injected_into_the_local_model(store, upstream):
+    """The proxy is the `Provider.LOCAL` surface. An object kept local_only to
+    Claude or ChatGPT must not leak into a local model's prompt."""
+    from coletar.schema.objects import Locality, LocalityMode, Provider
+
+    await store.put_object(
+        PROXY_TENANT,
+        Memory.from_write(
+            "Chris's Claude-only secret preference.",
+            locality=Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.CLAUDE})),
+        ),
+    )
+
+    with TestClient(proxy_module.app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "What is Chris's secret preference?"}
+            ]},
+        )
+
+    system = upstream["body"]["messages"][0]
+    assert system["role"] == "user"  # nothing injected: no system message was added
+
+
 async def test_nothing_is_injected_when_the_graph_is_empty(store, upstream):
     with TestClient(proxy_module.app) as client:
         client.post(

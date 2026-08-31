@@ -178,6 +178,11 @@ class Locality(BaseModel):
             return True
         return surface in self.surfaces
 
+    def __str__(self) -> str:
+        if self.mode is LocalityMode.SYNCED:
+            return "synced"
+        return f"local_only:{','.join(sorted(str(s) for s in self.surfaces))}"
+
 
 GLOBAL_LOCALITY = Locality()
 
