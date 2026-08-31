@@ -453,11 +453,18 @@ Stated here rather than discovered at the end:
 SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
 
 - [x] Compression job: superseded-chain retirement, schedulable and on-demand
-- [ ] **The local proxy becomes an MCP client.** It calls `build_store()` directly
-      today, so it bypasses authentication, tenant resolution and scope enforcement.
-      Fine for a single-user local daemon, wrong for anything else: both surfaces
-      should pass through the same auth, tenancy and event semantics rather than one
-      of them holding database credentials
+- [x] **The local proxy becomes an MCP client.** It no longer opens the database.
+      Everything it needs goes through a `ContextClient` carrying an explicit
+      principal: `LocalContextClient` keeps the zero-infrastructure default and gains
+      an identity with stated scopes, `RemoteContextClient` speaks MCP over
+      streamable HTTP with an API key and holds no database credentials at all.
+      The real problem was never the credentials — a caller holding a connection has
+      no *identity*, so it cannot be granted read without write, confined to a tenant
+      it did not choose, or revoked. Notably the remote client exposes no principal,
+      because it cannot know one: the key maps to a principal on the server, and an
+      identity a client can describe is one a client can claim. Proved against a live
+      server on a real port, not a test transport — which reproduced the M3.3
+      DNS-rebinding guard in miniature
 - [x] **Dedup/merge on write** (`coletar.ingest`). Near-duplicates used to be dropped
       only at *assembly* time, which protects retrieval and not the compiler:
       `list_objects` is what a compile reads, so True Migration would have emitted

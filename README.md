@@ -107,6 +107,13 @@ uv run coletar serve-proxy
 Then send traffic to `http://localhost:8787/v1` instead of `http://localhost:11434/v1`.
 No export, no scraping, no ToS exposure — the whole loop is on your machine.
 
+The proxy reaches the graph as a **named principal with stated scopes**, not as a
+database client (M4.2). By default that principal is in-process, so there is still
+nothing to deploy. Set `COLETAR_MCP_URL` and `COLETAR_MCP_API_KEY` and the same
+daemon becomes an MCP client of the hosted server instead, holding an API key rather
+than database credentials and passing through the same auth, tenancy and scope checks
+as any other connector.
+
 Both the buffered and the streaming paths inject and extract. Streamed chunks are
 forwarded before they are parsed, so reassembly never sits between the model and your
 screen — measured overhead is ~2.4ms p95 at 1,000 stored objects.
