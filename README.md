@@ -69,7 +69,8 @@ context (a system prompt you control, versus a memory import Anthropic documents
 experimental and re-extracted). On the global-heavy seeded graph that nets out to
 local **0.906** vs Claude **0.869**.
 
-**Not yet built:** the ChatGPT compiler (M6) and the observability dashboard.
+**Not yet built:** the observability dashboard and the agentic graph explorer (M4.4),
+and the developer SDK (M7).
 See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
@@ -161,7 +162,8 @@ Binds loopback only — it performs authenticated-user actions with no auth of i
 ### Importing a ChatGPT export
 
 ```bash
-uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip
+uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip   # a file you already have
+uv run coletar watch-downloads                                 # or notice it landing
 ```
 
 You click your own export button in ChatGPT's settings and OpenAI emails you the
@@ -176,8 +178,9 @@ restated across years of chats corroborates one object instead of creating a hun
 ### True Migration
 
 ```bash
-uv run coletar compile --destination local  --out build/local
-uv run coletar compile --destination claude --out build/claude
+uv run coletar compile --destination local   --out build/local
+uv run coletar compile --destination claude  --out build/claude
+uv run coletar compile --destination chatgpt --out build/chatgpt
 ```
 
 Compiles the graph into each destination's *actual* native containers — one per

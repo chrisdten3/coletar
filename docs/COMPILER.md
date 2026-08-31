@@ -17,6 +17,7 @@ so rather than rounding it up.
 |---|---|---|
 | Ollama | the `SYSTEM` block — `ollama create` bakes it into the model and it is present on every turn | knowledge files: Ollama ships no retrieval, so a fact that lands only in a file is preserved but inert |
 | Claude | Project instructions **and** project knowledge — Claude really does retrieve over uploaded files | memory import: Anthropic re-extracts what you paste |
+| ChatGPT | Custom GPT instructions (8,000 chars), up to 20 knowledge files, and account-level Custom Instructions | — |
 
 This distinction is why `fidelity` in the [Continuity Score](CONTINUITY_SCORE.md)
 measures something instead of always reading 1.0.
@@ -63,6 +64,32 @@ the reason attached.
 
 Confidence gates *promotion*, not inclusion. Nothing is dropped for being uncertain;
 it is moved somewhere it cannot be asserted.
+
+## ChatGPT: a capacity ceiling the others do not have
+
+A Custom GPT caps instructions at **8,000 characters** and knowledge at **20 files**.
+Those are not cosmetic. The Claude compiler writes one knowledge file per object,
+which breaks here the moment a scope holds 21 — so this one **bundles knowledge by
+type** into a handful of files. A destination limit changing the artifact's shape is
+what compiling to a real product means, as opposed to exporting and hoping.
+
+Instructions are rendered most-confident first and trimmed to the budget, so anything
+cut to fit is the least certain thing rather than whatever happened to sort last. The
+account-level box is smaller still and **truncates silently on paste**, so the file
+carries a warning when it would overrun rather than letting the user discover it by
+noticing something missing months later.
+
+### Global scope lands better on ChatGPT than on Claude
+
+| destination | global container | fidelity |
+|---|---|---|
+| ChatGPT | account Custom Instructions — a plain text box the user controls and can read back | `native` |
+| Claude | memory import — Anthropic re-extracts it, calls it experimental, warns it may not be incorporated | `reconstructed` |
+
+On the same four-object graph that scores **0.775** compiling to Claude, ChatGPT
+scores **1.000**. That is not a preference for one vendor: it is the difference
+between a box you can verify and an extractor you cannot, and a score that could not
+express it would not be measuring anything.
 
 ## Locality filters harder at a compile, not softer
 
