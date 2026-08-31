@@ -227,7 +227,7 @@ h2.section-title {
 /* ---------- hero ---------- */
 .hero { padding-top: 3.5rem; text-align: left; }
 
-.hero-badges { display: flex; gap: 0.5rem; margin-bottom: 1.1rem; flex-wrap: wrap; }
+.badge-row { display: flex; gap: 0.5rem; margin: 0.9rem 0 0; flex-wrap: wrap; }
 
 .hero .tagline {
   font-size: 1.05rem;
@@ -295,43 +295,20 @@ h2.section-title {
   padding: 1.4rem;
 }
 
-.card .icon {
-  width: 2.4rem;
-  height: 2.4rem;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  color: var(--accent-ink);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  margin-bottom: 0.8rem;
+.card h3 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+  border-top: 2px solid var(--accent);
+  padding-top: 0.7rem;
 }
-
-.card h3 { font-size: 1rem; margin: 0 0 0.4rem; }
 .card p { font-size: 0.9rem; color: var(--ink-soft); margin: 0; }
 
 /* ---------- personas ---------- */
 .persona {
-  display: flex;
-  gap: 0.9rem;
   background: var(--bg-alt);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1.1rem 1.3rem;
-}
-
-.persona .avatar {
-  flex: none;
-  width: 2.6rem;
-  height: 2.6rem;
-  border-radius: 999px;
-  background: var(--ink);
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
 }
 
 .persona h3 { margin: 0 0 0.25rem; font-size: 0.98rem; }
