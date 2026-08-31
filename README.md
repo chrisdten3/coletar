@@ -49,9 +49,12 @@ adversarial suite run against both backends.
 **True Migration works on two destinations.** The local-model compiler (M5.1) emits
 real Ollama containers, and the Claude compiler (M5.2) emits real Claude ones — one
 container per scope, a Migration Manifest naming every object's destination, and a
-Continuity Score computed from manifest facts. The local leg was verified the only
-way that claim can be verified: compiled, `ollama create`d, then queried with
-coletar not running.
+Continuity Score computed from manifest facts. Both legs are verified the only way the claim can be
+verified — by installing the package and asking. Ollama: compiled, `ollama create`d,
+queried with coletar not running. Claude: pasted into a real Project, which then
+answered from the graph, pulled an inherited global preference into a project
+conversation, and treated a compiled goal as background rather than as an
+instruction.
 
 | | Measured |
 |---|---|

@@ -587,7 +587,13 @@ surface built against an *official* format rather than a reverse-engineered one.
       `reconstructed`, never `native`. Project instructions and project knowledge
       are both `native`, because Claude genuinely retrieves over uploaded knowledge
       where Ollama does not. Whether account memory reaches inside a Project is
-      undocumented, so globals are duplicated into each Project rather than assumed
+      undocumented, so globals are duplicated into each Project rather than assumed.
+      **Verified by hand**, since no Projects import API exists to automate against:
+      a compiled package pasted into a real Project answered its project question,
+      combined two objects, reached for an inherited *global* preference inside that
+      project conversation — vindicating the duplication decision — and treated a
+      `[goal, ...]` line as background rather than as a directive, so the §11 marker
+      held. See [docs/COMPILER.md](COMPILER.md)
 - [x] Migration Manifest rendering (native / reconstructed / unsupported), shared
       by both compilers in `compiler/emit.py` — scope planning, eligibility and
       provenance are properties of the graph, not of any one destination
