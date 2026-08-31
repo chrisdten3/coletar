@@ -1,6 +1,7 @@
 """Provider Compiler — canonical objects into a destination's native containers."""
 
 from coletar.compiler.base import Compiler, CompileResult
+from coletar.compiler.chatgpt import ChatGPTCompiler
 from coletar.compiler.claude import ClaudeCompiler
 from coletar.compiler.continuity import (
     WEIGHTS,
@@ -15,6 +16,7 @@ from coletar.compiler.local import LocalModelCompiler
 
 __all__ = [
     "WEIGHTS",
+    "ChatGPTCompiler",
     "ClaudeCompiler",
     "CompileResult",
     "Compiler",

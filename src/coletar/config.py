@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     retrieval_token_budget: int = 1500
     retrieval_top_k: int = 12
 
+    # M6.2: which local model does model-assisted extraction. Runs against the
+    # user's own server, where inference is free — §11 names the cost of doing it
+    # any other way at consumer scale.
+    extraction_model: str = "llama3.1"
+
 
 @lru_cache
 def get_settings() -> Settings:

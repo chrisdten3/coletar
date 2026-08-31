@@ -150,11 +150,15 @@ def compile(
     """
     from pathlib import Path
 
-    from coletar.compiler import ClaudeCompiler, LocalModelCompiler
+    from coletar.compiler import ChatGPTCompiler, ClaudeCompiler, LocalModelCompiler
     from coletar.inspector.review import review_status
     from coletar.schema.events import Actor, Event, EventType
 
-    compilers: dict[str, type] = {"local": LocalModelCompiler, "claude": ClaudeCompiler}
+    compilers: dict[str, type] = {
+        "local": LocalModelCompiler,
+        "claude": ClaudeCompiler,
+        "chatgpt": ChatGPTCompiler,
+    }
     if destination not in compilers:
         raise typer.BadParameter(
             f"unknown destination {destination!r}; have {sorted(compilers)}"
@@ -182,7 +186,7 @@ def compile(
         compiler = (
             LocalModelCompiler(base_model=base_model)
             if destination == "local"
-            else ClaudeCompiler()
+            else compilers[destination]()
         )
         out_dir = Path(out)
         result = await compiler.compile(objects, out_dir=out_dir)
@@ -214,6 +218,76 @@ def compile(
         typer.echo(result.instructions)
 
     asyncio.run(_run())
+
+
+@app.command()
+def import_chatgpt(
+    archive: str,
+    project: str | None = typer.Option(None, help="Scope everything to one project."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Import a ChatGPT export ZIP you downloaded yourself.
+
+    Acquisition is human-initiated by design (§8.1): you click your own export button
+    in ChatGPT's settings, OpenAI emails you the archive, and this starts once the
+    file is on your disk. Nothing here touches a provider's site.
+    """
+    from pathlib import Path
+
+    from coletar.acquisition.chatgpt_export import ChatGPTExportError, import_export
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        try:
+            report = await import_export(
+                build_store(), resolved, Path(archive), scope=_scope(project)
+            )
+        except ChatGPTExportError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
+def watch_downloads(
+    directory: str = typer.Option("~/Downloads", help="Folder to watch for an export."),
+    project: str | None = typer.Option(None, help="Scope everything to one project."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Watch for a ChatGPT export you downloaded, and import it when it lands.
+
+    coletar never asks a provider for anything (§8.1): you click your own export
+    button, OpenAI emails you a link, you download it. This only notices the file
+    arriving so the import is not a second manual step. Detection is by content — a
+    ZIP that actually contains conversations.json — never by filename.
+    """
+    from pathlib import Path
+
+    from coletar.acquisition.archive import store_archive
+    from coletar.acquisition.chatgpt_export import import_export
+    from coletar.acquisition.watcher import POLL_SECONDS, watch
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        store = build_store()
+        folder = Path(directory).expanduser()
+        typer.echo(f"watching {folder} for a ChatGPT export (tenant {resolved})")
+
+        async def on_export(path: Path) -> None:
+            held = store_archive(path)
+            typer.echo(f"  found {path.name} -> archive {held.short_id}")
+            report = await import_export(
+                store, resolved, held.path, scope=_scope(project)
+            )
+            typer.echo(json.dumps(report.as_dict(), indent=2))
+
+        await watch(folder, on_export, poll_seconds=POLL_SECONDS)
+
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        typer.echo("stopped")
 
 
 @app.command()

@@ -136,9 +136,9 @@ identifier rather than as a number drifting upward.
 ## Where this stops, and what comes next
 
 The heuristic clears M2.2's bar on live turns, so a model on the live path would be
-speculative work. It is at **M6.2** that a model becomes necessary: a raw ChatGPT export
-is prose with no reliable first-person surface forms to key on, and the bar there is 85%
-precision over far messier text. `extract_with_model` is stubbed against that milestone.
+speculative work. It is at **M6.2** that a model becomes necessary, and M6.1 measured
+exactly why: 31.4% recall over export prose. `extract_with_model` is now implemented —
+see below.
 
 Two known limitations, neither of which the labelled set can fix on its own:
 
@@ -154,3 +154,109 @@ Two known limitations, neither of which the labelled set can fix on its own:
 free — it is regular expressions — which is exactly why it is worth pushing as far as
 measurement says it can go before reaching for inference. When the model path lands, it
 should run against the user's own local model, where inference costs nothing.
+
+
+## M6.1 — the same extractor, a different register
+
+An account export is not a proxy transcript. The eight original patterns were tuned
+on live turns, where people write "I prefer X"; an export is years of standing
+instructions to the assistant, decisions a team took, and tools the user simply uses.
+
+Measured against a 100-turn labelled export set, the extractor fired on **4 of 35**
+durable statements — 100% precision, 11.4% recall. **The ≥85% precision bar passes
+vacuously at that recall**, which is the reason to report both numbers: precision on
+four extractions is not the claim precision on thirty-five would be.
+
+Three patterns were added for forms that recur across every surface rather than
+shapes reverse-engineered from one fixture — an imperative addressed to the assistant
+(`always`/`never`, anchored to a sentence start so "I would always use X" cannot
+reach it), a decision already taken (`we decided/settled/standardised`, where "we
+should" deliberately does not match), and habitual use of a named thing (`I use/run`).
+
+| set | before | after |
+|---|---|---|
+| M2.2 labelled turns — false-positive rate | 4.3% | **4.3%** |
+| M6.1 export set — precision | 100% | **100%** |
+| M6.1 export set — recall | 11.4% | **31.4%** |
+
+Nearly tripled export recall at **zero cost** on the independent set, which is the
+measurement that matters: the M2.2 set was not written for this change.
+
+### What these numbers are not
+
+The export fixture is synthetic and was authored alongside the patterns it measures.
+That makes its recall figure indicative rather than authoritative — tuning patterns
+against a fixture you wrote is circular, and the honest guard against it is that the
+*independent* M2.2 rate did not move. The number to trust is 4.3%.
+
+31.4% is also not a corridor anyone would call working. Regex over open-ended prose
+has a ceiling, and it is close. This measurement is the case for M6.2 doing the
+extracting with a model, stated in numbers rather than as an assumption — and the
+test asserts only that recall has not collapsed, because pinning it would freeze a
+limitation in place as though it were a target.
+
+
+## M6.2 — the model proposes, the guards dispose
+
+The design decision is the whole of it: a model is allowed to change **what gets
+proposed**, and nothing else. Every candidate is then located in the transcript and
+put through the same sentence guards the regex path uses, so recall is what improves
+and precision is defended by machinery a prompt cannot talk its way past.
+
+**Grounding is the anti-fabrication guard**, and it is structural rather than a plea
+in the prompt. A proposed memory must have at least `GROUNDING_FLOOR` (0.6) of its
+content words present in some sentence of the transcript. A model that invents
+*"Chris lives in Berlin"* cannot point at a sentence containing it, so the memory is
+dropped no matter how confidently it was asserted.
+
+Everything else follows precision-over-recall. Malformed JSON yields nothing rather
+than a salvage; an unrecognised `kind` is dropped rather than coerced to `fact`;
+duplicates collapse. An import that finds nothing is recoverable, one that invents is
+not.
+
+Model-located memories are written at `DERIVED_SUMMARY` (0.50) rather than
+`EXPLICIT_STATEMENT` (0.95). A model finding a claim is weaker evidence than an
+unambiguous first-person form matching, and §3.1's table prices that difference so
+each caller does not have to remember it.
+
+### Measured
+
+Local `qwen2.5:0.5b`, against the same 100-turn labelled export set:
+
+| | extracted | precision | recall |
+|---|---|---|---|
+| regex (M6.1) | 11 | 100% | 31.4% |
+| **model** | 29 | **100%** | **96.7%** |
+
+**The model run covers 30 of 100 turns, not all of them.** The measuring machine has
+8 GB with ~0.4 GB free, and Ollama evicted the model between calls until `keep_alive`
+was added — it still stalled out at turn 30. That is a constraint of the hardware
+this was measured on, not a property of the code, and the number is reported as
+partial rather than extrapolated to a round 100.
+
+Two caveats that the precision/recall figures do not capture:
+
+- **`kind` classification is unreliable at this model size.** A 0.5b model labelled
+  both *"I prefer TypeScript"* and *"We standardised on Tailwind"* as `goal`. The
+  content is right and grounded; the type is a guess. A larger local model is the fix,
+  and the Context Inspector's re-typing is the backstop until then.
+- 0.3s/turn once resident, ~10s/turn averaged across reload stalls. On a machine with
+  headroom this is a background import; on this one it is not.
+
+### What grounding does not do
+
+Grounding defeats *fabrication*. It does **not** defeat *injection*, because injected
+text genuinely is in the transcript — if a planted sentence says the user loves Java,
+a memory saying so grounds perfectly. This is pinned by a test so the guard is never
+described as stronger than it is.
+
+What holds that line is upstream and downstream. **Upstream:** only the user's own
+turns ever reach the extractor — `chatgpt_export` drops assistant and tool messages,
+exactly as `claude_code` does — so a planted line has to have been typed or pasted by
+the user themselves. **Downstream:** M5.3's review gate means nothing compiles into
+another product until a human has read it.
+
+The residual risk is real and worth stating plainly: a user pastes a document
+containing injected prose into their own turn, and it becomes a candidate. The
+`_STRUCTURAL` guard catches pasted JSON and markup, not prose. The gate is the answer
+there, which is one more reason it is enforced in the CLI and not only in the UI.

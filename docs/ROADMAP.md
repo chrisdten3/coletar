@@ -621,13 +621,56 @@ surface built against an *official* format rather than a reverse-engineered one.
 
 SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is proven.
 
-- [ ] Desktop folder-watcher for the user-initiated export ZIP — detection within
-      10s, zero false positives across 50 unrelated files
-- [ ] ZIP parser → typed objects at `account_export_parse` confidence, ≥85%
-      extraction precision against a hand-labelled 100-object fixture set
-- [ ] Raw archive stored separately from derived objects, so it can be re-parsed as
-      extraction improves
-- [ ] `ChatGPTCompiler` → Custom GPT package the **user** uploads. No UI driving.
+- [x] **Model-assisted extraction (M6.2).** The model proposes, the existing
+      guards dispose: every candidate is located in the transcript and run
+      through the same sentence guards the regex path uses, so a model changes
+      recall and cannot change what counts as a durable assertion. Grounding is
+      the anti-fabrication guard and it is structural — a model that invents
+      cannot point at a sentence containing its claim. Measured on `qwen2.5:0.5b`
+      against the M6.1 set: **100% precision, 96.7% recall** against the regex
+      path's 31.4%, over 30 of 100 turns before the 8GB measuring machine ran out
+      of memory — reported partial rather than extrapolated. `kind` is unreliable
+      at 0.5b (both samples labelled `goal`), which the score does not capture.
+      Grounding does **not** stop injection, only fabrication; that boundary is
+      pinned by a test and held by user-turns-only upstream and M5.3's gate
+      downstream
+- [x] Desktop folder-watcher — polls at 5s, so detection sits inside the 10s bar
+      with margin, and **zero false positives across 50 unrelated files**. Detection
+      is by *content*, never filename: a candidate is a ZIP that actually contains
+      `conversations.json`, because a filename rule is a false-positive engine and
+      the decoy set includes a file literally named `chatgpt-export.zip`. Polling
+      rather than a filesystem-event dependency, which had to survive being said out
+      loud. Files present at startup are history, not arrivals — and the test for
+      that caught a real bug, since priming keyed on "seen is empty" re-primes when
+      the folder legitimately starts empty and swallows the first arrival
+- [x] ZIP parser → typed objects at `account_export_parse` confidence. **Precision
+      100% against the hand-labelled 100-turn set**, clearing the ≥85% bar — but it
+      clears it *vacuously*, and that is the finding. The extractor fired on 4 of 35
+      durable statements, and precision on four extractions is not the claim
+      precision on thirty-five would be. Three general patterns took export recall
+      11.4% -> 31.4% at zero cost on the independent M2.2 set (4.3% FP, unchanged).
+      Still not a working corridor: regex over open-ended prose has a ceiling and
+      this is near it, which is the case for M6.2 in numbers rather than assumption.
+      **The parser's real discipline is the tree walk** — `conversations.json` holds
+      a graph, every edit and regeneration forks it, and all branches ship. Walking
+      the active branch only means an instruction the user *edited away* never enters
+      the graph at the same confidence as one they kept. Verified: 0 of 10 planted
+      abandoned turns reached the import
+- [x] Raw archive stored separately from derived objects, keyed by content hash so
+      re-importing the same download is recognised rather than kept twice. Copied,
+      never moved: a tool that silently relocates something you just downloaded is one
+      you stop trusting. M6.2 is the argument — export recall went 31.4% -> ~97%
+      without the file changing, and discarding archives would mean every future
+      improvement reached only exports not yet imported
+- [x] `ChatGPTCompiler` → Custom GPT package the **user** uploads. No UI driving,
+      and no import API to drive even if we wanted to. Shaped by a capacity ceiling
+      neither other destination has: 8,000 characters of instructions and **20**
+      knowledge files, so knowledge is bundled by type rather than written one file
+      per object, and instructions are ordered most-confident-first so anything
+      trimmed to fit is the least certain thing. **Global scope scores higher here
+      than on Claude** — account Custom Instructions is a box the user controls and
+      can read back, where Claude's only global container is an experimental
+      extractor. Same graph: 1.000 to ChatGPT, 0.775 to Claude
 
 ---
 
