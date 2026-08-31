@@ -3,11 +3,14 @@
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     DEFAULT_CONFIDENCE,
+    GLOBAL_LOCALITY,
     GLOBAL_SCOPE,
     ContextObject,
     Edge,
     EdgeType,
     ExtractionMethod,
+    Locality,
+    LocalityMode,
     Memory,
     MemoryKind,
     ObjectType,
@@ -24,6 +27,7 @@ from coletar.schema.objects import (
 
 __all__ = [
     "DEFAULT_CONFIDENCE",
+    "GLOBAL_LOCALITY",
     "GLOBAL_SCOPE",
     "Actor",
     "ContextObject",
@@ -32,6 +36,8 @@ __all__ = [
     "Event",
     "EventType",
     "ExtractionMethod",
+    "Locality",
+    "LocalityMode",
     "Memory",
     "MemoryKind",
     "ObjectType",

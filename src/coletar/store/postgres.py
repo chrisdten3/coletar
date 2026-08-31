@@ -40,6 +40,7 @@ from coletar.schema.objects import (
     ContextObject,
     Edge,
     ObjectType,
+    Provider,
     Scope,
     ScopeType,
     object_from_record,
@@ -51,11 +52,22 @@ from coletar.schema.tenancy import CrossTenantError, TenantId
 #: unqualified list is ambiguous there and nowhere else -- which is exactly the kind
 #: of difference that is better removed than remembered.
 _OBJECT_COLUMNS = """
-    o.id, o.type, o.content, o.scope_type, o.scope_id, o.kind, o.confidence,
+    o.id, o.type, o.content, o.scope_type, o.scope_id, o.locality_mode,
+    o.locality_surfaces, o.kind, o.confidence,
     o.extraction_method, o.sensitivity, o.supersedes, o.provenance,
     o.provider_mappings, o.payload, o.version, o.created_at, o.updated_at,
     o.retired_at, o.ttl_days
 """
+
+
+#: Appended wherever a query already filters on tenant/active/scope, exactly the way
+#: `scope_clause` is built below -- present only when a caller names a surface, since
+#: `caller_surface=None` (a trusted internal caller) applies no restriction at all.
+def _locality_clause(caller_surface: Provider | None) -> tuple[str, list[Any]]:
+    if caller_surface is None:
+        return "", []
+    return "AND (o.locality_mode = 'synced' OR o.locality_surfaces ? %s)", [str(caller_surface)]
+
 
 #: An object is active when nothing retired it and nothing supersedes it. The second
 #: half matters between a correction being written and compression next running --
@@ -77,6 +89,7 @@ def _to_record(row: dict[str, Any]) -> ContextObject:
         "type": row["type"],
         "content": row["content"],
         "scope": {"type": row["scope_type"], "id": row["scope_id"]},
+        "locality": {"mode": row["locality_mode"], "surfaces": row["locality_surfaces"]},
         "confidence": row["confidence"],
         "extraction_method": row["extraction_method"],
         "sensitivity": row["sensitivity"],
@@ -166,13 +179,14 @@ class PostgresStore:
             await cur.execute(
                 """
                 INSERT INTO context_object (
-                    tenant_id, id, type, content, scope_type, scope_id, kind, confidence,
+                    tenant_id, id, type, content, scope_type, scope_id,
+                    locality_mode, locality_surfaces, kind, confidence,
                     extraction_method, sensitivity, supersedes, provenance,
                     provider_mappings, payload, version, created_at, updated_at,
                     retired_at, ttl_days
                 ) VALUES (
                     %(tenant_id)s, %(id)s, %(type)s, %(content)s, %(scope_type)s,
-                    %(scope_id)s, %(kind)s,
+                    %(scope_id)s, %(locality_mode)s, %(locality_surfaces)s, %(kind)s,
                     %(confidence)s, %(extraction_method)s, %(sensitivity)s, %(supersedes)s,
                     %(provenance)s, %(provider_mappings)s, %(payload)s, %(version)s,
                     %(created_at)s, %(updated_at)s, %(retired_at)s, %(ttl_days)s
@@ -181,6 +195,8 @@ class PostgresStore:
                     content = EXCLUDED.content,
                     scope_type = EXCLUDED.scope_type,
                     scope_id = EXCLUDED.scope_id,
+                    locality_mode = EXCLUDED.locality_mode,
+                    locality_surfaces = EXCLUDED.locality_surfaces,
                     kind = EXCLUDED.kind,
                     confidence = EXCLUDED.confidence,
                     extraction_method = EXCLUDED.extraction_method,
@@ -221,13 +237,16 @@ class PostgresStore:
             # The `async with` commits: object, embedding and event land together.
         return obj
 
-    async def get_object(self, tenant_id: TenantId, object_id: str) -> ContextObject | None:
+    async def get_object(
+        self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
+    ) -> ContextObject | None:
+        locality_clause, locality_params = _locality_clause(caller_surface)
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
                 f"SELECT {_OBJECT_COLUMNS} FROM context_object o "
-                f"WHERE o.tenant_id = %s AND o.id = %s",
-                (tenant_id, object_id),
+                f"WHERE o.tenant_id = %s AND o.id = %s {locality_clause}",
+                (tenant_id, object_id, *locality_params),
             )
             row = await cur.fetchone()
         return _to_record(row) if row else None
@@ -238,6 +257,7 @@ class PostgresStore:
         *,
         type: ObjectType | None = None,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         include_retired: bool = False,
         include_superseded: bool = False,
         limit: int = 200,
@@ -250,6 +270,10 @@ class PostgresStore:
         if scope is not None:
             clauses.append("o.scope_type = %s AND o.scope_id IS NOT DISTINCT FROM %s")
             params.extend([str(scope.type), scope.id])
+        locality_clause, locality_params = _locality_clause(caller_surface)
+        if locality_clause:
+            clauses.append(locality_clause.removeprefix("AND "))
+            params.extend(locality_params)
         if not include_retired:
             clauses.append("o.retired_at IS NULL")
         if not include_superseded:
@@ -404,6 +428,7 @@ class PostgresStore:
         query: str,
         *,
         scope: Scope | None = None,
+        caller_surface: Provider | None = None,
         top_k: int = 12,
     ) -> list[Scored]:
         query_vector = (await self._embedder.embed([query]))[0]
@@ -419,6 +444,7 @@ class PostgresStore:
                 scope_params.append(scope.id)
             else:
                 scope_clause = "AND o.scope_type = 'global'"
+        locality_clause, locality_params = _locality_clause(caller_surface)
 
         # Over-fetch from each half: the final ordering is the blend below, so the
         # candidate pool has to be wider than the number of rows we return.
@@ -429,14 +455,14 @@ class PostgresStore:
                 SELECT o.id FROM context_object o
                 JOIN object_embedding e
                   ON e.tenant_id = o.tenant_id AND e.object_id = o.id
-                WHERE {_ACTIVE_PREDICATE} {scope_clause}
+                WHERE {_ACTIVE_PREDICATE} {scope_clause} {locality_clause}
                 ORDER BY e.embedding <=> %s
                 LIMIT %s
             )
             UNION
             (
                 SELECT o.id FROM context_object o
-                WHERE {_ACTIVE_PREDICATE} {scope_clause}
+                WHERE {_ACTIVE_PREDICATE} {scope_clause} {locality_clause}
                   AND o.content %% %s
                 LIMIT %s
             )
@@ -450,8 +476,8 @@ class PostgresStore:
         # Each half of the union carries its own tenant parameter, because
         # _ACTIVE_PREDICATE is interpolated into both.
         params = [
-            tenant_id, *scope_params, query_array, fetch,
-            tenant_id, *scope_params, query, fetch,
+            tenant_id, *scope_params, *locality_params, query_array, fetch,
+            tenant_id, *scope_params, *locality_params, query, fetch,
             tenant_id,
         ]
 
@@ -499,6 +525,8 @@ def _object_params(
         "content": obj.content,
         "scope_type": str(obj.scope.type),
         "scope_id": obj.scope.id,
+        "locality_mode": str(obj.locality.mode),
+        "locality_surfaces": Jsonb(sorted(str(s) for s in obj.locality.surfaces)),
         "kind": str(kind) if (kind := getattr(obj, "kind", None)) is not None else None,
         "confidence": obj.confidence,
         "extraction_method": str(obj.extraction_method),

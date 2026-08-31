@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 
 from coletar.retrieval.embedding import tokenize
 from coletar.retrieval.ranking import RANKING_VERSION, ScoreComponents, Scored
-from coletar.schema.objects import ContextObject, Scope
+from coletar.schema.objects import ContextObject, Provider, Scope
 from coletar.schema.tenancy import TenantId
 
 if TYPE_CHECKING:  # `Store` is needed for annotations only, and importing it at
@@ -172,6 +172,7 @@ async def retrieve(
     query: str,
     *,
     scope: Scope | None = None,
+    caller_surface: Provider | None = None,
     top_k: int = 12,
     token_budget: int = 1500,
     surface: str = "unknown",
@@ -181,12 +182,19 @@ async def retrieve(
 ) -> RetrievedContext:
     """Retrieve, assemble, and record one trace.
 
+    `caller_surface` is the trusted locality gate (see the `Store` protocol
+    docstring) and is unrelated to `surface`, the free-text string below recorded
+    only for the trace -- a client-supplied label is fine for observability and
+    would be a hole if it also decided access.
+
     `trace=False` exists for the evaluation harness and for callers replaying a
     corpus, where a trace per query would be noise rather than observability. It is
     deliberately not the default: every real retrieval should leave a record.
     """
     started = time.perf_counter()
-    hits = await store.search(tenant_id, query, scope=scope, top_k=top_k)
+    hits = await store.search(
+        tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k
+    )
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     assembly_started = time.perf_counter()

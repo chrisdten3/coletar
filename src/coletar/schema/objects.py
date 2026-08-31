@@ -140,6 +140,48 @@ class Scope(BaseModel):
 GLOBAL_SCOPE = Scope(type=ScopeType.GLOBAL)
 
 
+class LocalityMode(StrEnum):
+    SYNCED = "synced"
+    LOCAL_ONLY = "local_only"
+
+
+class Locality(BaseModel):
+    """Which surfaces may read this object back, independent of `Scope`.
+
+    `Scope` answers "which container is this in" (global vs. one project);
+    this answers "which connected surfaces can this propagate to." Cross-surface
+    propagation is the product's central claim (§10 step 2), so the default is
+    `SYNCED` -- every write is visible to every surface the tenant has connected,
+    unchanged from behavior before this field existed. `LOCAL_ONLY` is an opt-in
+    per object, never a global switch: a user keeps one thing on one surface
+    without turning off portability for everything else.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    mode: LocalityMode = LocalityMode.SYNCED
+    surfaces: frozenset[Provider] = frozenset()
+
+    @model_validator(mode="after")
+    def _local_only_needs_surfaces(self) -> Self:
+        if self.mode is LocalityMode.LOCAL_ONLY and not self.surfaces:
+            raise ValueError("local_only locality requires at least one surface")
+        if self.mode is LocalityMode.SYNCED and self.surfaces:
+            raise ValueError("synced locality must not carry surfaces")
+        return self
+
+    def visible_to(self, surface: Provider | None) -> bool:
+        """`surface=None` is a trusted internal caller (CLI, a background job, the
+        compiler) -- the same "no restriction" convention `Scope`-filtering already
+        uses for `scope=None`. An authenticated connector always passes a surface."""
+        if self.mode is LocalityMode.SYNCED or surface is None:
+            return True
+        return surface in self.surfaces
+
+
+GLOBAL_LOCALITY = Locality()
+
+
 class Provenance(BaseModel):
     """Where this object came from. Never optional -- an object with no provenance
     cannot be shown honestly in the Context Inspector, so we refuse to store one."""
@@ -188,6 +230,7 @@ class ContextObject(BaseModel):
     type: ObjectType
     content: str
     scope: Scope = GLOBAL_SCOPE
+    locality: Locality = GLOBAL_LOCALITY
     confidence: Confidence = 1.0
     extraction_method: ExtractionMethod
     sensitivity: Sensitivity = Sensitivity.NORMAL
@@ -235,6 +278,7 @@ class Memory(ContextObject):
         *,
         kind: MemoryKind = MemoryKind.FACT,
         scope: Scope = GLOBAL_SCOPE,
+        locality: Locality = GLOBAL_LOCALITY,
         provider: Provider = Provider.LOCAL,
         extraction_method: ExtractionMethod = ExtractionMethod.MCP_LIVE_WRITE,
         origin_type: OriginType = OriginType.AGENT,
@@ -253,6 +297,7 @@ class Memory(ContextObject):
             content=content,
             kind=kind,
             scope=scope,
+            locality=locality,
             confidence=resolved,
             extraction_method=extraction_method,
             sensitivity=sensitivity,
