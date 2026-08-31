@@ -699,8 +699,14 @@ provenance, supersession, an immutable event log, replay.
 
 - [x] **claude.ai conversation export importer.** Human-initiated like every other
       acquisition path: Settings > Privacy > Export Data, Anthropic emails a link,
-      automation starts once the ZIP lands. Same extractor, guards and ingest
-      boundary as the ChatGPT importer, so the two differ only in provenance
+      automation starts once the archives land. Same extractor, guards and ingest
+      boundary as the ChatGPT importer, so the two differ only in provenance.
+      **Corrected against a real manifest:** the export is not one ZIP but five,
+      listed in an emailed manifest with single-use URLs — and it *does* include
+      memories and projects, contrary to what the research said. Those are worth
+      more than mined prose: memories are facts Claude already extracted, and
+      projects map onto `Scope` directly. Nothing fetches the URLs; a consumed
+      one that fails to land is unrecoverable, so downloading stays the user's act
 - [x] **The watcher tells the two providers apart by structure.** Both ship a file
       called `conversations.json` holding different shapes — a `mapping` tree versus
       a flat `chat_messages` list. Detecting on the filename made a Claude export

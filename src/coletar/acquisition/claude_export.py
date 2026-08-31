@@ -13,10 +13,17 @@ is why `detect` below discriminates on *structure* rather than on the filename, 
 why parsing refuses an archive whose shape it does not recognise instead of quietly
 returning nothing.
 
-**Claude's memory is not in this export.** The data export carries conversations
-only. What Claude has inferred and stored about the user comes out through the
-separate memory export, whose format coletar already models — `ClaudeCompiler` emits
-exactly that shape going the other way.
+**The export is a manifest and five archives, not one ZIP.** Anthropic emails a
+`manifest-*.json` listing single-use download URLs for `conversations`, `memories`,
+`projects`, `design_chats` and `light_metadata`. Earlier versions of this module
+assumed a single archive holding `conversations.json`, which was wrong in a way worth
+recording: it also led to the claim that Claude's memory is not exported. It is.
+
+That matters more than the packaging. `memories` are facts Claude has *already*
+extracted, so importing them is near-lossless — against roughly a third of durable
+statements recovered by mining conversation prose. And `projects` carry the container
+a conversation belonged to, which maps onto `Scope` directly rather than having to be
+inferred.
 """
 
 from __future__ import annotations
@@ -30,6 +37,13 @@ from pathlib import Path
 from typing import Any
 
 CONVERSATIONS = "conversations.json"
+
+#: What the emailed manifest calls each archive. Every one is a separate ZIP behind a
+#: single-use URL, which is also why nothing here fetches them: a consumed URL that
+#: fails to land is not recoverable, so downloading stays the user's own act.
+MANIFEST_CATEGORIES = frozenset(
+    {"conversations", "memories", "projects", "design_chats", "light_metadata"}
+)
 
 #: Claude marks the person `human`; `assistant` is the model. Only one is evidence
 #: about the user, the same discipline as every other acquisition path here.
@@ -266,3 +280,99 @@ async def import_export(
                 else:
                     report.corroborated += 1
     return report
+
+
+
+@dataclass(frozen=True)
+class ManifestEntry:
+    category: str
+    filename: str
+    export_url: str
+
+
+@dataclass
+class ExportBundle:
+    """A downloaded Claude export: the manifest, and whichever archives are present.
+
+    Modelled as "some of the five" rather than all of them, because the URLs are
+    single-use and a user who lost one to a failed download should still be able to
+    import what they did get.
+    """
+
+    root: Path
+    entries: list[ManifestEntry] = field(default_factory=list)
+    present: dict[str, Path] = field(default_factory=dict)
+
+    @property
+    def missing(self) -> list[str]:
+        return sorted({e.category for e in self.entries} - set(self.present))
+
+
+def read_manifest(path: Path) -> ExportBundle:
+    """Parse the emailed manifest and locate the archives beside it.
+
+    `path` may be the manifest JSON or the directory holding it — people drop the
+    whole download folder at a tool as often as they name the file.
+    """
+    if path.is_dir():
+        candidates = sorted(path.glob("manifest-*.json"))
+        if not candidates:
+            raise ClaudeExportError(
+                f"no manifest-*.json in {path} — Anthropic emails one alongside the "
+                "archives; point at it or at the folder holding it"
+            )
+        path = candidates[0]
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ClaudeExportError(f"{path.name} is not a readable manifest: {exc}") from exc
+
+    files = payload.get("data_files")
+    if not isinstance(files, list):
+        raise ClaudeExportError(f"{path.name} has no data_files — is it the manifest?")
+
+    bundle = ExportBundle(root=path.parent)
+    for row in files:
+        if not isinstance(row, dict):
+            continue
+        entry = ManifestEntry(
+            category=str(row.get("category", "")),
+            filename=str(row.get("filename", "")),
+            export_url=str(row.get("export_url", "")),
+        )
+        bundle.entries.append(entry)
+        archive = bundle.root / entry.filename
+        if archive.exists():
+            bundle.present[entry.category] = archive
+    return bundle
+
+
+def describe(archive: Path) -> dict[str, Any]:
+    """What is actually inside one archive, without assuming a shape.
+
+    The Claude export's per-archive layout is not documented anywhere I could find,
+    and guessing it twice would repeat the mistake this module already made once. So
+    this reports what is there and lets a human confirm before a parser commits to it.
+    """
+    with zipfile.ZipFile(archive) as bundle:
+        names = bundle.namelist()
+        summary: dict[str, Any] = {"files": names[:20], "count": len(names)}
+        for name in names:
+            if not name.endswith(".json"):
+                continue
+            with bundle.open(name) as handle:
+                try:
+                    payload = json.load(handle)
+                except json.JSONDecodeError:
+                    continue
+            if isinstance(payload, list) and payload:
+                first = payload[0]
+                summary[name] = {
+                    "type": "list",
+                    "length": len(payload),
+                    "keys": sorted(first)[:24] if isinstance(first, dict) else None,
+                }
+            elif isinstance(payload, dict):
+                summary[name] = {"type": "object", "keys": sorted(payload)[:24]}
+    return summary

@@ -182,7 +182,10 @@ Both providers ship a file called `conversations.json` holding **different shape
 so the watcher discriminates on structure and routes to the matching importer. For
 ChatGPT the parser walks only the **active branch** of each conversation, because
 that file is a tree and an answer you edited away should not enter the graph beside
-one you kept. Claude's memory is not in its export — only conversations.
+one you kept. Claude's export is a **manifest plus five archives** — conversations, memories,
+projects, design chats and metadata — each behind a single-use URL. Memories and
+projects are the valuable half: memories are facts Claude already extracted, and
+projects carry the container a conversation belonged to.
 
 Everything imported lands at `account_export_parse` confidence (0.60), through the
 same extractor and the same ingest boundary as every other surface, so a preference
