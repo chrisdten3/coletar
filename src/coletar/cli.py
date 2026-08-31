@@ -147,10 +147,10 @@ def compile(
     """
     from pathlib import Path
 
-    from coletar.compiler import LocalModelCompiler
+    from coletar.compiler import ClaudeCompiler, LocalModelCompiler
     from coletar.schema.events import Actor, Event, EventType
 
-    compilers = {"local": LocalModelCompiler}
+    compilers: dict[str, type] = {"local": LocalModelCompiler, "claude": ClaudeCompiler}
     if destination not in compilers:
         raise typer.BadParameter(
             f"unknown destination {destination!r}; have {sorted(compilers)}"
@@ -162,7 +162,11 @@ def compile(
         objects = await store.list_objects(
             resolved, scope=_scope(project) if project else None, limit=10_000
         )
-        compiler = LocalModelCompiler(base_model=base_model)
+        compiler = (
+            LocalModelCompiler(base_model=base_model)
+            if destination == "local"
+            else ClaudeCompiler()
+        )
         out_dir = Path(out)
         result = await compiler.compile(objects, out_dir=out_dir)
 

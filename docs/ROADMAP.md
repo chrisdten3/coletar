@@ -516,10 +516,27 @@ surface built against an *official* format rather than a reverse-engineered one.
 - [x] Continuity Score with published weights and `explain()`
 - [ ] Context Inspector: review, edit, merge, re-scope — and no compile action until
       every compile-eligible object has been shown at least once
-- [ ] `ClaudeCompiler` → native Claude Project: system prompt + project knowledge
-- [ ] Migration Manifest rendering (native / reconstructed / unsupported)
-- [ ] `object_coverage` ≥95%, `scope_preservation` = 100% (a hard gate — it is the
-      actual differentiator)
+- [x] `ClaudeCompiler` → native Claude containers. The scaffolding assumed an
+      "official memory import/export format" to target; checking that before
+      building found something more specific. There is **no Projects import API** —
+      the compiler emits a package the user pastes and uploads, same boundary as the
+      ChatGPT corridor. Memory import *is* official and documented
+      (`[date] - content` into Settings > Memory), but Anthropic states Claude
+      re-extracts rather than storing what was pasted, marks it experimental, and
+      warns it may not incorporate the memory at all — so global objects are
+      `reconstructed`, never `native`. Project instructions and project knowledge
+      are both `native`, because Claude genuinely retrieves over uploaded knowledge
+      where Ollama does not. Whether account memory reaches inside a Project is
+      undocumented, so globals are duplicated into each Project rather than assumed
+- [x] Migration Manifest rendering (native / reconstructed / unsupported), shared
+      by both compilers in `compiler/emit.py` — scope planning, eligibility and
+      provenance are properties of the graph, not of any one destination
+- [x] `object_coverage` ≥95%, `scope_preservation` = 100% (a hard gate — it is the
+      actual differentiator). Met on both compilers: 1.00 / 1.00 on the seeded
+      graph, checked as an absence in the emitted files rather than a flag on a
+      struct. The score also ranks destinations in both directions — Claude wins
+      on project scope, Ollama wins on global scope — which is what stops it
+      being a preference dressed up as a measurement
 - [x] `LocalModelCompiler` → Ollama Modelfile `SYSTEM` block + knowledge directory.
       Built first, as planned: the one compiler with no third-party constraint, so
       manifest and score semantics got settled here. **Scope compiles into model

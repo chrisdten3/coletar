@@ -16,7 +16,7 @@ so rather than rounding it up.
 | Destination | Native | Not native |
 |---|---|---|
 | Ollama | the `SYSTEM` block — `ollama create` bakes it into the model and it is present on every turn | knowledge files: Ollama ships no retrieval, so a fact that lands only in a file is preserved but inert |
-| Claude (M5.2) | Project instructions + project knowledge | — |
+| Claude | Project instructions **and** project knowledge — Claude really does retrieve over uploaded files | memory import: Anthropic re-extracts what you paste |
 
 This distinction is why `fidelity` in the [Continuity Score](CONTINUITY_SCORE.md)
 measures something instead of always reading 1.0.
@@ -96,6 +96,62 @@ though it changed nothing in it.
 artifact the user may never install; recording "this object lives in Ollama now"
 before they run `ollama create` would put a claim in the graph that nothing has made
 true yet.
+
+## Claude: two containers, deliberately not scored the same
+
+The Claude compiler targets what Anthropic actually ships, which is not what the
+scaffolding for this milestone assumed. There is **no Projects import API**, so the
+compiler emits a package and the user pastes and uploads it — the same boundary as
+the ChatGPT corridor, for the same reason (hard constraint 2).
+
+**Projects are the strong container.** Custom instructions are injected into every
+conversation inside the Project, and unlike Ollama, Claude retrieves over uploaded
+project knowledge. Both are therefore `native`, and the confidence floor routes
+between them without downgrading either: a low-confidence inference goes to
+knowledge rather than standing instructions, but knowledge is still a real
+container.
+
+**Memory import is the weak one, and Anthropic says so.** The documented format is a
+block of `[date saved, if available] - memory content` lines pasted into
+Settings > Memory. The help centre states that Claude "will extract key information
+and store it as individual memory entries" rather than storing what was pasted, that
+the feature is "experimental and still in active development", and that Claude "may
+not always successfully incorporate imported memories". A destination that
+re-interprets what it receives and may drop it has not preserved the object, so
+global-scope objects are `reconstructed` — never `native`.
+
+`memory.txt` therefore contains the documented format and *nothing else*: no header,
+no §11 marker, no explanation. It is pasted into a box whose contents an extractor
+consumes, so any framing we added would itself become a memory. The explanation goes
+in the instructions the human reads.
+
+### Globals are duplicated into Projects, on purpose
+
+Whether account-level memory is visible inside a Project is **undocumented**. The
+repo's rule is not to build against an assumption, and the two failure modes are not
+symmetric: duplicating costs some redundancy in the instructions, while omitting
+would hand the user a Project that silently lost their global context. So globals are
+inherited into each Project's instructions, exactly as they are inherited into project
+models on the local compiler.
+
+The manifest still records a global object's home as `memory.txt`, which is the
+conservative call and slightly understates what lands. The reasoning: the user's
+global context should work *everywhere* in Claude, not only inside the Projects we
+told them to create, and outside a Project the only path is the lossy one.
+
+### The comparison goes both ways
+
+A score that cannot rank destinations is decoration, and one that always ranks the
+frontier product higher is a preference dressed up as a measurement. On the same
+graph:
+
+| Graph | Better destination | Why |
+|---|---|---|
+| project-scoped | **Claude** | a Project holds instructions *and* retrievable knowledge; Ollama can only bake a system prompt and leave the rest in files it will never read |
+| global-scoped | **Ollama** | a system prompt the user controls and the model sees every turn, versus an experimental extractor that may not incorporate the memory at all |
+
+On the seeded graph, which is global-heavy, this comes out as **local 0.906 vs
+Claude 0.869**. That is the honest result, and it is the non-obvious one.
 
 ## Verified end to end
 

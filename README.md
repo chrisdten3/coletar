@@ -46,20 +46,27 @@ box you type into. The store is multi-tenant end to end (M3.1): `tenant_id` is
 required on every store call, enforced by composite keys in Postgres, and proved by an
 adversarial suite run against both backends.
 
-**True Migration works on one destination.** The local-model compiler (M5.1) emits
-real Ollama containers — one model per scope, a Migration Manifest naming every
-object's destination, and a Continuity Score computed from manifest facts. Verified
-the only way that claim can be verified: compiled, `ollama create`d, then queried
-with coletar not running.
+**True Migration works on two destinations.** The local-model compiler (M5.1) emits
+real Ollama containers, and the Claude compiler (M5.2) emits real Claude ones — one
+container per scope, a Migration Manifest naming every object's destination, and a
+Continuity Score computed from manifest facts. The local leg was verified the only
+way that claim can be verified: compiled, `ollama create`d, then queried with
+coletar not running.
 
 | | Measured |
 |---|---|
 | `object_coverage` on the seeded graph | **1.00** |
 | `scope_preservation` (hard gate) | **1.00** — no project fact reaches the global model |
-| `fidelity` | 0.69 — 11 of 16 objects in a real container, the rest preserved as files |
+| `fidelity` | 0.69 local / 0.56 Claude — see below |
 
-**Not yet built:** the Claude and ChatGPT compilers (scaffolding with contracts
-fixed and bodies unwritten) and the observability dashboard. The Context Inspector has a
+The score ranks destinations in **both** directions, which is what keeps it a
+measurement rather than a preference: Claude wins on project-scoped context (a
+Project holds instructions *and* retrievable knowledge), Ollama wins on global
+context (a system prompt you control, versus a memory import Anthropic documents as
+experimental and re-extracted). On the global-heavy seeded graph that nets out to
+local **0.906** vs Claude **0.869**.
+
+**Not yet built:** the ChatGPT compiler (M6) and the observability dashboard. The Context Inspector has a
 read-only first cut (below); review, edit, merge, re-scope and compile-gating are
 still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
@@ -145,13 +152,20 @@ to fix when the Inspector is picked back up.
 ### True Migration
 
 ```bash
-uv run coletar compile --out build/compile --base-model llama3.1
+uv run coletar compile --destination local  --out build/local
+uv run coletar compile --destination claude --out build/claude
 ```
 
-Compiles the graph into Ollama's *actual* native containers: one model per scope,
-a `SYSTEM` block for what the destination can genuinely assert, knowledge files for
-what it can only preserve, plus `MANIFEST.md` and `PROVENANCE.md`. Then
-`ollama create` and coletar is out of the loop entirely — which is the point.
+Compiles the graph into each destination's *actual* native containers — one per
+scope, so a project fact can never surface in an unrelated conversation. Ollama gets
+a Modelfile `SYSTEM` block per scope; Claude gets a Project per scope plus a
+`memory.txt` in Anthropic's documented import format. Both get a `MANIFEST.md`
+naming every object's destination and a `PROVENANCE.md` explaining where it came
+from.
+
+Neither compiler drives the destination's UI. Ollama you run yourself with
+`ollama create`; Claude has no Projects import API, so the package tells you exactly
+what to paste and upload. After that coletar is out of the loop — which is the point.
 
 Where each object lands and why is published in
 [docs/COMPILER.md](docs/COMPILER.md).
