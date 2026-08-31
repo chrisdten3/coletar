@@ -685,9 +685,13 @@ SCOPE §10 steps 5–6.
       sees. Hiding it would make the refusal a client-side courtesy, and anything
       speaking the protocol directly could call it anyway. The server says no, and
       says why
-- [~] REST API + thin async Python/JS SDKs over the canonical graph, released only
-      after auth and tenant isolation, **with rate limiting**. The API and the Python
-      SDK are done; the JS SDK is not. Extending the router surfaced a real
+- [x] REST API + thin async Python/JS SDKs over the canonical graph, released only
+      after auth and tenant isolation, **with rate limiting**. Both SDKs ship, and a
+      parity test compares their surfaces by parsing the JS source — two SDKs that
+      drift are two descriptions of one API, and the second is always the one that
+      lies. The JS client is **server-side only**, which the M7.2 CORS split enforces
+      structurally: an API key in browser JavaScript is a key you have published.
+      Zero dependencies on both sides. Extending the router surfaced a real
       regression the M3.6 test caught: the browser bridge is CORS-allowlisted for
       claude.ai, so adding inspect/history/compile to the same router would have let
       a web page enumerate the graph. CORS headers are now withheld from everything

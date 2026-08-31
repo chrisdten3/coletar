@@ -219,6 +219,10 @@ still answer.
 There is no `tenant` parameter: it comes from the key, server-side. And the client
 sends **no telemetry** — it contacts the base URL you gave it and nothing else.
 
+The same surface in JavaScript lives in [sdk/js](sdk/js), with no dependencies. It
+is server-side only: the SDK routes deliberately get no CORS headers, because an
+API key in browser JavaScript is a key you have published.
+
 ### With Postgres
 
 ```bash

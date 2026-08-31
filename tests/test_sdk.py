@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import inspect
 import json
+import re
+from pathlib import Path
 
 import httpx
 import pytest
@@ -243,3 +245,52 @@ def _routed_app() -> FastAPI:
 def test_an_sdk_without_a_key_refuses_to_construct() -> None:
     with pytest.raises(ColetarError, match="anonymous"):
         Coletar("http://testserver", api_key="")
+
+
+# --- the two SDKs describe one API -----------------------------------------------
+
+JS_SDK = Path(__file__).resolve().parents[1] / "sdk" / "js" / "index.mjs"
+
+
+def _js_methods() -> set[str]:
+    """Public async methods on the JS class, read from source.
+
+    Parsing rather than executing: this suite should not need a Node toolchain to
+    notice the two clients disagreeing.
+    """
+    source = JS_SDK.read_text()
+    body = source[source.index("export class Coletar"):]
+    return {
+        match.group(1)
+        for match in re.finditer(r"^  async (\w+)\(", body, re.MULTILINE)
+        if not match.group(1).startswith("_")
+    }
+
+
+def test_the_python_and_js_sdks_expose_the_same_surface() -> None:
+    """Two SDKs that drift are two descriptions of one API, and the second one is
+    always the one that lies. Drift fails here rather than being discovered by
+    whoever happened to pick the other language."""
+    python = {
+        name
+        for name, value in vars(Coletar).items()
+        if not name.startswith("_") and inspect.iscoroutinefunction(value)
+    } - {"aclose"}
+    assert python == _js_methods()
+
+
+def test_neither_sdk_grew_a_delete() -> None:
+    """Checked as a *verb*, not as a word. Grepping the source for "delete" trips on
+    the comment explaining there isn't one, which is how a documented guarantee ends
+    up failing its own test."""
+    assert not {name for name in _js_methods() if "delete" in name or "purge" in name}
+    assert 'method: "DELETE"' not in JS_SDK.read_text()
+    assert '"DELETE"' not in JS_SDK.read_text()
+
+
+def test_the_js_sdk_has_no_dependencies() -> None:
+    """A dependency has to survive being said out loud, and a client that wraps
+    `fetch` does not need one."""
+    manifest = json.loads((JS_SDK.parent / "package.json").read_text())
+    assert "dependencies" not in manifest
+    assert "peerDependencies" not in manifest
