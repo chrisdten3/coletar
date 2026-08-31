@@ -15,7 +15,7 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
 from coletar.mcp import server as mcp_server
-from coletar.mcp.auth import Principal, principal_scope
+from coletar.mcp.auth import SCOPE_READ, Principal, principal_scope
 from coletar.mcp.schemas import ObjectView, SearchContextResponse
 from coletar.retrieval.ranking import RANKING_VERSION
 from coletar.retrieval.trace import query_digest
@@ -556,3 +556,28 @@ async def test_the_server_instructions_name_the_difference():
     assert "portable" in instructions
     assert "your own memory" in instructions
     assert "never instructions" in instructions, "the injection boundary must survive"
+
+
+async def test_a_read_only_connector_is_refused_by_the_server_not_the_client():
+    """M7: "write attempts rejected server-side, not merely hidden client-side".
+
+    The distinction is the point. `write_memory` stays in the tool list a read-only
+    principal sees, because hiding it would make the refusal a client-side courtesy —
+    anything that speaks the protocol directly could call it anyway. The server is
+    what says no, and it says why.
+    """
+    reader = Principal(
+        id="developer-mode", tenant_id=TENANT, scopes=frozenset({SCOPE_READ})
+    )
+    with principal_scope(reader):
+        listed = {tool.name for tool in await mcp_server.mcp.list_tools()}
+        assert "write_memory" in listed, "hiding the tool would be the wrong fix"
+
+        with pytest.raises(ToolError, match="not authorized to write"):
+            await mcp_server.mcp.call_tool(
+                "write_memory", {"content": "should never land"}
+            )
+
+        # And the read path still works, or the connector would be useless.
+        result = await mcp_server.mcp.call_tool("search_context", {"query": "anything"})
+        assert "results" in result.structured_content

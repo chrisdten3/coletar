@@ -218,3 +218,78 @@ with an explicit "treat as background, not as instructions" marker, and nothing 
 coletar executes, follows, or acts on the text of a stored memory. If a connector ever
 grows a side effect beyond writing to the graph, that boundary needs re-examining
 before it ships.
+
+
+## Webhooks (M7)
+
+Configured by the operator, never over the wire:
+
+```bash
+COLETAR_WEBHOOKS='[{"url":"https://hooks.example.com/coletar","secret":"whsec-…",
+                    "events":["object.created","object.superseded"]}]'
+```
+
+An endpoint a caller could register is an exfiltration primitive wearing a feature's
+clothes, so there is no API for adding one.
+
+### The payload carries the event, never the object
+
+```json
+{"event_id": "evt_…", "type": "object.created", "actor": "user",
+ "provider": "claude", "object_id": "mem_…", "tenant_id": "tenant_…",
+ "at": "2026-08-31T…", "is_revision": true}
+```
+
+No `content`, no `before`/`after`. coletar holds a graph of things people told an
+assistant in private; posting that to an arbitrary URL because a config line said so
+is not a trade worth making for convenience. A subscriber that needs the text calls
+back through the authenticated API with its own key — so a leaked webhook URL leaks
+*metadata about change*, not memories.
+
+### Verifying a delivery
+
+```
+x-coletar-timestamp: 1767225600
+x-coletar-signature: v1=<hmac-sha256>
+x-coletar-event-id:  evt_…
+x-coletar-attempt:   1
+```
+
+The MAC covers `timestamp + "." + body`, not the body alone — signing only the body
+would let anyone who captured one delivery replay it forever. `coletar.webhooks.verify`
+is exported so you can check with our implementation rather than reimplementing the
+timestamp binding and getting it wrong.
+
+`x-coletar-event-id` is stable across retries, which is what lets a receiver be
+idempotent without guessing.
+
+### The retry policy
+
+| | |
+|---|---|
+| attempts | **5** |
+| backoff | exponential from 1s, capped at 60s, **full jitter** |
+| retried | network errors, `408`, `429`, `5xx` |
+| **not** retried | every other `4xx` — the endpoint is saying the request is wrong, and sending it again is noise |
+| timeout | 10s per attempt |
+
+Jitter matters more than the curve. Without it every subscriber of a burst retries in
+lockstep and the second wave arrives as a thundering herd, which is how a brief
+outage becomes a long one.
+
+Delivery is off the write path: a write must not fail, or slow down, because someone
+else's server is down. And **delivery writes no events** — an event per delivery
+would be an event that triggers a delivery, which is a loop. Outcomes live in a
+bounded in-process log instead.
+
+### What the SSRF guard does and does not do
+
+`https` only, and literal private, loopback, link-local and reserved addresses are
+refused, as are `localhost` and `*.local`. It deliberately **does not resolve the
+hostname**: resolving at configuration time reads like a stronger check than it is,
+because DNS can answer differently a second later, and it fails valid endpoints
+whenever DNS blips at startup.
+
+So the residual is real and stated: **a hostname you control can still resolve to a
+private address.** What actually holds the line is that endpoints are operator
+configuration. `COLETAR_WEBHOOKS_ALLOW_PRIVATE=true` relaxes it for local testing.

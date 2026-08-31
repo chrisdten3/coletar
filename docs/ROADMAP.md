@@ -692,17 +692,65 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 SCOPE §10 steps 5–6.
 
-- [ ] Developer Mode remote connector, read path; write attempts rejected
-      server-side, not merely hidden client-side
-- [ ] REST API + thin async Python/JS SDKs over the canonical graph, released only
-      after auth and tenant isolation, with rate limiting
-- [ ] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
+- [x] Developer Mode remote connector, read path; write attempts rejected
+      server-side, not merely hidden client-side. This turned out to already hold
+      from M2.1's scopes, so the work was proving it rather than building it — and
+      the test asserts `write_memory` **stays in the tool list** a read-only principal
+      sees. Hiding it would make the refusal a client-side courtesy, and anything
+      speaking the protocol directly could call it anyway. The server says no, and
+      says why
+- [x] REST API + thin async Python/JS SDKs over the canonical graph, released only
+      after auth and tenant isolation, **with rate limiting**. Both SDKs ship, and a
+      parity test compares their surfaces by parsing the JS source — two SDKs that
+      drift are two descriptions of one API, and the second is always the one that
+      lies. The JS client is **server-side only**, which the M7.2 CORS split enforces
+      structurally: an API key in browser JavaScript is a key you have published.
+      Zero dependencies on both sides. Extending the router surfaced a real
+      regression the M3.6 test caught: the browser bridge is CORS-allowlisted for
+      claude.ai, so adding inspect/history/compile to the same router would have let
+      a web page enumerate the graph. CORS headers are now withheld from everything
+      outside `BRIDGE_PATHS`, so an allowlisted origin cannot inherit the SDK surface
+      by sharing a router. A token bucket per *credential*, not per IP: several users
+      behind one office NAT are not one caller and one caller rotating addresses is
+      not several, and the credential is what the server actually knows. Applied in
+      the middleware both surfaces mount behind, because a limit one surface can walk
+      around is not a limit. Refills continuously rather than on a window edge, so
+      quota cannot be saved up and spent at once, and a 429 carries a truthful
+      `Retry-After` because a client told only "no" retries immediately and makes the
+      problem worse. `/healthz` is exempt: a liveness probe that can be throttled
+      eventually takes the service down by reporting it unhealthy under exactly the
+      load it should survive. **In-process, which is a real limitation** — two workers
+      mean two buckets, and the honest fix when that matters is a shared counter, not
+      a smaller number
+- [x] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
       and `compile`; it preserves canonical IDs, provenance and event semantics and
-      deliberately exposes no hard-delete shortcut
-- [ ] `search(..., explain=True)` exposes component scores and component versions;
-      SDK telemetry is private/redacted by default and never undisclosed outbound
-      analytics
-- [ ] Webhooks on the event log, with a documented retry policy
+      deliberately exposes no hard-delete shortcut — **a property rather than a
+      promise**, because there is no endpoint under one and no route accepts DELETE.
+      `retire` is the closest thing and deliberately is not one. There is no `tenant`
+      parameter anywhere in the SDK either: it comes from the key, server-side, which
+      is what stops a client naming someone else's graph. Everything is driven
+      against the real API behind the real middleware in tests, because an SDK tested
+      against a mock proves only that the mock agrees with it
+- [x] `search(..., explain=True)` exposes component scores and component versions.
+      **SDK telemetry is not "redacted by default" — there is none.** The client
+      contacts the base URL it was given and nothing else, which is a claim a test
+      can check where a privacy policy cannot: every request goes through one method,
+      so there is a single place a second destination could ever appear
+- [x] Webhooks on the event log, with a documented retry policy — 5 attempts,
+      exponential backoff from 1s capped at 60s with **full jitter**, retrying
+      network errors and 408/429/5xx and deliberately not other 4xx, published in
+      [docs/CONNECTORS.md](CONNECTORS.md). **The payload carries the event, never the
+      object**: no content, no before/after, so a leaked URL leaks that something
+      changed rather than what it said, and a subscriber that needs the text calls
+      back through the authenticated API with its own key. Signed over
+      timestamp+body so a captured delivery cannot be replayed forever, with a stable
+      event id so retries can be made idempotent. Delivery writes no events, because
+      an event per delivery would be an event that triggers a delivery. Endpoints are
+      operator configuration and there is no API to add one — an endpoint a caller
+      can register is an exfiltration primitive wearing a feature's clothes. The SSRF
+      guard refuses https-less URLs and private/loopback literals but deliberately
+      does **not** resolve hostnames, and that residual is documented rather than
+      papered over
 
 ---
 

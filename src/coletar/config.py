@@ -76,6 +76,22 @@ class Settings(BaseSettings):
     # any other way at consumer scale.
     extraction_model: str = "llama3.1"
 
+    # M7: per-principal rate limit on the hosted surfaces. Keyed by credential,
+    # not by IP — an office NAT is not one caller and a rotating client is not
+    # several.
+    rate_limit_per_minute: int = 120
+    rate_limit_burst: int = 30
+
+    # Where an API-triggered compile writes. Server-side on purpose: a compile
+    # hands context to another company, so the package should be something a
+    # human fetched deliberately rather than a response body.
+    compile_output_dir: str = "build/api-compile"
+
+    # M7 webhooks. Deliveries carry event metadata only — never object content —
+    # so a leaked URL leaks that something changed, not what it said.
+    webhooks: str = ""
+    webhooks_allow_private: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

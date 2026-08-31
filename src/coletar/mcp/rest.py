@@ -171,7 +171,9 @@ async def remember_endpoint(request: Request) -> JSONResponse:
         ),
         caller_surface=Provider.CLAUDE,
     )
-    return JSONResponse({"id": result.object_id, "stored": result.created})
+    # Named for `IngestResult`, so one API does not describe the same outcome two
+    # ways depending on which endpoint you reached it through.
+    return JSONResponse({"object_id": result.object_id, "created": result.created})
 
 
 async def capture(request: Request) -> JSONResponse:
@@ -237,9 +239,261 @@ async def capture(request: Request) -> JSONResponse:
     return JSONResponse({"extracted": stored, "count": len(stored)})
 
 
+# --- the M7 surface: inspect, history, supersede, retire, compile ----------------
+#
+# There is deliberately **no DELETE route anywhere on this API**, and no endpoint
+# that removes a row. Constraint 6 is that the graph never hard-deletes: retirement
+# excludes an object from retrieval and from compile while leaving it readable, so a
+# user can always see what a fact used to say and when it changed. An SDK that
+# offered `delete()` would make that guarantee a convention rather than a property,
+# and conventions are what get worked around at 2am.
+
+
+class SupersedeRequest(BaseModel):
+    content: str
+    kind: MemoryKind = MemoryKind.FACT
+    project_id: str | None = None
+
+
+class RetireRequest(BaseModel):
+    reason: str
+
+
+class CompileRequest(BaseModel):
+    destination: str = "local"
+    project_id: str | None = None
+
+
+def _object_id(request: Request) -> str:
+    return str(request.path_params.get("object_id", ""))
+
+
+async def inspect(request: Request) -> JSONResponse:
+    """One object, exactly as the graph holds it."""
+    principal = _require(SCOPE_READ)
+    if isinstance(principal, JSONResponse):
+        return principal
+    obj = await build_store().get_object(
+        principal.tenant_id, _object_id(request), caller_surface=principal.surface
+    )
+    if obj is None:
+        # Missing, another tenant's, or local to another surface — deliberately
+        # indistinguishable, as everywhere else.
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    return JSONResponse({"object": ObjectView.of(obj).model_dump(mode="json")})
+
+
+async def history(request: Request) -> JSONResponse:
+    """What this object used to say, and when it changed (constraint 6)."""
+    principal = _require(SCOPE_READ)
+    if isinstance(principal, JSONResponse):
+        return principal
+    store = build_store()
+    object_id = _object_id(request)
+    if await store.get_object(
+        principal.tenant_id, object_id, caller_surface=principal.surface
+    ) is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    events = await store.list_events(principal.tenant_id, object_id=object_id, limit=200)
+    return JSONResponse(
+        {
+            "object_id": object_id,
+            "revisions": [
+                {
+                    "at": event.at.isoformat(),
+                    "type": str(event.type),
+                    "actor": str(event.actor),
+                    "before": event.before,
+                    "after": event.after,
+                }
+                for event in events
+                if event.is_revision
+            ],
+        }
+    )
+
+
+async def supersede(request: Request) -> JSONResponse:
+    """Correct a fact by writing its replacement, never by editing it in place."""
+    principal = _require(SCOPE_WRITE)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = SupersedeRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    store = build_store()
+    object_id = _object_id(request)
+    existing = await store.get_object(
+        principal.tenant_id, object_id, caller_surface=principal.surface
+    )
+    if existing is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    replacement = Memory.from_write(
+        body.content,
+        kind=body.kind,
+        scope=_scope(body.project_id) if body.project_id else existing.scope,
+        provider=principal.surface,
+        supersedes=object_id,
+    )
+    result = await remember(
+        store,
+        principal.tenant_id,
+        replacement,
+        event=Event(
+            type=EventType.CONNECTOR_WRITE,
+            object_id=replacement.id,
+            actor=Actor.CONNECTOR,
+            provider=principal.surface,
+            detail={"principal": principal.id, "supersedes": object_id},
+        ),
+        caller_surface=principal.surface,
+    )
+    stored = await store.get_object(
+        principal.tenant_id, result.object_id, caller_surface=principal.surface
+    )
+    return JSONResponse(
+        {
+            "object": ObjectView.of(stored).model_dump(mode="json")
+            if stored
+            else None,
+            "supersedes": object_id,
+            "created": result.created,
+        }
+    )
+
+
+async def retire(request: Request) -> JSONResponse:
+    """Soft-retire. The object stays readable for provenance; nothing is removed."""
+    principal = _require(SCOPE_WRITE)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = RetireRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+    if not body.reason.strip():
+        return JSONResponse(
+            {"error": "bad_request", "message": "a reason is required"}, status_code=400
+        )
+
+    store = build_store()
+    object_id = _object_id(request)
+    if await store.get_object(
+        principal.tenant_id, object_id, caller_surface=principal.surface
+    ) is None:
+        return JSONResponse({"error": "not_found"}, status_code=404)
+
+    await store.retire_object(principal.tenant_id, object_id, reason=body.reason)
+    return JSONResponse({"object_id": object_id, "retired": True, "readable": True})
+
+
+async def compile_endpoint(request: Request) -> JSONResponse:
+    """Compile to a destination's native containers and return the manifest.
+
+    The artifacts are written server-side and the response describes them rather than
+    streaming a package back. A compile is the operation that hands context to
+    another company, so the thing that leaves should be something a human fetched
+    deliberately, not a side effect of an API call.
+    """
+    principal = _require(SCOPE_READ)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = CompileRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    from pathlib import Path
+
+    from coletar.compiler import ChatGPTCompiler, ClaudeCompiler, LocalModelCompiler
+    from coletar.inspector.review import review_status
+
+    compilers: dict[str, Any] = {
+        "local": LocalModelCompiler,
+        "claude": ClaudeCompiler,
+        "chatgpt": ChatGPTCompiler,
+    }
+    if body.destination not in compilers:
+        return JSONResponse(
+            {
+                "error": "bad_request",
+                "message": f"unknown destination; have {sorted(compilers)}",
+            },
+            status_code=400,
+        )
+
+    store = build_store()
+    # The review gate applies here exactly as it does in the CLI. An API that could
+    # walk around it would make the gate a UI courtesy.
+    status = await review_status(store, principal.tenant_id)
+    if not status.can_compile:
+        return JSONResponse(
+            {
+                "error": "review_required",
+                "message": (
+                    f"{len(status.unreviewed)} of {len(status.eligible)} eligible "
+                    "objects have not been reviewed since they last changed"
+                ),
+                "unreviewed": len(status.unreviewed),
+            },
+            status_code=409,
+        )
+
+    objects = await store.list_objects(
+        principal.tenant_id,
+        scope=_scope(body.project_id) if body.project_id else None,
+        caller_surface=principal.surface,
+        limit=10_000,
+    )
+    out_dir = Path(get_settings().compile_output_dir) / body.destination
+    result = await compilers[body.destination]().compile(objects, out_dir=out_dir)
+    await store.append_event(
+        principal.tenant_id,
+        Event(
+            type=EventType.COMPILE_RUN,
+            actor=Actor.COMPILER,
+            detail={
+                "destination": body.destination,
+                "principal": principal.id,
+                **result.manifest.summary(),
+                "continuity_score": result.score.total,
+            },
+        ),
+    )
+    return JSONResponse(
+        {
+            "destination": body.destination,
+            "out_dir": str(out_dir),
+            "manifest": result.manifest.summary(),
+            "withheld": len(result.manifest.withheld),
+            "continuity_score": result.score.total,
+            "instructions": result.instructions,
+        }
+    )
+
+
+#: The three endpoints a browser extension may reach (M3.6). Kept as its own set
+#: because these — and only these — get CORS headers: a page on claude.ai can
+#: retrieve and record, and cannot enumerate a graph, read history, or compile.
+#: Widening the router must never widen what a web page can do.
+BRIDGE_PATHS: frozenset[str] = frozenset(
+    {"/v1/search", "/v1/capture", "/v1/remember"}
+)
+
+
 def routes() -> list[tuple[str, Any, list[str]]]:
     return [
         ("/v1/search", search, ["POST"]),
         ("/v1/capture", capture, ["POST"]),
         ("/v1/remember", remember_endpoint, ["POST"]),
+        ("/v1/objects/{object_id}", inspect, ["GET"]),
+        ("/v1/objects/{object_id}/history", history, ["GET"]),
+        ("/v1/objects/{object_id}/supersede", supersede, ["POST"]),
+        # POST, not DELETE. The verb is part of the promise: nothing here removes a
+        # row, and an API that spelled it DELETE would imply otherwise.
+        ("/v1/objects/{object_id}/retire", retire, ["POST"]),
+        ("/v1/compile", compile_endpoint, ["POST"]),
     ]
