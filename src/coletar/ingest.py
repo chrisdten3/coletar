@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from coletar.retrieval.context import NEAR_DUPLICATE_THRESHOLD
 from coletar.retrieval.embedding import tokenize
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import ContextObject, Memory, Scope
+from coletar.schema.objects import ContextObject, Memory, Provider, Scope
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -65,10 +65,24 @@ def is_near_duplicate(a: str, b: str) -> bool:
 
 
 async def find_duplicate(
-    store: Store, tenant_id: TenantId, content: str, *, scope: Scope | None = None
+    store: Store,
+    tenant_id: TenantId,
+    content: str,
+    *,
+    scope: Scope | None = None,
+    caller_surface: Provider | None = None,
 ) -> ContextObject | None:
-    """The context lookup that happens *before* a write."""
-    for hit in await store.search(tenant_id, content, scope=scope, top_k=_CANDIDATES):
+    """The context lookup that happens *before* a write.
+
+    `caller_surface` matters here for the same reason it matters on every other
+    read path: without it, a write from surface A could silently corroborate an
+    object that is `local_only` to surface B, leaving the fact invisible on the very
+    surface that just "wrote" it. Filtering the duplicate search the same way a
+    normal read would keeps a write's own next read consistent with it.
+    """
+    for hit in await store.search(
+        tenant_id, content, scope=scope, caller_surface=caller_surface, top_k=_CANDIDATES
+    ):
         if is_near_duplicate(content, hit.obj.content):
             return hit.obj
     return None
@@ -81,6 +95,7 @@ async def remember(
     *,
     event: Event | None = None,
     dedup: bool = True,
+    caller_surface: Provider | None = None,
 ) -> IngestResult:
     """Store one observed memory, folding it into an existing object if it repeats.
 
@@ -95,7 +110,10 @@ async def remember(
         existing = (
             None
             if memory.supersedes is not None
-            else await find_duplicate(store, tenant_id, memory.content, scope=memory.scope)
+            else await find_duplicate(
+                store, tenant_id, memory.content, scope=memory.scope,
+                caller_surface=caller_surface,
+            )
         )
         if existing is not None:
             await store.append_event(

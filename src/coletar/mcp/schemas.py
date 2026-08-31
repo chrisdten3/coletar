@@ -45,6 +45,7 @@ class ObjectView(BaseModel):
     type: ObjectType
     content: str
     scope: str
+    locality: str
     confidence: float
     extraction_method: ExtractionMethod
     sensitivity: Sensitivity
@@ -62,6 +63,7 @@ class ObjectView(BaseModel):
             type=obj.type,
             content=obj.content,
             scope=str(obj.scope),
+            locality=str(obj.locality),
             confidence=round(obj.confidence, 3),
             extraction_method=obj.extraction_method,
             sensitivity=obj.sensitivity,
@@ -107,6 +109,7 @@ class WriteMemoryResponse(BaseModel):
     stored: bool
     confidence: float
     scope: str
+    locality: str
     kind: MemoryKind
 
 

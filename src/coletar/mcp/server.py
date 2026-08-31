@@ -51,8 +51,11 @@ from coletar.mcp.schemas import (
 from coletar.retrieval import retrieve
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
+    GLOBAL_LOCALITY,
     GLOBAL_SCOPE,
     ExtractionMethod,
+    Locality,
+    LocalityMode,
     Memory,
     MemoryKind,
     ObjectType,
@@ -173,6 +176,7 @@ async def search_context(
         principal.tenant_id,
         query,
         scope=_parse_scope(project_id),
+        caller_surface=principal.surface,
         top_k=top_k,
         token_budget=settings.retrieval_token_budget,
         surface="mcp",
@@ -201,6 +205,7 @@ async def write_memory(
     project_id: str | None = None,
     sensitivity: str = "normal",
     supersedes: str | None = None,
+    local_only: bool = False,
 ) -> WriteMemoryResponse:
     """Save something durable to the user's portable memory.
 
@@ -218,6 +223,11 @@ async def write_memory(
     changes a fact, so the old one stops being retrieved rather than competing with
     the new one. If the memory already exists the response returns `stored: false`
     and the id of the existing object.
+
+    Pass `local_only=True` when the user asks to keep something on this tool only —
+    it stays readable here and never propagates to their other assistants. Most
+    memory should not set this; it exists for the times portability is explicitly
+    unwanted, not as a default caution.
     """
     principal = _require(SCOPE_WRITE)
 
@@ -234,10 +244,32 @@ async def write_memory(
     memory_sensitivity = _parse_enum(sensitivity, Sensitivity, "sensitivity")
     scope = _parse_scope(project_id)
 
+    if local_only and principal.surface is Provider.COLETAR:
+        # local_only names the calling surface as the one allowed to read this back.
+        # A principal with no declared surface (the default for a key that never
+        # named one) would write an object nothing can ever read again.
+        raise ToolError(
+            "local_only requires this connector's key to have a declared surface. "
+            "Configure it with a \"surface\" field before writing local-only memory."
+        )
+    locality: Locality = (
+        Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({principal.surface}))
+        if local_only
+        else GLOBAL_LOCALITY
+    )
+
     store = build_store()
     # A dangling supersedes would silently hide nothing and corrupt the correction
-    # chain the Inspector renders, so it is checked, not trusted.
-    if supersedes is not None and await store.get_object(principal.tenant_id, supersedes) is None:
+    # chain the Inspector renders, so it is checked, not trusted. Filtered by
+    # locality too: a correction targeting an object this surface cannot even see
+    # is indistinguishable from a correction targeting nothing.
+    if (
+        supersedes is not None
+        and await store.get_object(
+            principal.tenant_id, supersedes, caller_surface=principal.surface
+        )
+        is None
+    ):
         raise ToolError(
             f"supersedes must be the id of an object that exists. "
             f"No object {supersedes!r} is stored."
@@ -247,6 +279,7 @@ async def write_memory(
         content=cleaned,
         kind=memory_kind,
         scope=scope,
+        locality=locality,
         provider=Provider.COLETAR,
         # A tool call carries typed arguments chosen by the model, so it outranks
         # anything recovered from a raw export (§3.1).
@@ -271,18 +304,31 @@ async def write_memory(
                 "principal": principal.id,
             },
         ),
+        # Otherwise a restatement from a different surface could silently
+        # corroborate into an object local_only to some other surface, leaving the
+        # fact invisible on the surface that just "wrote" it. See ingest.py.
+        caller_surface=principal.surface,
     )
     # Propagation is pull-based: the next search_context from any other surface
     # sees this immediately. There is no sync job (§3.1).
     #
     # `stored` is false when this restated something already known — the model gets
     # told the memory exists rather than being led to believe it created a second
-    # copy of it.
+    # copy of it. Locality is read back from what is actually stored rather than
+    # from `locality` above for the same reason: a corroboration can fold this
+    # write into an *existing* object whose locality does not match what was just
+    # requested, and reporting the request instead of the outcome would tell a
+    # model "kept local" about a fact that was, in truth, already synced everywhere.
+    stored_obj = await store.get_object(
+        principal.tenant_id, result.object_id, caller_surface=principal.surface
+    )
+    assert stored_obj is not None, "just wrote or found this under our own surface"
     return WriteMemoryResponse(
         id=result.object_id,
         stored=result.created,
         confidence=round(memory.confidence, 3),
-        scope=str(scope),
+        scope=str(stored_obj.scope),
+        locality=str(stored_obj.locality),
         kind=memory_kind,
     )
 
@@ -297,7 +343,9 @@ async def get_project_state(project_id: str) -> ProjectStateResponse:
     scope = _parse_scope(project_id)
 
     store = build_store()
-    objects = await store.list_objects(principal.tenant_id, scope=scope, limit=200)
+    objects = await store.list_objects(
+        principal.tenant_id, scope=scope, caller_surface=principal.surface, limit=200
+    )
     grouped: dict[str, list[ObjectView]] = {}
     for obj in objects:
         grouped.setdefault(str(obj.type), []).append(ObjectView.of(obj))
@@ -317,7 +365,10 @@ async def list_open_loops(project_id: str | None = None) -> OpenLoopsResponse:
     # list_objects already excludes superseded and retired objects, so "nothing has
     # superseded it" is the store's definition of active rather than a second one.
     memories = await store.list_objects(
-        principal.tenant_id, type=ObjectType.MEMORY, scope=_parse_scope(project_id)
+        principal.tenant_id,
+        type=ObjectType.MEMORY,
+        scope=_parse_scope(project_id),
+        caller_surface=principal.surface,
     )
     open_loops = [
         m

@@ -227,6 +227,7 @@ async def import_sessions(
                             "session_id": turn.session_id,
                         },
                     ),
+                    caller_surface=Provider.CLAUDE,
                 )
                 if result.created:
                     report.stored += 1

@@ -110,6 +110,10 @@ async def search(request: Request) -> JSONResponse:
         principal.tenant_id,
         body.query,
         scope=_scope(body.project_id),
+        # These endpoints exist only for the claude.ai composer extension (M3.6) --
+        # never derived from `body.surface`, which is client-supplied and untrusted
+        # for anything but the trace label below.
+        caller_surface=Provider.CLAUDE,
         top_k=body.top_k,
         token_budget=settings.retrieval_token_budget,
         surface=body.surface,
@@ -165,6 +169,7 @@ async def remember_endpoint(request: Request) -> JSONResponse:
             actor=Actor.USER,
             detail={"principal": principal.id, "surface": body.surface, "scope": str(scope)},
         ),
+        caller_surface=Provider.CLAUDE,
     )
     return JSONResponse({"id": result.object_id, "stored": result.created})
 
@@ -223,6 +228,7 @@ async def capture(request: Request) -> JSONResponse:
                     "scope": str(scope),
                 },
             ),
+            caller_surface=Provider.CLAUDE,
         )
         stored.append(
             {"id": result.object_id, "content": memory.content,

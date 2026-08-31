@@ -27,7 +27,7 @@ from coletar.extraction import extract_memories
 from coletar.ingest import remember
 from coletar.retrieval import retrieve
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import GLOBAL_SCOPE, Memory, Scope, ScopeType
+from coletar.schema.objects import GLOBAL_SCOPE, Memory, Provider, Scope, ScopeType
 from coletar.schema.tenancy import TenantId
 from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
@@ -143,6 +143,7 @@ async def _record(store: Store, tenant: TenantId, memory: Memory, scope: Scope) 
                 "principal": PROXY_PRINCIPAL,
             },
         ),
+        caller_surface=Provider.LOCAL,
     )
 
 
@@ -196,6 +197,9 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
             tenant,
             query,
             scope=scope,
+            # The local model is the `Provider.LOCAL` surface: an object kept
+            # local_only to Claude or ChatGPT must not leak into this prompt.
+            caller_surface=Provider.LOCAL,
             top_k=settings.retrieval_top_k,
             token_budget=settings.retrieval_token_budget,
             # Injecting memory into a local model's prompt is as consequential as an

@@ -37,6 +37,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
+from coletar.schema.objects import Provider
 from coletar.schema.tenancy import InvalidTenantId, TenantId
 from coletar.schema.tenancy import tenant_id as parse_tenant_id
 
@@ -65,12 +66,20 @@ class Principal:
     """Who is calling, and whose graph they reach.
 
     `id` is what lands in the event log's actor detail; `tenant_id` is the only thing
-    that decides which objects exist as far as this caller is concerned.
+    that decides which objects exist as far as this caller is concerned. `surface` is
+    the third thing: it is the *locality* gate (see the `Store` protocol docstring),
+    fixed at key-issuance time rather than inferred from the request, because a
+    connector that could claim its own surface is not gated at all. It defaults to
+    `Provider.COLETAR` -- a generic, unspecified surface -- for keys configured before
+    this field existed or that never named one; such a principal reads every `synced`
+    object as before and no `local_only` object at all, which is the safe default
+    rather than a guess.
     """
 
     id: str
     tenant_id: TenantId
     scopes: frozenset[str] = DEFAULT_SCOPES
+    surface: Provider = Provider.COLETAR
 
     def can(self, scope: str) -> bool:
         return scope in self.scopes
@@ -127,10 +136,15 @@ class ApiKeyAuthenticator:
     """Bearer API keys from configuration, as JSON.
 
         COLETAR_MCP_API_KEYS='[
-          {"id": "alice-claude", "secret": "sk-live-...", "tenant_id": "tenant_alice"},
+          {"id": "alice-claude", "secret": "sk-live-...", "tenant_id": "tenant_alice",
+           "surface": "claude"},
           {"id": "dashboard", "secret": "sk-ro-...", "tenant_id": "tenant_alice",
            "scopes": ["read"]}
         ]'
+
+    `surface` names which connector this key was issued for (M3.3: one key per
+    registration), and is optional -- an entry that omits it gets `Provider.COLETAR`,
+    the generic default `Principal.surface` already documents.
 
     JSON rather than the colon-delimited form this started as. Adding the tenant would
     have made it a four-field positional string, and a positional string whose third
@@ -158,7 +172,7 @@ class ApiKeyAuthenticator:
         except ValueError as exc:
             raise AuthError(
                 f"COLETAR_MCP_API_KEYS must be a JSON array of "
-                f"{{id, secret, tenant_id, scopes?}} objects: {exc}"
+                f"{{id, secret, tenant_id, scopes?, surface?}} objects: {exc}"
             ) from exc
         if not isinstance(entries, list):
             raise AuthError("COLETAR_MCP_API_KEYS must be a JSON *array*.")
@@ -178,9 +192,21 @@ class ApiKeyAuthenticator:
             unknown = scopes - DEFAULT_SCOPES
             if unknown:
                 raise AuthError(f"unknown scope(s) {sorted(unknown)} on {entry['id']!r}")
+            surface_raw = entry.get("surface")
+            if surface_raw is None:
+                surface = Provider.COLETAR
+            else:
+                try:
+                    surface = Provider(str(surface_raw))
+                except ValueError:
+                    legal = ", ".join(sorted(p.value for p in Provider))
+                    raise AuthError(
+                        f"key entry {entry['id']!r} has surface {surface_raw!r}; "
+                        f"must be one of: {legal}"
+                    ) from None
             principals.append(
                 (str(entry["secret"]), Principal(id=str(entry["id"]), tenant_id=tenant,
-                                                 scopes=scopes))
+                                                 scopes=scopes, surface=surface))
             )
         return cls(principals)
 
