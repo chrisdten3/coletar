@@ -33,7 +33,13 @@ from coletar.inspector.review import (
     review_status,
 )
 from coletar.schema.events import Event
-from coletar.schema.objects import GLOBAL_SCOPE, ContextObject, Scope, ScopeType
+from coletar.schema.objects import (
+    GLOBAL_SCOPE,
+    ContextObject,
+    LocalityMode,
+    Scope,
+    ScopeType,
+)
 from coletar.schema.tenancy import TenantId
 from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
@@ -56,6 +62,8 @@ h2 {{ margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; 
 .open {{ background: #f2fbf2; border: 1px solid #b4e0b4; }}
 .card {{ border: 1px solid #ddd; border-radius: 6px; padding: .7rem 1rem; margin: .6rem 0; }}
 .unreviewed {{ border-left: 4px solid #d08a00; }}
+.local-only {{ color: #8a4a00; background: #fff6e8; padding: 0 .35rem;
+              border-radius: 3px; font-weight: 600; }}
 .reviewed {{ border-left: 4px solid #4a9a4a; }}
 input[type=text] {{ width: 28rem; font-family: inherit; }}
 form.inline {{ display: inline; }}
@@ -94,6 +102,19 @@ def _gate(status: ReviewStatus) -> str:
     )
 
 
+def _locality(obj: ContextObject) -> str:
+    """Shown on every card, because the reviewer is the last check before a compile.
+
+    An object marked local to one surface is withheld from every other destination's
+    compile — a real difference in where it can end up, so a page whose whole job is
+    "see what this says before it leaves" has to say which products can receive it.
+    """
+    if obj.locality.mode is LocalityMode.SYNCED:
+        return '<span class="meta">every surface</span>'
+    allowed = ", ".join(sorted(escape(str(s)) for s in obj.locality.surfaces))
+    return f'<span class="local-only">local to {allowed}</span>'
+
+
 def _object_card(obj: ContextObject, *, reviewed: bool) -> str:
     kind = getattr(obj, "kind", obj.type)
     scope_value = "" if obj.scope.type is ScopeType.GLOBAL else escape(obj.scope.id or "")
@@ -102,7 +123,8 @@ def _object_card(obj: ContextObject, *, reviewed: bool) -> str:
 <div><code>{escape(obj.id)}</code>
  <span class="meta">{escape(str(kind))} · {escape(str(obj.scope))}
  · confidence {obj.confidence:.2f} · v{obj.version}
- · via {escape(str(obj.provenance.provider))} · {escape(str(obj.extraction_method))}</span></div>
+ · via {escape(str(obj.provenance.provider))} · {escape(str(obj.extraction_method))}</span>
+ · {_locality(obj)}</div>
 <form action="/edit" method="post">
   <input type="hidden" name="object_id" value="{escape(obj.id)}">
   <input type="text" name="content" value="{escape(obj.content)}">

@@ -35,13 +35,21 @@ from coletar.compiler.continuity import Fidelity, ManifestEntry, MigrationManife
 from coletar.compiler.emit import (
     ScopePlan,
     compile_eligible,
+    partition_by_locality,
     plan_scopes,
     render_manifest,
     render_provenance,
     slug,
     write,
 )
-from coletar.schema.objects import ContextObject, ObjectType, Scope, ScopeType, Sensitivity
+from coletar.schema.objects import (
+    ContextObject,
+    ObjectType,
+    Provider,
+    Scope,
+    ScopeType,
+    Sensitivity,
+)
 
 #: Custom instructions are read on every turn inside a Project, so the same budget
 #: argument as the local compiler applies: long prose belongs in project knowledge,
@@ -73,6 +81,9 @@ def _project_name(scope: Scope) -> str:
 
 class ClaudeCompiler:
     destination = "claude"
+    #: The surface this destination *is*, for locality. A compile hands context
+    #: to another product, so it may only carry what the user allowed there.
+    surface = Provider.CLAUDE
 
     def __init__(self, *, confidence_floor: float = INSTRUCTION_CONFIDENCE_FLOOR) -> None:
         self.confidence_floor = confidence_floor
@@ -107,13 +118,15 @@ class ClaudeCompiler:
         )
 
     async def compile(self, objects: list[ContextObject], *, out_dir: Path) -> CompileResult:
-        eligible = compile_eligible(objects)
+        eligible, withheld = partition_by_locality(
+            compile_eligible(objects), self.surface
+        )
         # Globals are inherited into each Project. Whether account-level memory is
         # visible inside a Project is *undocumented*, and the repo's rule is not to
         # build against an assumption: duplicating costs some redundancy, omitting
         # would silently hand the user a Project that lost their global context.
         plans = plan_scopes(eligible, name_for=_project_name)
-        manifest = MigrationManifest(destination=self.destination)
+        manifest = MigrationManifest(destination=self.destination, withheld=withheld)
         artifacts: list[Path] = []
 
         out_dir.mkdir(parents=True, exist_ok=True)

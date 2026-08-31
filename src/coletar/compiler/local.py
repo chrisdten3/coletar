@@ -30,13 +30,21 @@ from coletar.compiler.emit import (
     ScopePlan,
     compile_eligible,
     destination_id,
+    partition_by_locality,
     plan_scopes,
     render_manifest,
     render_provenance,
     slug,
     write,
 )
-from coletar.schema.objects import ContextObject, ObjectType, Scope, ScopeType, Sensitivity
+from coletar.schema.objects import (
+    ContextObject,
+    ObjectType,
+    Provider,
+    Scope,
+    ScopeType,
+    Sensitivity,
+)
 
 #: Below this, an object is preserved as a knowledge file rather than baked into the
 #: SYSTEM block. Asserting a 0.5-confidence inference in a system prompt is how a
@@ -79,6 +87,9 @@ def _escape(content: str) -> str:
 
 class LocalModelCompiler:
     destination = "local"
+    #: The surface this destination *is*, for locality. A compile hands context
+    #: to another product, so it may only carry what the user allowed there.
+    surface = Provider.LOCAL
 
     def __init__(
         self,
@@ -113,9 +124,11 @@ class LocalModelCompiler:
         return Fidelity.NATIVE, None
 
     async def compile(self, objects: list[ContextObject], *, out_dir: Path) -> CompileResult:
-        eligible = compile_eligible(objects)
+        eligible, withheld = partition_by_locality(
+            compile_eligible(objects), self.surface
+        )
         plans = plan_scopes(eligible, name_for=_model_name)
-        manifest = MigrationManifest(destination=self.destination)
+        manifest = MigrationManifest(destination=self.destination, withheld=withheld)
         artifacts: list[Path] = []
 
         out_dir.mkdir(parents=True, exist_ok=True)
