@@ -121,7 +121,7 @@ Reproduce with `uv run coletar evaluate` (add `--ollama` for the real embedder).
 |---|---|---|
 | candidate recall@50 | 91.5% | **100%** |
 | hit@1 | 55.7% | **67.0%** |
-| hit@5 | 85.8% | **92.5%** |
+| hit@5 | 89.6% | **92.5%** |
 | MRR@5 | 0.676 | **0.768** |
 | mean injected tokens | 80.2 | 82.4 |
 | latency p50 / p95 | 0.5 / 0.9ms | 32.0 / 76.7ms |
@@ -175,3 +175,66 @@ the part a database is genuinely better at — and the in-process store does one
 matrix-vector product over its whole index. Both then hand their similarities to the
 same `rank_score`. `test_ranking_matches_the_in_process_store` pins it: swapping the
 backend changes performance, not which memory a model sees.
+
+
+## M4.1 — the two policy defects, and one diagnosis that was wrong
+
+Measured on `tests/fixtures/retrieval_eval.json`, hashing embedder, **identical to
+three decimal places on both backends**:
+
+| | before | after |
+|---|---|---|
+| hit@5 | 85.8% | **89.6%** |
+| MRR@5 | 0.676 | **0.741** |
+| correction | 50.0% | **90.0%** |
+| temporal | 80.0% | **90.0%** |
+| hit@1 | 55.7% | 64.1% |
+| paraphrase | 93.3% | 90.0% |
+| leaks | 0 | 0 |
+
+`RANKING_VERSION` is still **1.0**. Nothing about the blend changed — both fixes are
+in candidate generation, which is the point: a reranker cannot repair an object that
+narrowing already discarded.
+
+### Sensitivity was documented and never implemented
+
+This module and `ranking.py` both described a sensitivity policy filter. Neither
+backend had one, so a `restricted` object was returned by `retrieve()` and rendered
+into the injected block — reaching local system prompts, the MCP tool's response, and
+the browser bridge. Only `restricted` is withheld; `sensitive` and `personal` still
+retrieve, because over-filtering would quietly make the product useless for the
+personal context it exists to carry. The Context Inspector passes
+`include_restricted=True`, since an object nobody can review is one nobody can delete.
+
+### Corrections were failing because the match was thrown away
+
+A correction rarely repeats the value it corrects. "Is Chris still at Acme?" matches
+only the sentence being retired, and that sentence was excluded from candidate
+generation, so the reranker never saw it. A superseded object is now a **candidate**
+and is redirected to the object that replaced it; chains resolve to the head, and the
+stale object is never returned. Every policy check applies to the row handed back, so
+an ancestor cannot smuggle its replacement past scope, locality or sensitivity.
+
+**The measured cost:** a correction inherits its ancestor's relevance to *unrelated*
+queries, which cost one paraphrase query. Damping indirect matches was tried across
+1.0–0.75; every value ≥0.95 was identical to no damping and everything below it was
+strictly worse, so it was not shipped. On `nomic-embed-text` the cost disappears
+(paraphrase 96.7%, correction 100%), which is where the residual belongs.
+
+### `scope_isolation` is not a ranking problem
+
+The roadmap predicted "global and project objects compete and the right one loses."
+That is wrong, and a scope-affinity term was written, measured and reverted rather
+than shipped on the strength of the prediction. It fixed **zero** misses at any
+weight from 1.0 to 1.6.
+
+The two failures are different from each other and neither is a contest:
+
+| query | wanted | why it fails |
+|---|---|---|
+| "what database does this project use" (`proj_beacon`) | `beacon_db` — *"Beacon stores events in SQLite rather than Postgres."* | never says "database"; doesn't rank at all. The sibling query only passes because `db_choice` happens to contain the literal word |
+| "what package manager do I use" (`proj_beacon`) | `python_version` — *"…manage every project with uv rather than pip or poetry."* | ranks 6th, and is **global** — a project-affinity boost cannot lift it and pushes it further down |
+
+Both survive `nomic-embed-text`, so this is not purely vocabulary either. Whatever
+fixes `scope_isolation` is not a scope feature, and the next attempt should start
+from these two sentences rather than from the category name.

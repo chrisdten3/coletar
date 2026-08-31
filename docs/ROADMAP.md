@@ -474,17 +474,32 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       with the regex extractor, seconds once M6.2's model does the extracting — and
       a failing extractor can no longer break a chat, since the reply has already
       left
+- [x] **Sensitivity policy filter.** `context.py` and `ranking.py` both documented
+      one; neither backend had it, so a `restricted` memory was returned by
+      `retrieve()` and rendered into the injected block — reaching local system
+      prompts, the MCP tool and the browser bridge. Only `restricted` is withheld;
+      the Inspector opts back in, because an object nobody can review is one
+      nobody can delete
 - [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
       default and backend-parity contract
-- [ ] **Supersession-aware candidate generation.** M2.3 measured corrections at 50%
-      on the hashing default: a superseded object is correctly hidden, but the
-      correction rarely repeats the old value, so "is Chris still at Acme?" matches
-      nothing. Match the superseded object for recall, follow its `supersedes` edge,
-      return the replacement — and never the stale object itself
-- [ ] **Ranking within a scope.** `scope_isolation` sits at 77.8% on *both* backends,
-      so it is structural rather than semantic: global and project objects compete
-      and the right one loses. Zero leaks either way — isolation is not the problem
+- [x] **Supersession-aware candidate generation.** Corrections **50% -> 90%**,
+      temporal 80% -> 90%, hit@5 85.8% -> 89.6%, MRR 0.676 -> 0.741, leaks still 0,
+      and both backends identical to three decimals. Superseded objects are
+      candidates again and redirect to the object that replaced them; chains resolve
+      to the head and the stale object is never returned. Every policy check applies
+      to the row handed back, so an ancestor cannot smuggle its replacement past
+      scope, locality or sensitivity. Measured cost: a correction inherits its
+      ancestor's relevance to unrelated queries, costing one paraphrase query.
+      Damping was tried across 1.0-0.75, bought nothing, and was not shipped
+- [ ] **Ranking within a scope.** Still 77.8%, and **this entry's diagnosis was
+      wrong**. "Global and project objects compete and the right one loses" describes
+      neither failure. A scope-affinity term was written, measured across weights
+      1.0-1.6, and reverted: it fixed zero misses. One wanted object never ranks at
+      all (`beacon_db` never says "database"); the other ranks 6th and is *global*, so
+      a project boost pushes it further down. Both survive a better embedder, so it
+      is not vocabulary either. See docs/RETRIEVAL.md — the next attempt should start
+      from those two sentences, not from the category name
 - [ ] Postgres sparse/full-text candidate path supplements HNSW ANN; trigram matching
       remains an identifier/fuzzy-match signal rather than the lexical retriever
 - [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded

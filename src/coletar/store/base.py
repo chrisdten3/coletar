@@ -35,6 +35,17 @@ a project. `list_objects` is the opposite: an exact filter, because
 *inside* a tenant, so two tenants may both hold a project called `proj_ledger`
 without any relationship between them.
 
+**Sensitivity.** `search` excludes `RESTRICTED` objects by default. This is the
+§5.1 policy filter that both `retrieval/context.py` and `retrieval/ranking.py` have
+always documented, and until M4.1 neither backend implemented -- a restricted memory
+was returned by `retrieve()` and injected into prompts. `include_restricted=True` is
+for the Context Inspector, which exists to show a user their whole graph.
+
+**Supersession.** A superseded object stays a *candidate* and is redirected to the
+object that replaced it, which is what gets scored and returned. The stale object is
+never handed back. This is a recall mechanism: a correction rarely repeats the value
+it corrects, so "is Chris still at Acme?" matches only the sentence being retired.
+
 **Locality.** Independent of scope: `Locality` on the object decides which connected
 *surfaces* may read it back, not which project it belongs to. `search`,
 `list_objects` and `get_object` all take `caller_surface`, filtered the same way
@@ -142,6 +153,7 @@ class Store(Protocol):
         *,
         scope: Scope | None = None,
         caller_surface: Provider | None = None,
+        include_restricted: bool = False,
         top_k: int = 12,
     ) -> list[Scored]:
         """Hybrid vector + lexical retrieval over one tenant's active objects, scope
