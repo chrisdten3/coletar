@@ -307,24 +307,50 @@ def watch_downloads(
 def import_claude(
     archive: str,
     project: str | None = typer.Option(None, help="Scope everything to one project."),
+    memories_only: bool = typer.Option(
+        False, "--memories-only", help="Skip conversation mining; import memories and projects."
+    ),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
-    """Import a claude.ai conversation export you downloaded yourself.
+    """Import a claude.ai export you downloaded yourself.
 
-    Settings > Privacy > Export Data in Claude; Anthropic emails a link and this
-    starts once the ZIP is on your disk (§8.1). Note that Claude's *memory* is not in
-    that export — only conversations.
+    Settings > Privacy > Export Data; Anthropic emails a manifest with single-use
+    links to five archives, and this starts once you have unpacked them (§8.1).
+
+    Point it at the *folder* holding `memories/`, `projects/` and `conversations.json`
+    and it imports all three. The memories are the valuable half: facts Claude already
+    extracted, imported directly rather than mined, where conversation prose recovers
+    only about a third of what it holds.
     """
     from pathlib import Path
 
-    from coletar.acquisition.claude_export import ClaudeExportError, import_export
+    from coletar.acquisition.claude_export import (
+        ClaudeExportError,
+        import_bundle,
+        import_export,
+    )
 
     async def _run() -> None:
         resolved = _tenant(tenant)
+        target = Path(archive).expanduser()
+        # Two report types, one shape; the CLI only renders them.
+        report: Any
         try:
-            report = await import_export(
-                build_store(), resolved, Path(archive), scope=_scope(project)
-            )
+            if target.is_dir():
+                # The real export unpacks to a folder: memories/, projects/,
+                # conversations.json. Memories and project instructions come first —
+                # they are facts Claude already extracted, so mined conversation
+                # prose should corroborate them rather than arrive first and win.
+                report = await import_bundle(
+                    build_store(),
+                    resolved,
+                    target,
+                    include_conversations=not memories_only,
+                )
+            else:
+                report = await import_export(
+                    build_store(), resolved, target, scope=_scope(project)
+                )
         except ClaudeExportError as exc:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
