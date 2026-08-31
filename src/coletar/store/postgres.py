@@ -195,8 +195,8 @@ class PostgresStore:
                     %(tenant_id)s, %(id)s, %(type)s, %(content)s, %(scope_type)s,
                     %(scope_id)s, %(locality_mode)s, %(locality_surfaces)s, %(kind)s,
                     %(confidence)s, %(extraction_method)s, %(sensitivity)s, %(supersedes)s,
-                    %(valid_from)s, %(valid_until)s,
-                    %(provenance)s, %(provider_mappings)s, %(payload)s, %(version)s,
+                    %(provenance)s, %(valid_from)s, %(valid_until)s,
+                    %(provider_mappings)s, %(payload)s, %(version)s,
                     %(created_at)s, %(updated_at)s, %(retired_at)s, %(ttl_days)s
                 )
                 ON CONFLICT (tenant_id, id) DO UPDATE SET

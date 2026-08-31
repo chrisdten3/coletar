@@ -161,3 +161,27 @@ async def test_seed_populates_one_object_of_every_type_and_a_supersedes_chain():
     assert {o.type for o in everything} == set(ObjectType)
     assert len(result.supersedes_chain) == 3
     assert GLOBAL_SCOPE in {o.scope for o in everything}
+
+
+def test_the_insert_column_list_and_values_stay_aligned() -> None:
+    """A bug that live Postgres caught and every in-process test missed.
+
+    Named placeholders make an INSERT *look* order-independent, but the column list
+    is positional: `provenance` was landing in `valid_from` and Postgres rejected a
+    jsonb for a timestamptz. Adding a column touches two lists that have to agree,
+    and nothing in Python notices when they stop.
+    """
+    import re
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "src/coletar/store/postgres.py").read_text()
+    block = source[source.index("INSERT INTO context_object (") :]
+    # Bounded by the clause keywords rather than by parentheses: `%(name)s` contains
+    # parens of its own, which is what made a first attempt at this test parse to
+    # nothing and pass for the wrong reason.
+    columns_raw = block[block.index("(") + 1 : block.index(") VALUES")]
+    values_raw = block[block.index("VALUES (") : block.index("ON CONFLICT")]
+
+    columns = [c.strip() for c in columns_raw.replace("\n", " ").split(",") if c.strip()]
+    values = re.findall(r"%\((\w+)\)s", values_raw)
+    assert columns == values, f"column/value drift:\n  {columns}\n  {values}"
