@@ -42,6 +42,10 @@ code, .mono {
   padding: 1.5rem;
 }
 
+/* An ID selector beats the UA stylesheet's [hidden]{display:none}, so without
+   this, setting gate.hidden = true in JS never actually hides the overlay. */
+#gate[hidden] { display: none; }
+
 .gate-card {
   width: 100%;
   max-width: 22rem;
