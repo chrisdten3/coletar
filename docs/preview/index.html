@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>coletar — your context broker</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="gate">
+  <div class="gate-card">
+    <div class="gate-mark">c</div>
+    <h1>This is a private preview</h1>
+    <p>Enter the password to see the coletar preview site.</p>
+    <input type="password" id="gate-input" placeholder="Password" autofocus>
+    <button id="gate-submit">Unlock</button>
+    <div class="gate-error" id="gate-error"></div>
+    <div class="gate-note">Ask whoever sent you this link if you don't have it.</div>
+  </div>
+</div>
+
+<div id="site" hidden>
+
+  <header class="top">
+    <div class="top-inner">
+      <a class="brand" href="#home">
+        <span class="mark">c</span>
+        coletar
+      </a>
+      <nav class="top-nav">
+        <a href="#use-cases">Use cases</a>
+        <a href="#who-its-for">Who it's for</a>
+        <a href="#about">About</a>
+        <a href="#live-sync">Live Sync</a>
+        <a href="#true-migration">True Migration</a>
+        <a href="#selective-context">Selective Context</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ============ HERO / HOME ============ -->
+    <section id="home" class="hero">
+      <p class="tagline">coletar — your context broker</p>
+      <h1>One memory. Every AI you use.</h1>
+      <p class="lede">
+        coletar sits between every AI tool you use and brokers your context to
+        them — one typed graph of your facts, preferences, decisions and project
+        state, that you own, instead of each assistant keeping its own separate,
+        disconnected memory of you.
+      </p>
+      <p class="analogy">
+        <strong>Live Sync</strong> is Plaid for memory — every connected tool reads
+        the same live graph. <strong>True Migration</strong> is closer to actually
+        switching banks — it moves your context into a new tool's own native
+        format, so you can leave and it still works.
+      </p>
+      <div class="hero-cta">
+        <a class="btn primary" href="#use-cases">See use cases</a>
+        <a class="btn ghost" href="#about">What is this, exactly?</a>
+      </div>
+    </section>
+
+    <!-- ============ USE CASES ============ -->
+    <section id="use-cases">
+      <div class="eyebrow">Use cases</div>
+      <h2 class="section-title">Things people actually do with it</h2>
+      <p class="section-lede">
+        A mix of everyday annoyances and harder engineering problems — coletar is
+        built to solve both with the same underlying graph.
+      </p>
+      <div class="grid">
+        <div class="card">
+          <h3>Stop repeating yourself</h3>
+          <p>Tell ChatGPT once that you prefer TypeScript over JavaScript. Claude
+          already knows it the next time you ask it to write code.</p>
+        </div>
+        <div class="card">
+          <h3>Switch providers without starting over</h3>
+          <p>Leaving ChatGPT for Claude (or the other way around) doesn't mean
+          losing months of context. Compile it into the new tool's own format
+          and go.</p>
+        </div>
+        <div class="card">
+          <h3>Give your local model real memory</h3>
+          <p>Run Llama or another model locally through Ollama, and have it know
+          the same things you've told Claude or ChatGPT — no cloud required for
+          that part.</p>
+        </div>
+        <div class="card">
+          <h3>Keep some things off certain tools</h3>
+          <p>Work-only details don't have to leak into a personal assistant.
+          Choose what's shared everywhere and what stays put — see Selective
+          Context below.</p>
+        </div>
+        <div class="card">
+          <h3>See what an AI actually knows about you</h3>
+          <p>Every fact records who said it, when, and how it was learned. Nothing
+          is a mystery, and nothing is silently deleted — corrections replace old
+          facts, but the trail stays.</p>
+        </div>
+        <div class="card">
+          <h3>Build products with memory, not memory infrastructure</h3>
+          <p>Developers get a typed graph, an API and a hosted MCP server instead
+          of assembling a vector database, a schema and an access-control layer
+          from scratch.</p>
+        </div>
+        <div class="card">
+          <h3>Bring an old export back to life</h3>
+          <p>Import a ChatGPT data export into a structured graph instead of a
+          wall of raw conversation text nothing can query.</p>
+        </div>
+        <div class="card">
+          <h3>One source of truth for a project</h3>
+          <p>Decisions, open questions and project state live in one place, so
+          "what have we already decided about this?" has one real answer.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ WHO IT'S FOR ============ -->
+    <section id="who-its-for">
+      <div class="eyebrow">Who it's for</div>
+      <h2 class="section-title">Potential users</h2>
+      <p class="section-lede">
+        Built for two very different audiences on the same substrate — the graph
+        underneath is identical either way.
+      </p>
+      <div class="grid">
+        <div class="persona">
+          <h3>Everyday multi-AI users</h3>
+            <p>People who bounce between ChatGPT, Claude and a local model and are
+            tired of re-explaining themselves to each one.</p>
+        </div>
+        <div class="persona">
+          <h3>Developers &amp; AI product builders</h3>
+            <p>Teams who need memory for an agent or product and would rather use
+            an API than build a graph, retrieval and access control themselves.</p>
+        </div>
+        <div class="persona">
+          <h3>Privacy-conscious users</h3>
+            <p>People who want fine control over what each assistant can see,
+            rather than an all-or-nothing memory feature.</p>
+        </div>
+        <div class="persona">
+          <h3>Teams standardizing context</h3>
+            <p>Small teams who want one shared answer to "what does our AI
+            assistant already know about this project."</p>
+        </div>
+        <div class="persona">
+          <h3>People switching AI providers</h3>
+            <p>Anyone moving from one assistant to another who doesn't want
+            "start from zero" to be the cost of switching.</p>
+        </div>
+        <div class="persona">
+          <h3>Developers living in an AI coding tool</h3>
+            <p>People who want what they told their coding assistant to travel
+            with them into every other tool they use — and vice versa.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ABOUT ============ -->
+    <section id="about">
+      <div class="eyebrow">About</div>
+      <h2 class="section-title">What coletar actually is</h2>
+      <div class="about-grid">
+        <div>
+          <p>
+            Right now, every AI assistant keeps its own separate memory of you.
+            Tell ChatGPT your favorite programming language, and Claude has no
+            idea. Run a model locally, and it starts from nothing every time.
+            <strong>coletar is your context broker</strong> — it sits underneath
+            every AI tool you use, holding one single memory graph and handing
+            each tool exactly the context it needs, so what you tell one, the
+            others can know too, if you choose to let them.
+          </p>
+          <p>
+            It has no chat interface of its own, and isn't meant to. You keep
+            using claude.ai, chatgpt.com, or your local model exactly as you do
+            today — coletar is the shared memory those tools read from and write
+            to, not another tool you have to visit.
+          </p>
+          <h4>Two ways it moves your context</h4>
+          <p>
+            <strong>Live Sync</strong> keeps one graph authoritative, and every
+            connected tool queries it in real time. Nothing is ever "moved" —
+            you're always a client of your own memory, the way Plaid lets an app
+            read your bank account without owning it.
+          </p>
+          <p>
+            <strong>True Migration</strong> is a one-time, point-in-time compile
+            of your graph into a destination tool's own native format — its
+            actual project files, its actual system prompt — so that afterwards
+            you can disconnect coletar entirely and the destination still works
+            on its own. Closer to actually switching banks than linking one.
+          </p>
+          <h4>How it's built, for the technically curious</h4>
+          <p>
+            Every fact, decision, and project detail is one typed object in a
+            single graph — with provenance (who said it, and how confident the
+            system is), full version history, and nothing ever hard-deleted.
+            It runs with zero infrastructure for a single user, or on Postgres
+            with real vector search for anything bigger, and every AI tool
+            reaches it the same way: as a hosted MCP server, the same protocol
+            Claude and ChatGPT already speak to external tools.
+          </p>
+        </div>
+        <div class="status-card">
+          <h4>Honest status</h4>
+          <div class="status-row">
+            <span class="label">Canonical graph + storage</span>
+            <span class="value">Built</span>
+          </div>
+          <div class="status-row">
+            <span class="label">Hosted MCP server + local proxy</span>
+            <span class="value">Built</span>
+          </div>
+          <div class="status-row">
+            <span class="label">Live Sync on a real AI tool</span>
+            <span class="value">Working</span>
+          </div>
+          <div class="status-row">
+            <span class="label">Selective context (this-tool-only)</span>
+            <span class="value">In progress</span>
+          </div>
+          <div class="status-row">
+            <span class="label">True Migration compiler</span>
+            <span class="value">In progress</span>
+          </div>
+          <div class="status-row">
+            <span class="label">This page</span>
+            <span class="value">Illustrative demos</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DEMO: LIVE SYNC ============ -->
+    <section id="live-sync">
+      <div class="eyebrow">Live Sync</div>
+      <h2 class="section-title">Say it once. Every tool already knows it.</h2>
+      <p class="section-lede">
+        Click a button below to "say" something in one assistant and watch it
+        show up as background context in the others, instantly.
+      </p>
+      <div class="demo-shell">
+        <p class="demo-caption">
+          <strong>In plain terms:</strong> nothing is copied between apps — every
+          assistant is just looking at the same shared memory.
+        </p>
+        <div class="sync-row">
+          <div class="surface-card">
+            <div class="surface-head"><span class="dot claude"></span> Claude</div>
+            <div class="surface-body" id="surface-claude">
+              <span class="surface-placeholder">No messages yet.</span>
+            </div>
+          </div>
+          <div class="surface-card">
+            <div class="surface-head"><span class="dot chatgpt"></span> ChatGPT</div>
+            <div class="surface-body" id="surface-chatgpt">
+              <span class="surface-placeholder">No messages yet.</span>
+            </div>
+          </div>
+          <div class="surface-card">
+            <div class="surface-head"><span class="dot local"></span> Local model (Ollama)</div>
+            <div class="surface-body" id="surface-local">
+              <span class="surface-placeholder">No messages yet.</span>
+            </div>
+          </div>
+        </div>
+        <div class="sync-controls">
+          <button class="chip-btn" data-sync-from="claude">Say it in Claude</button>
+          <button class="chip-btn" data-sync-from="chatgpt">Say it in ChatGPT</button>
+          <button class="chip-btn" data-sync-from="local">Say it in the local model</button>
+          <button class="chip-btn" id="sync-reset">Reset</button>
+        </div>
+        <div class="log-panel" id="sync-log">
+          <div class="log-line">Waiting for the first message…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DEMO: TRUE MIGRATION ============ -->
+    <section id="true-migration">
+      <div class="eyebrow">True Migration</div>
+      <h2 class="section-title">Leave, and take everything with you</h2>
+      <p class="section-lede">
+        Compile a graph into a destination's own native format, then disconnect
+        coletar and see that it still works standalone.
+      </p>
+      <div class="demo-shell">
+        <p class="demo-caption">
+          <strong>In plain terms:</strong> this isn't a data export you have to
+          re-import by hand — it lands in the destination's actual project files,
+          ready to use.
+        </p>
+        <div class="migration-layout">
+          <div>
+            <h4 style="margin-top:0;">Your coletar graph</h4>
+            <div class="object-table" id="migration-objects">
+              <div class="object-row"><span>Prefers concise, direct answers</span><span class="kind">preference</span></div>
+              <div class="object-row"><span>Ledger service ships to Fly.io</span><span class="kind">decision</span></div>
+              <div class="object-row"><span>Invoicing goal: ship by June</span><span class="kind">goal</span></div>
+              <div class="object-row"><span>Uses fixed-point integers for money</span><span class="kind">fact</span></div>
+              <div class="object-row"><span>Project spec draft v3</span><span class="kind">artifact</span></div>
+              <div class="object-row"><span>Corrected: no longer at Acme Inc.</span><span class="kind">correction</span></div>
+            </div>
+            <button class="btn primary" id="migration-compile" style="margin-top:1.1rem;">
+              Compile to Claude Project →
+            </button>
+          </div>
+          <div>
+            <h4 style="margin-top:0;">Migration Manifest</h4>
+            <div class="manifest" id="migration-manifest">
+              <div class="manifest-row"><span>Native</span><span class="n" id="manifest-native">0</span></div>
+              <div class="manifest-row"><span>Reconstructed</span><span class="n" id="manifest-reconstructed">0</span></div>
+              <div class="manifest-row"><span>Unsupported</span><span class="n" id="manifest-unsupported">0</span></div>
+              <div class="score-gauge">
+                <div class="score-ring" id="score-ring"><span id="score-value">0%</span></div>
+                <div>
+                  <strong>Continuity Score</strong>
+                  <div class="tech-note" style="margin:0;padding:0;border:none;">
+                    How much of your graph survived the move, weighted by how it
+                    was carried over.
+                  </div>
+                </div>
+              </div>
+              <div class="disconnect-row">
+                <button class="chip-btn" id="migration-disconnect">Disconnect coletar</button>
+                <span class="disconnect-status" id="disconnect-status"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ DEMO: SELECTIVE CONTEXT ============ -->
+    <section id="selective-context">
+      <div class="eyebrow">Selective Context</div>
+      <h2 class="section-title">Not everything needs to go everywhere</h2>
+      <p class="section-lede">
+        Sometimes it's compliance — customer details that can never reach a
+        certain model. Sometimes it's simpler than that — you don't want
+        ChatGPT fixating on some irrelevant detail from a Claude conversation
+        just because it happened to be sitting in the same graph. Either way,
+        coletar lets you control exactly which part of your context moves
+        between models, and which stays put. Fully secure, SOC2 Compliant
+        (WIP), GDPR Compliant (WIP).
+      </p>
+      <div class="demo-shell">
+        <p class="demo-caption">
+          <strong>In plain terms:</strong> Live Sync's default is that everything
+          you save is visible everywhere. Selective Context lets you pick
+          exceptions — a fact stays exactly where you put it.
+        </p>
+        <div class="memory-list" id="memory-list">
+          <!-- populated by app.js -->
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p>
+      coletar — your context broker. This page is a private, mock preview; no
+      real data or backend is connected.
+    </p>
+    <p><a href="#home">Back to top</a></p>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
