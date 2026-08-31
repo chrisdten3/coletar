@@ -201,6 +201,24 @@ what to paste and upload. After that coletar is out of the loop — which is the
 Where each object lands and why is published in
 [docs/COMPILER.md](docs/COMPILER.md).
 
+### The SDK
+
+```python
+from coletar.sdk import Coletar
+
+async with Coletar("https://coletar.example", api_key="sk-…") as client:
+    await client.remember("I prefer fixed-point integers for money")
+    hits = await client.search("how should I represent money", explain=True)
+```
+
+`remember`, `search`, `inspect`, `history`, `supersede`, `retire`, `compile` — and no
+`delete`, because there is no endpoint under one. `retire` excludes an object from
+retrieval and from compile while leaving it readable, which is what lets `history`
+still answer.
+
+There is no `tenant` parameter: it comes from the key, server-side. And the client
+sends **no telemetry** — it contacts the base URL you gave it and nothing else.
+
 ### With Postgres
 
 ```bash

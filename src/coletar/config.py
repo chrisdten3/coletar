@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = 120
     rate_limit_burst: int = 30
 
+    # Where an API-triggered compile writes. Server-side on purpose: a compile
+    # hands context to another company, so the package should be something a
+    # human fetched deliberately rather than a response body.
+    compile_output_dir: str = "build/api-compile"
+
 
 @lru_cache
 def get_settings() -> Settings:

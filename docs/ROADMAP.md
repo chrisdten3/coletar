@@ -686,8 +686,13 @@ SCOPE §10 steps 5–6.
       speaking the protocol directly could call it anyway. The server says no, and
       says why
 - [~] REST API + thin async Python/JS SDKs over the canonical graph, released only
-      after auth and tenant isolation, **with rate limiting** — the limiting is done,
-      the SDKs are not. A token bucket per *credential*, not per IP: several users
+      after auth and tenant isolation, **with rate limiting**. The API and the Python
+      SDK are done; the JS SDK is not. Extending the router surfaced a real
+      regression the M3.6 test caught: the browser bridge is CORS-allowlisted for
+      claude.ai, so adding inspect/history/compile to the same router would have let
+      a web page enumerate the graph. CORS headers are now withheld from everything
+      outside `BRIDGE_PATHS`, so an allowlisted origin cannot inherit the SDK surface
+      by sharing a router. A token bucket per *credential*, not per IP: several users
       behind one office NAT are not one caller and one caller rotating addresses is
       not several, and the credential is what the server actually knows. Applied in
       the middleware both surfaces mount behind, because a limit one surface can walk
@@ -699,12 +704,20 @@ SCOPE §10 steps 5–6.
       load it should survive. **In-process, which is a real limitation** — two workers
       mean two buckets, and the honest fix when that matters is a shared counter, not
       a smaller number
-- [ ] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
+- [x] SDK exposes `remember`, `search`, `inspect`, `history`, `supersede`, `retire`
       and `compile`; it preserves canonical IDs, provenance and event semantics and
-      deliberately exposes no hard-delete shortcut
-- [ ] `search(..., explain=True)` exposes component scores and component versions;
-      SDK telemetry is private/redacted by default and never undisclosed outbound
-      analytics
+      deliberately exposes no hard-delete shortcut — **a property rather than a
+      promise**, because there is no endpoint under one and no route accepts DELETE.
+      `retire` is the closest thing and deliberately is not one. There is no `tenant`
+      parameter anywhere in the SDK either: it comes from the key, server-side, which
+      is what stops a client naming someone else's graph. Everything is driven
+      against the real API behind the real middleware in tests, because an SDK tested
+      against a mock proves only that the mock agrees with it
+- [x] `search(..., explain=True)` exposes component scores and component versions.
+      **SDK telemetry is not "redacted by default" — there is none.** The client
+      contacts the base URL it was given and nothing else, which is a claim a test
+      can check where a privacy policy cannot: every request goes through one method,
+      so there is a single place a second destination could ever appear
 - [ ] Webhooks on the event log, with a documented retry policy
 
 ---

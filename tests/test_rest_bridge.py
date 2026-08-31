@@ -59,13 +59,35 @@ def client(monkeypatch):
 
 
 # -- the surface is small on purpose ------------------------------------------
-def test_the_bridge_gets_exactly_two_endpoints():
+def test_the_bridge_gets_exactly_three_endpoints():
     """An extension can retrieve and it can record. It cannot enumerate a graph,
-    read conversations, or anything else a scraping tool would want."""
-    assert {path for path, _, _ in rest.routes()} == {
-        "/v1/search", "/v1/capture", "/v1/remember"
-    }
-    assert all(methods == ["POST"] for _, _, methods in rest.routes())
+    read conversations, or anything else a scraping tool would want.
+
+    M7 added an SDK surface to the same router — inspect, history, supersede, retire,
+    compile — so this now pins the *bridge* set specifically. The router growing must
+    not grow what a web page can reach.
+    """
+    assert {"/v1/search", "/v1/capture", "/v1/remember"} == rest.BRIDGE_PATHS
+    assert all(
+        methods == ["POST"]
+        for path, _, methods in rest.routes()
+        if path in rest.BRIDGE_PATHS
+    )
+
+
+def test_the_sdk_surface_is_not_reachable_from_a_browser_page():
+    """CORS headers are what let a page read a response. Withholding them on the SDK
+    routes means an allowlisted origin cannot inherit them by sharing a router."""
+    from coletar.mcp.auth import ApiKeyAuthenticator, AuthMiddleware
+
+    middleware = AuthMiddleware(
+        lambda *a: None,  # type: ignore[arg-type]
+        ApiKeyAuthenticator.from_config(KEYS),
+        allowed_origins=frozenset({"https://claude.ai"}),
+    )
+    assert middleware._cors_headers("https://claude.ai", "/v1/search")
+    assert middleware._cors_headers("https://claude.ai", "/v1/objects/mem_1") == []
+    assert middleware._cors_headers("https://claude.ai", "/v1/compile") == []
 
 
 # -- auth ---------------------------------------------------------------------
@@ -192,7 +214,7 @@ async def test_remember_records_the_users_own_words_at_the_highest_tier(client, 
             json={"content": "I prefer tabs over spaces.", "kind": "preference"},
             headers=AUTH,
         )
-    assert response.status_code == 200 and response.json()["stored"] is True
+    assert response.status_code == 200 and response.json()["created"] is True
 
     stored = await store.list_objects(TENANT)
     assert len(stored) == 1
@@ -205,8 +227,8 @@ async def test_remember_deduplicates_like_every_other_ingest_path(client, store)
     async with client as c:
         first = await c.post("/v1/remember", json={"content": "I prefer tabs."}, headers=AUTH)
         second = await c.post("/v1/remember", json={"content": "I prefer tabs!"}, headers=AUTH)
-    assert first.json()["stored"] is True
-    assert second.json()["stored"] is False
+    assert first.json()["created"] is True
+    assert second.json()["created"] is False
     assert len(await store.list_objects(TENANT)) == 1
 
 

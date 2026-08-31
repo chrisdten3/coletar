@@ -282,8 +282,17 @@ class AuthMiddleware:
         # wildcard would let any page the user visits attempt to spend their token.
         self.allowed_origins = allowed_origins
 
-    def _cors_headers(self, origin: str | None) -> list[tuple[bytes, bytes]]:
+    def _cors_headers(self, origin: str | None, path: str) -> list[tuple[bytes, bytes]]:
         if origin is None or origin not in self.allowed_origins:
+            return []
+        # Only the browser-bridge endpoints are reachable from a page. The SDK
+        # surface added in M7 can inspect, read history and compile, and an
+        # allowlisted origin must not inherit those just because they share a
+        # router — a browser without CORS headers refuses to hand the response
+        # to the page, which is exactly the boundary wanted here.
+        from coletar.mcp.rest import BRIDGE_PATHS
+
+        if path not in BRIDGE_PATHS:
             return []
         return [
             (b"access-control-allow-origin", origin.encode()),
@@ -308,7 +317,7 @@ class AuthMiddleware:
 
         headers = scope.get("headers", [])
         origin = _origin(headers)
-        cors = self._cors_headers(origin)
+        cors = self._cors_headers(origin, path)
 
         # A CORS preflight carries no credentials by definition — the browser strips
         # them — so gating it on auth would make every cross-origin call fail before
