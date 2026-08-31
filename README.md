@@ -168,18 +168,47 @@ Binds loopback only — it performs authenticated-user actions with no auth of i
 ### Importing a ChatGPT export
 
 ```bash
-uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip   # a file you already have
-uv run coletar watch-downloads                                 # or notice it landing
+uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip
+uv run coletar import-claude  ~/Downloads/claude-export.zip
+uv run coletar import-claude-code                              # local transcripts
+uv run coletar watch-downloads                                 # or notice one landing
 ```
 
-You click your own export button in ChatGPT's settings and OpenAI emails you the
-archive; automation starts once the file is on your disk (§8.1). The parser walks
-only the **active branch** of each conversation — `conversations.json` is a tree, and
-an answer the user edited away should not enter the graph beside one they kept.
+You click your own export button — ChatGPT's settings, or Claude's Settings >
+Privacy > Export Data — and they email you the archive; automation starts once the
+file is on your disk (§8.1).
+
+Both providers ship a file called `conversations.json` holding **different shapes**,
+so the watcher discriminates on structure and routes to the matching importer. For
+ChatGPT the parser walks only the **active branch** of each conversation, because
+that file is a tree and an answer you edited away should not enter the graph beside
+one you kept. Claude's export is a **manifest plus five archives** — conversations, memories,
+projects, design chats and metadata — each behind a single-use URL. Memories and
+projects are the valuable half: memories are facts Claude already extracted, and
+projects carry the container a conversation belonged to.
 
 Everything imported lands at `account_export_parse` confidence (0.60), through the
 same extractor and the same ingest boundary as every other surface, so a preference
 restated across years of chats corroborates one object instead of creating a hundred.
+
+### Markdown mirror
+
+```bash
+uv run coletar mirror --out ~/coletar-vault    # project the graph to Markdown
+uv run coletar mirror --pull                   # apply edits you made in Obsidian
+```
+
+One file per object with frontmatter carrying its provenance, plus the event log by
+month. Supersession renders as an Obsidian wikilink, so a correction chain is
+navigable in the graph view.
+
+**The vault is a projection, not the source of truth.** The typed graph stays
+canonical, because supersession, provenance and an immutable event log are things a
+directory of files cannot make true — and they are what the audit story rests on.
+Edits are welcome: `--pull` applies them through the same ingest path every other
+surface writes through, so they land as real events rather than as a silent change.
+
+Deterministic, so the vault can live in git and a diff means the graph moved.
 
 ### True Migration
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
 
 import typer
 
@@ -255,29 +256,41 @@ def watch_downloads(
     project: str | None = typer.Option(None, help="Scope everything to one project."),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
-    """Watch for a ChatGPT export you downloaded, and import it when it lands.
+    """Watch for a ChatGPT or Claude export you downloaded, and import it when it lands.
 
     coletar never asks a provider for anything (§8.1): you click your own export
-    button, OpenAI emails you a link, you download it. This only notices the file
-    arriving so the import is not a second manual step. Detection is by content — a
-    ZIP that actually contains conversations.json — never by filename.
+    button, they email you a link, you download it. This only notices the file
+    arriving so the import is not a second manual step.
+
+    Both providers ship a file called `conversations.json` holding different shapes,
+    so detection reads the structure and routes to the matching importer — a Claude
+    export handed to the ChatGPT parser finds nothing and looks like success.
     """
     from pathlib import Path
 
+    from coletar.acquisition import chatgpt_export, claude_export
     from coletar.acquisition.archive import store_archive
-    from coletar.acquisition.chatgpt_export import import_export
-    from coletar.acquisition.watcher import POLL_SECONDS, watch
+    from coletar.acquisition.watcher import POLL_SECONDS, detect, watch
 
     async def _run() -> None:
         resolved = _tenant(tenant)
         store = build_store()
         folder = Path(directory).expanduser()
-        typer.echo(f"watching {folder} for a ChatGPT export (tenant {resolved})")
+        typer.echo(f"watching {folder} for a ChatGPT or Claude export (tenant {resolved})")
+
+        # Two ImportReport types with the same shape; the CLI only renders them.
+        importers: dict[str, Any] = {
+            "chatgpt": chatgpt_export.import_export,
+            "claude": claude_export.import_export,
+        }
 
         async def on_export(path: Path) -> None:
+            provider = detect(path)
+            if provider is None:  # pragma: no cover - scan already filtered these
+                return
             held = store_archive(path)
-            typer.echo(f"  found {path.name} -> archive {held.short_id}")
-            report = await import_export(
+            typer.echo(f"  found a {provider} export: {path.name} -> {held.short_id}")
+            report = await importers[provider](
                 store, resolved, held.path, scope=_scope(project)
             )
             typer.echo(json.dumps(report.as_dict(), indent=2))
@@ -288,6 +301,95 @@ def watch_downloads(
         asyncio.run(_run())
     except KeyboardInterrupt:
         typer.echo("stopped")
+
+
+@app.command()
+def import_claude(
+    archive: str,
+    project: str | None = typer.Option(None, help="Scope everything to one project."),
+    memories_only: bool = typer.Option(
+        False, "--memories-only", help="Skip conversation mining; import memories and projects."
+    ),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Import a claude.ai export you downloaded yourself.
+
+    Settings > Privacy > Export Data; Anthropic emails a manifest with single-use
+    links to five archives, and this starts once you have unpacked them (§8.1).
+
+    Point it at the *folder* holding `memories/`, `projects/` and `conversations.json`
+    and it imports all three. The memories are the valuable half: facts Claude already
+    extracted, imported directly rather than mined, where conversation prose recovers
+    only about a third of what it holds.
+    """
+    from pathlib import Path
+
+    from coletar.acquisition.claude_export import (
+        ClaudeExportError,
+        import_bundle,
+        import_export,
+    )
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        target = Path(archive).expanduser()
+        # Two report types, one shape; the CLI only renders them.
+        report: Any
+        try:
+            if target.is_dir():
+                # The real export unpacks to a folder: memories/, projects/,
+                # conversations.json. Memories and project instructions come first —
+                # they are facts Claude already extracted, so mined conversation
+                # prose should corroborate them rather than arrive first and win.
+                report = await import_bundle(
+                    build_store(),
+                    resolved,
+                    target,
+                    include_conversations=not memories_only,
+                )
+            else:
+                report = await import_export(
+                    build_store(), resolved, target, scope=_scope(project)
+                )
+        except ClaudeExportError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
+def mirror(
+    out: str = typer.Option("~/coletar-vault", help="Where the Markdown vault lives."),
+    pull: bool = typer.Option(False, "--pull", help="Apply edits made in the vault."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="With --pull, change nothing."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Mirror the graph to Markdown you can open in Obsidian, or pull edits back.
+
+    The vault is a projection: the typed graph stays canonical, because supersession,
+    provenance and an immutable event log are things a directory of files cannot
+    make true. `--pull` applies your edits through the same ingest path every other
+    surface writes through, so they land as real events rather than as a silent
+    change with no history behind it.
+    """
+    from pathlib import Path
+
+    from coletar.mirror import mirror as run_mirror
+    from coletar.mirror import pull_edits
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        vault = Path(out).expanduser()
+        store = build_store()
+        if pull:
+            report = await pull_edits(store, resolved, vault, dry_run=dry_run)
+        else:
+            report = await run_mirror(store, resolved, vault)  # type: ignore[assignment]
+        typer.echo(json.dumps({"tenant": resolved, "vault": str(vault),
+                               **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
 
 
 @app.command()

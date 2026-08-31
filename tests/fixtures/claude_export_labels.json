@@ -1,0 +1,611 @@
+{
+  "_note": [
+    "The same 100 labelled turns as chatgpt_export_labels.json, re-shaped into",
+    "Claude's flat chat_messages format. Deliberately the same content: the two",
+    "importers share an extractor, so a precision difference between them would",
+    "be a parser bug rather than a corpus difference, and only a shared corpus",
+    "can show that."
+  ],
+  "labels": [
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m0",
+      "text": "I prefer TypeScript over JavaScript for anything longer than a script.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m1",
+      "text": "Always give me the failing test output before you propose a fix.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m2",
+      "text": "I work in Pacific time and I don't take meetings before 10am.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m3",
+      "text": "We decided to use Postgres for the analytics service instead of Mongo.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m4",
+      "text": "My team is four engineers and we ship on Thursdays.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m5",
+      "text": "I'm allergic to shellfish, keep that in mind for restaurant suggestions.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m6",
+      "text": "I always want money handled as integer minor units, never floats.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m7",
+      "text": "Please stop suggesting Docker, I develop natively on macOS.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m8",
+      "text": "I use pnpm, not npm or yarn.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c00",
+      "message": "claude-c00-m9",
+      "text": "My daughter's name is Ada and she's seven.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m0",
+      "text": "I'd rather read a table than a bulleted list.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m1",
+      "text": "We standardised on Tailwind for all new frontend work.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m2",
+      "text": "I've been a backend engineer for about eleven years.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m3",
+      "text": "Never use em dashes in anything you write for me.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m4",
+      "text": "I'm learning Portuguese and I'm roughly B1.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m5",
+      "text": "Our deploy target is Fly.io, we moved off Heroku last year.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m6",
+      "text": "I prefer short replies. Two paragraphs at most unless I ask.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m7",
+      "text": "I'm vegetarian.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m8",
+      "text": "The company is called Northwind and we do logistics software.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c01",
+      "message": "claude-c01-m9",
+      "text": "I take my coffee black and I drink about four cups a day.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m0",
+      "text": "Write dates as YYYY-MM-DD for me, always.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m1",
+      "text": "I've switched from vim to Helix as my main editor.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m2",
+      "text": "My budget for the kitchen renovation is 40 thousand.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m3",
+      "text": "I don't want any AI-generated images in my slide decks.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m4",
+      "text": "We use trunk-based development, no long-lived feature branches.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m5",
+      "text": "I'm based in Lisbon now, I moved from Berlin in March.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m6",
+      "text": "Please always cite your sources with links.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m7",
+      "text": "I find Kubernetes overkill for our scale and I don't want to use it.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m8",
+      "text": "My partner is a physician and works nights.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c02",
+      "message": "claude-c02-m9",
+      "text": "I want all code examples in Python 3.12 or newer.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m0",
+      "text": "We settled on Stripe for payments after comparing it with Adyen.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m1",
+      "text": "I'm training for a half marathon in October.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m2",
+      "text": "I read at a technical level, don't simplify things for me.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m3",
+      "text": "Our test suite runs under pytest with asyncio_mode set to auto.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m4",
+      "text": "I have a strong preference for tabs over spaces.",
+      "durable": true
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m5",
+      "text": "What's the difference between a mutex and a semaphore?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m6",
+      "text": "Can you explain how HNSW indexes work?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m7",
+      "text": "What time is it in Tokyo right now?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m8",
+      "text": "How do I reverse a linked list in Rust?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c03",
+      "message": "claude-c03-m9",
+      "text": "Why is my Docker build so slow?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m0",
+      "text": "What does this error mean?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m1",
+      "text": "Is Postgres or MySQL faster for writes?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m2",
+      "text": "Who won the world cup in 1998?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m3",
+      "text": "How many calories are in an avocado?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m4",
+      "text": "What's a good name for a golden retriever?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m5",
+      "text": "Could you summarise this article for me?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m6",
+      "text": "What's the capital of Uruguay?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m7",
+      "text": "How does OAuth PKCE actually work?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m8",
+      "text": "Should I use a heap or a balanced tree here?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c04",
+      "message": "claude-c04-m9",
+      "text": "What's the weather going to be like tomorrow?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m0",
+      "text": "Write me a haiku about compilers.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m1",
+      "text": "Fix the indentation in this snippet.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m2",
+      "text": "Translate this paragraph into French.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m3",
+      "text": "Make this email sound friendlier.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m4",
+      "text": "Generate ten test cases for this function.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m5",
+      "text": "Rewrite this to be half as long.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m6",
+      "text": "Draft a standup update for today.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m7",
+      "text": "Give me a regex for matching UK postcodes.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m8",
+      "text": "Turn this list into a markdown table.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c05",
+      "message": "claude-c05-m9",
+      "text": "Explain this stack trace.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m0",
+      "text": "Come up with five taglines for a coffee shop.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m1",
+      "text": "Convert this SQL to an ORM query.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m2",
+      "text": "Proofread this paragraph.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m3",
+      "text": "Write a cover letter for this job posting.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m4",
+      "text": "Sketch an outline for a talk on distributed tracing.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m5",
+      "text": "Traceback (most recent call last):\n  File \"app.py\", line 42, in <module>\n    raise ValueError",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m6",
+      "text": "{\"status\": 500, \"error\": \"internal server error\", \"trace_id\": \"abc123\"}",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m7",
+      "text": "def fib(n):\n    return n if n < 2 else fib(n-1) + fib(n-2)",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m8",
+      "text": "npm ERR! code ERESOLVE\nnpm ERR! could not resolve dependency",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c06",
+      "message": "claude-c06-m9",
+      "text": "SELECT id, name FROM users WHERE created_at > now() - interval '7 days';",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m0",
+      "text": "| id | name | status |\n|----|------|--------|\n| 1  | a    | ok     |",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m1",
+      "text": "<div class=\"container\"><span>hello</span></div>",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m2",
+      "text": "commit 9f2a1b\nAuthor: someone\nDate: Tue Mar 4",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m3",
+      "text": "[INFO] Build succeeded in 4.\uff12s",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m4",
+      "text": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m5",
+      "text": "2026-01-14 10:22:31 WARN connection pool exhausted",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m6",
+      "text": "pip install -r requirements.txt",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m7",
+      "text": "import numpy as np\nimport pandas as pd",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m8",
+      "text": "$ git status\nOn branch main\nnothing to commit",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c07",
+      "message": "claude-c07-m9",
+      "text": "<?xml version=\"1.0\"?><root><item/></root>",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m0",
+      "text": "thanks, that worked",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m1",
+      "text": "ok",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m2",
+      "text": "hmm, not quite what I meant",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m3",
+      "text": "perfect, thank you",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m4",
+      "text": "can you try again",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m5",
+      "text": "Suppose someone preferred Java \u2014 what would you tell them?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m6",
+      "text": "My colleague thinks we should use GraphQL.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m7",
+      "text": "A hypothetical user who hates dark mode would want what?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m8",
+      "text": "Imagine I were a beginner. How would you explain it?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c08",
+      "message": "claude-c08-m9",
+      "text": "What would a designer say about this layout?",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m0",
+      "text": "nevermind",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m1",
+      "text": "wait, go back",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m2",
+      "text": "that's wrong",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m3",
+      "text": "keep going",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m4",
+      "text": "one sec",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m5",
+      "text": "Let's start over.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m6",
+      "text": "Actually never mind that.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m7",
+      "text": "Sounds good.",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m8",
+      "text": "\ud83d\udc4d",
+      "durable": false
+    },
+    {
+      "conversation": "claude-c09",
+      "message": "claude-c09-m9",
+      "text": "Could you elaborate?",
+      "durable": false
+    }
+  ]
+}

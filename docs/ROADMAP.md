@@ -688,6 +688,54 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 ---
 
+## M8 — Claude acquisition, and the Markdown mirror
+
+Competitive research after M7 changed what this milestone is for. Acquisition is not
+open ground: MemoryPlugin imports ChatGPT, Claude and TypingMind exports *and* syncs
+six surfaces live; Basic Memory stores everything as plain Markdown you own and
+indexes it as a typed graph; dropdat captures per-conversation capsules. What none of
+them do is compile *out*, and what none of them have is an auditable record —
+provenance, supersession, an immutable event log, replay.
+
+- [x] **claude.ai conversation export importer.** Human-initiated like every other
+      acquisition path: Settings > Privacy > Export Data, Anthropic emails a link,
+      automation starts once the archives land. Same extractor, guards and ingest
+      boundary as the ChatGPT importer, so the two differ only in provenance.
+      **Corrected against a real manifest:** the export is not one ZIP but five,
+      listed in an emailed manifest with single-use URLs — and it *does* include
+      memories and projects, contrary to what the research said. Those are worth
+      more than mined prose: memories are facts Claude already extracted, and
+      projects map onto `Scope` directly. Nothing fetches the URLs; a consumed
+      one that fails to land is unrecoverable, so downloading stays the user's act
+- [x] **The watcher tells the two providers apart by structure.** Both ship a file
+      called `conversations.json` holding different shapes — a `mapping` tree versus
+      a flat `chat_messages` list. Detecting on the filename made a Claude export
+      look like a ChatGPT one: the parser found zero conversations, the watcher
+      marked the file seen, and a user's whole history was dropped while every
+      message reported success. Silent and shaped exactly like it worked, which is
+      the failure mode worth a regression test. A parser handed the wrong format now
+      refuses loudly rather than returning nothing, because "nothing" presents to the
+      user as "you had no history"
+- [x] **Markdown mirror.** Basic Memory's best idea, taken deliberately rather than
+      copied: the typed graph stays canonical and every object is *mirrored* to
+      Markdown with frontmatter, plus the event log by month. That buys the ownership
+      story without giving up supersession, provenance and atomic events — the things
+      Markdown-as-primary cannot hold cleanly, and exactly what the compliance case
+      is buying. **One-way by default**: an edit that silently became truth would put
+      a change in the graph with no event behind it, so `--pull` applies edits through
+      the same ingest path every other surface writes through, detecting them by
+      content hash rather than mtime because copying a vault rewrites every mtime.
+      A file the graph has moved past is refused rather than resolved — silently
+      picking a winner is how an edit disappears. Deterministic, so a vault lives in
+      git and a diff means the graph changed rather than that you ran the command
+- [x] Obsidian — supersession renders as a wikilink, so a correction chain is
+      navigable in the graph view, which is the one thing a file tree does better
+      than a database. VS Code needs nothing: it is a folder of Markdown
+- [ ] Temporal validity on facts — "what did this policy say on 3 March" is the
+      Extraordinary use case, and `replay_object` already answers most of it
+
+---
+
 ## M7 — ChatGPT connector + general release + polish
 
 SCOPE §10 steps 5–6.

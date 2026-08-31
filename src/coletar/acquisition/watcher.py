@@ -5,11 +5,18 @@ for anything: the user clicks their own export button, OpenAI emails them a link
 they download it. All this does is notice the file landing so the import does not
 have to be a second manual step (§8.1, §11).
 
-**Detection is by content, never by filename.** OpenAI has shipped exports under
+**Detection is by content, never by filename.** Providers ship exports under
 several names and users rename downloads. More importantly, a filename rule is a
 false-positive engine — anything called `chatgpt-export.zip` would qualify, including
-a file that is not an export at all. So a candidate is a ZIP that actually contains
-`conversations.json`, which is the same question the parser asks.
+a file that is not an export at all.
+
+**And `conversations.json` is not enough either.** ChatGPT and Claude both ship a
+file by that name holding entirely different shapes: a `mapping` tree in one, a flat
+`chat_messages` list in the other. Detecting on the filename alone made a Claude
+export look like a ChatGPT one — the parser found zero conversations, the watcher
+marked the file seen, and the user's history was silently dropped while everything
+reported success. So detection returns *which* provider's export this is, decided on
+structure.
 
 Polling rather than a filesystem-event library: 5 seconds clears the 10-second bar
 with margin, and a dependency has to survive being said out loud (AGENTS.md).
@@ -23,7 +30,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from coletar.acquisition.chatgpt_export import CONVERSATIONS, ChatGPTExportError, read_export
+from coletar.acquisition.chatgpt_export import CONVERSATIONS, ChatGPTExportError
+from coletar.acquisition.claude_export import ClaudeExportError, load_conversations
 
 #: Half the 10-second detection bar, so a file landing just after a poll is still
 #: reported inside it.
@@ -38,18 +46,33 @@ _SUFFIXES = frozenset({".zip"})
 _PARTIAL = (".crdownload", ".part", ".partial", ".download", ".tmp")
 
 
-def looks_like_export(path: Path) -> bool:
-    """Content, not name. Cheap enough to run on every ZIP that appears."""
+def detect(path: Path) -> str | None:
+    """`"chatgpt"`, `"claude"`, or None. Structure, not filename.
+
+    Cheap enough to run on every ZIP that appears, because the discriminator is the
+    first conversation's shape rather than a full parse.
+    """
     if path.suffix.lower() not in _SUFFIXES or path.name.startswith("."):
-        return False
+        return None
     if path.name.endswith(_PARTIAL):
-        return False
+        return None
     try:
-        # `read_export` raises unless the archive really holds conversations.json.
-        next(iter(read_export(path)), None)
-    except (ChatGPTExportError, OSError):
-        return False
-    return True
+        payload = load_conversations(path)
+    except (ChatGPTExportError, ClaudeExportError, OSError):
+        return None
+    for raw in payload:
+        if not isinstance(raw, dict):
+            continue
+        # A tree with a current node is ChatGPT; a flat message list is Claude.
+        if isinstance(raw.get("mapping"), dict):
+            return "chatgpt"
+        if isinstance(raw.get("chat_messages"), list):
+            return "claude"
+    return None
+
+
+def looks_like_export(path: Path) -> bool:
+    return detect(path) is not None
 
 
 @dataclass
@@ -88,7 +111,7 @@ def scan(directory: Path, state: WatchState) -> list[Path]:
             continue
         if not state.settled(path):
             continue
-        if looks_like_export(path):
+        if detect(path) is not None:
             state.seen.add(path)
             found.append(path)
         else:
@@ -130,4 +153,12 @@ async def watch(
     return state
 
 
-__all__ = ["CONVERSATIONS", "POLL_SECONDS", "WatchState", "looks_like_export", "scan", "watch"]
+__all__ = [
+    "CONVERSATIONS",
+    "POLL_SECONDS",
+    "WatchState",
+    "detect",
+    "looks_like_export",
+    "scan",
+    "watch",
+]
