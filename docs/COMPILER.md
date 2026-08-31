@@ -178,6 +178,45 @@ graph:
 On the seeded graph, which is global-heavy, this comes out as **local 0.906 vs
 Claude 0.869**. That is the honest result, and it is the non-obvious one.
 
+## The Claude leg, verified by hand
+
+There is no way to automate this one — no Projects import API exists, so the package
+is installed by a human and the only honest test is a human installing it. Compiled
+from a four-object graph, pasted into a new Project's custom instructions, then asked
+a question with nothing of ours running:
+
+> **What do you know about EventBook's matching engine?**
+>
+> EventBook's matching engine is single-threaded by design, and the codebase ships
+> C++20.
+>
+> If you want, I can dig into specifics — e.g. how the single-threaded design affects
+> throughput/latency tradeoffs, or how you're handling money representation
+> (fixed-point over doubles) in the matching logic.
+
+Three things that answer settles, none of which the test suite could:
+
+**Project instructions are a real native container.** Claude used them on the first
+turn, unprompted, with no instruction snippet — unlike the connector, which needs one
+to be reliable. The `native` classification is earned rather than assumed.
+
+**The scope fan-out works, including the inheritance decision.** It combined the
+project fact with `Chris ships C++20 for EventBook`, and then reached for a *global*
+preference — fixed-point over doubles — inside a project conversation. That is
+exactly the case M5.2 could not settle from documentation: whether account memory
+reaches inside a Project is undocumented, so globals are duplicated into each
+Project's instructions instead. This is that duplication paying off.
+
+**The §11 marker held.** The block contains `[goal, confidence 0.95] I am building
+coletar, a portable AI workspace`. Claude treated it as background about the user and
+offered to help, rather than adopting it as a directive. Compiled memory arriving as
+data rather than as instructions is the property that matters most here, because it
+is the one nobody would notice failing until it already had.
+
+**What this does not establish:** one observation on cooperative content. It says
+nothing about how the marker holds against a memory written *to* subvert it, which is
+a different test and belongs with the extraction guards.
+
 ## Verified end to end
 
 Compiled from a seeded graph against `qwen2.5:0.5b`, baked with `ollama create`, then
