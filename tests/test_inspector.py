@@ -328,3 +328,26 @@ async def test_page_shows_a_refusal_instead_of_swallowing_it(live_store: None) -
         "/merge", data={"survivor_id": obj.id, "absorbed_id": obj.id}, follow_redirects=True
     )
     assert "cannot be merged into itself" in response.text
+
+
+@pytest.mark.asyncio
+async def test_page_shows_which_surfaces_may_receive_an_object(live_store: None) -> None:
+    """The reviewer is the last check before a compile, so the card has to say where
+    the object can end up — not only what it says."""
+    from coletar.schema.objects import Locality, LocalityMode, Provider
+    from coletar.store import build_store
+
+    store = build_store()
+    await store.put_object(TENANT, Memory.from_write("Chris prefers tabs."))
+    await store.put_object(
+        TENANT,
+        Memory.from_write(
+            "Private note.",
+            locality=Locality(
+                mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.LOCAL})
+            ),
+        ),
+    )
+    body = _get()
+    assert "every surface" in body
+    assert "local to local" in body

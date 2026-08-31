@@ -514,6 +514,14 @@ SCOPE §10 step 3. The first real True Migration proof point, and the only front
 surface built against an *official* format rather than a reverse-engineered one.
 
 - [x] Continuity Score with published weights and `explain()`
+- [x] **Locality is enforced at the compile boundary.** Locality (#10/#11) and
+      the compilers were built a milestone apart and each was correct alone —
+      composed, `local_only` did not apply to a compile, because the Store
+      protocol classifies the compiler as a trusted internal caller. It is the
+      opposite: a compile is the one operation that physically hands context to
+      another company. Each compiler now declares the surface it compiles to and
+      carries only what is allowed there; withheld objects are listed in the
+      manifest and kept out of the score's denominator
 - [x] Context Inspector: review, edit, merge, re-scope — and no compile action until
       every compile-eligible object has been shown at least once. **Review state is
       derived from the event log, never stored on the object**: §2 says a property

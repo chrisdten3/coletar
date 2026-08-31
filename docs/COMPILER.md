@@ -64,6 +64,31 @@ the reason attached.
 Confidence gates *promotion*, not inclusion. Nothing is dropped for being uncertain;
 it is moved somewhere it cannot be asserted.
 
+## Locality filters harder at a compile, not softer
+
+`Locality` decides which connected surfaces may read an object back. The Store
+protocol treats `caller_surface=None` as a trusted internal caller and applies no
+restriction — right for the CLI and for background jobs, and wrong for the compiler,
+which was originally listed among them.
+
+A Live Sync read is something the user watches happen and can revoke by removing a
+key. **A compile is a transfer to another company that cannot be taken back.** So
+every compiler declares the surface it compiles *to* (`LocalModelCompiler` is
+`Provider.LOCAL`, `ClaudeCompiler` is `Provider.CLAUDE`) and carries only what the
+user allowed there.
+
+Withheld objects are **recorded in the manifest, not silently dropped** — the
+`## Withheld` section is the only evidence the user has that the thing they asked to
+stay put actually stayed put. They are deliberately not a fourth `Fidelity` and never
+enter `source_object_count`: the fidelity categories answer "what could the
+destination hold", which is a fact about the destination, while this answers "what
+was it allowed to receive", which is an instruction from the user. Scoring them
+together would make using the feature look like a migration failure.
+
+The Context Inspector shows locality on every card for the same reason. The reviewer
+is the last check before a compile, so the page has to say where an object can end
+up, not only what it says.
+
 ## What is not a loss
 
 Retired and superseded objects are filtered out of the denominator rather than

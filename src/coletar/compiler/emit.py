@@ -13,8 +13,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from coletar.compiler.continuity import Fidelity, MigrationManifest
-from coletar.schema.objects import ContextObject, Scope, ScopeType
+from coletar.compiler.continuity import (
+    Fidelity,
+    MigrationManifest,
+    WithheldEntry,
+)
+from coletar.schema.objects import ContextObject, Provider, Scope, ScopeType
 
 
 def compile_eligible(objects: list[ContextObject]) -> list[ContextObject]:
@@ -28,6 +32,35 @@ def compile_eligible(objects: list[ContextObject]) -> list[ContextObject]:
     """
     superseded = {o.supersedes for o in objects if o.supersedes}
     return [o for o in objects if o.is_active and o.id not in superseded]
+
+
+def partition_by_locality(
+    objects: list[ContextObject], destination: Provider
+) -> tuple[list[ContextObject], list[WithheldEntry]]:
+    """Split off what the user said may not go to this destination.
+
+    A compile is the one operation that physically hands context to another company,
+    which makes it the *last* place locality should be treated as an internal-caller
+    exemption. Live Sync reads are something the user watches happen; a compile is a
+    transfer they cannot take back, so it filters harder, not softer.
+
+    Withheld objects never reach `source_object_count`, so they are not scored as
+    coverage the destination lost. The user did not ask for them to move.
+    """
+    compilable: list[ContextObject] = []
+    withheld: list[WithheldEntry] = []
+    for obj in objects:
+        if obj.locality.visible_to(destination):
+            compilable.append(obj)
+        else:
+            withheld.append(
+                WithheldEntry(
+                    source_id=obj.id,
+                    source_type=str(obj.type),
+                    allowed_surfaces=sorted(str(s) for s in obj.locality.surfaces),
+                )
+            )
+    return compilable, withheld
 
 
 def slug(value: str) -> str:
@@ -135,6 +168,22 @@ def render_manifest(
             f"- `{plan.name}` — scope {plan.scope}, {len(plan.owned)} owned, "
             f"{len(plan.inherited)} inherited from global"
         )
+    if manifest.withheld:
+        lines += [
+            "",
+            "## Withheld",
+            "",
+            "Kept out of this compile because you marked them local to another surface. "
+            "Listed so you can confirm they stayed put.",
+            "",
+            "| id | type | allowed on |",
+            "|---|---|---|",
+        ]
+        for held in manifest.withheld:
+            lines.append(
+                f"| `{held.source_id}` | {held.source_type} | "
+                f"{', '.join(held.allowed_surfaces)} |"
+            )
     lines += ["", "## Objects", "", "| id | fidelity | destination | note |", "|---|---|---|---|"]
     for entry in manifest.entries:
         lines.append(

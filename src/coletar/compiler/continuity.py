@@ -46,12 +46,32 @@ class ManifestEntry:
 
 
 @dataclass
+class WithheldEntry:
+    """An object the user told us not to send here.
+
+    Deliberately *not* a fourth `Fidelity`. The three fidelity categories answer
+    "what could the destination hold", which is a fact about the destination; this
+    answers "what was it allowed to receive", which is an instruction from the user.
+    Folding them together would let a locality choice drag down a score that is
+    supposed to measure the product on the other end.
+    """
+
+    source_id: str
+    source_type: str
+    allowed_surfaces: list[str]
+
+
+@dataclass
 class MigrationManifest:
     """The honest record of one compile: what landed natively, what was
     reconstructed, and what the destination simply cannot hold."""
 
     destination: str
     entries: list[ManifestEntry] = field(default_factory=list)
+    #: Objects locality kept out of this compile. Recorded rather than dropped:
+    #: silently omitting them would leave the user no way to confirm the thing
+    #: they asked to stay put actually stayed put.
+    withheld: list[WithheldEntry] = field(default_factory=list)
     compiled_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def add(self, entry: ManifestEntry) -> None:

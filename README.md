@@ -162,6 +162,10 @@ a Modelfile `SYSTEM` block per scope; Claude gets a Project per scope plus a
 naming every object's destination and a `PROVENANCE.md` explaining where it came
 from.
 
+An object you have marked local to one surface is **withheld** from every other
+destination's compile, and listed in that manifest's `## Withheld` section so you
+can confirm it stayed put.
+
 Neither compiler drives the destination's UI. Ollama you run yourself with
 `ollama create`; Claude has no Projects import API, so the package tells you exactly
 what to paste and upload. After that coletar is out of the loop — which is the point.
