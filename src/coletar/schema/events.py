@@ -42,6 +42,12 @@ class EventType(StrEnum):
     OBJECT_CORROBORATED = "object.corroborated"
     COMPILE_RUN = "compile.run"
     CONNECTOR_WRITE = "connector.write"
+    # M5.3. Review state is derived from the log rather than stored on the object:
+    # "the user has seen this" is a fact about an object's history, and §2 says a
+    # property that applies to one workflow does not earn a column.
+    OBJECT_REVIEWED = "object.reviewed"
+    OBJECT_RESCOPED = "object.rescoped"
+    OBJECT_MERGED = "object.merged"
 
 
 #: Events that carry a full `after` snapshot and therefore participate in replay.
@@ -53,6 +59,10 @@ REVISION_EVENTS: frozenset[EventType] = frozenset(
         EventType.OBJECT_SUPERSEDED,
         EventType.OBJECT_RETIRED,
         EventType.CONNECTOR_WRITE,
+        EventType.OBJECT_RESCOPED,
+        EventType.OBJECT_MERGED,
+        # object.reviewed is deliberately absent, for the same reason as
+        # object.accessed: looking at a fact does not change it.
     }
 )
 

@@ -1,61 +1,75 @@
-"""Read-only Context Inspector (SCOPE §8.2, ROADMAP M5) — first cut.
+"""Context Inspector (SCOPE §8.2, ROADMAP M5.3).
 
-The full Inspector reviews, edits, merges and re-scopes objects in the live store
-and gates compile on every object having been shown once; none of that is built.
-This is a smaller, honest slice of it: upload a store snapshot (the JSON
-`coletar` already writes to `COLETAR_STORE_PATH`) and see the three boxes from
-the README architecture diagram — Canonical Context Graph, Event/Revision Log,
-Search Index — rendered as plain nested-list outlines. One request in, one page
-out, nothing kept on the server.
+Bound to the live store, not to an uploaded snapshot. That change is what makes the
+milestone's actual requirement possible — review, edit, merge, re-scope, and no
+compile until every eligible object has been shown at least once — and it also
+removes the snapshot viewer's one real defect for free: a page reading the live
+store always knows which tenant it is showing, where a JSON file did not carry one.
+
+The operations live in `review.py`. This module is the rendering of them, so the
+rules the gate enforces cannot drift between the browser and the CLI.
+
+Binds loopback only. It performs authenticated-user actions with no auth of its own,
+which is exactly as far as it should be trusted until there is a session model.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from html import escape
-from typing import Any
+from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import FastAPI, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 
-from coletar.retrieval.embedding import tokenize
+from coletar.config import get_settings
+from coletar.inspector.review import (
+    InspectorError,
+    ReviewStatus,
+    edit,
+    mark_reviewed,
+    merge,
+    rescope,
+    review_status,
+)
 from coletar.schema.events import Event
-from coletar.schema.objects import Edge, object_from_record
+from coletar.schema.objects import GLOBAL_SCOPE, ContextObject, Scope, ScopeType
+from coletar.schema.tenancy import TenantId
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
+from coletar.store import build_store
+from coletar.store.base import Store
 
-#: A record failing one of these means it's malformed, not that the process is
-#: broken -- caught per-row so one bad edge doesn't blank out the objects that
-#: parsed fine.
-_ROW_ERRORS = (KeyError, ValueError, AttributeError, TypeError)
+app = FastAPI(title="coletar context inspector", version="0.2.0")
 
-app = FastAPI(title="coletar context inspector", version="0.1.0")
-
-_PREVIEW_LEN = 80
+_PREVIEW_LEN = 120
 
 _PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>coletar — context inspector</title>
 <style>
-body {{ font-family: ui-monospace, monospace; margin: 2rem auto; max-width: 60rem; }}
-h2 {{ margin-top: 2rem; }}
-li {{ margin: 0.15rem 0; }}
+body {{ font-family: ui-monospace, monospace; margin: 2rem auto; max-width: 64rem;
+       line-height: 1.45; }}
+h2 {{ margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
 .meta {{ color: #666; }}
 .error {{ color: #b00020; }}
+.gate {{ padding: .8rem 1rem; border-radius: 6px; margin: 1rem 0; }}
+.blocked {{ background: #fff4f4; border: 1px solid #e0b4b4; }}
+.open {{ background: #f2fbf2; border: 1px solid #b4e0b4; }}
+.card {{ border: 1px solid #ddd; border-radius: 6px; padding: .7rem 1rem; margin: .6rem 0; }}
+.unreviewed {{ border-left: 4px solid #d08a00; }}
+.reviewed {{ border-left: 4px solid #4a9a4a; }}
+input[type=text] {{ width: 28rem; font-family: inherit; }}
+form.inline {{ display: inline; }}
+code {{ background: #f5f5f5; padding: 0 .2rem; }}
 </style></head><body>
 <h1>coletar context inspector</h1>
-<p class="meta">Upload a store snapshot to see its context graph, event/revision
-log and search index.</p>
-<form action="/upload" method="post" enctype="multipart/form-data">
-  <input type="file" name="snapshot" accept="application/json" required>
-  <button type="submit">upload</button>
-</form>
+<p class="meta">tenant <code>{tenant}</code> — everything below is the live store.</p>
+{flash}
 {body}
 </body></html>"""
 
 
-def _outline(items: list[str]) -> str:
-    if not items:
-        return '<p class="meta">(none)</p>'
-    return "<ul>" + "".join(f"<li>{item}</li>" for item in items) + "</ul>"
+def _tenant() -> TenantId:
+    return parse_tenant_id(get_settings().default_tenant_id)
 
 
 def _preview(content: str) -> str:
@@ -65,103 +79,138 @@ def _preview(content: str) -> str:
     return escape(flat)
 
 
-def _context_graph(objects: list[Any], edges: list[Edge]) -> str:
-    edges_from: dict[str, list[Edge]] = {}
-    for edge in edges:
-        edges_from.setdefault(edge.src_id, []).append(edge)
-
-    by_type: dict[str, list[Any]] = {}
-    for obj in objects:
-        by_type.setdefault(obj.type, []).append(obj)
-
-    sections = []
-    for object_type in sorted(by_type):
-        rows = []
-        for obj in by_type[object_type]:
-            out_edges = edges_from.get(obj.id, [])
-            edge_outline = (
-                _outline([f"{e.type} → {escape(e.dst_id)}" for e in out_edges])
-                if out_edges
-                else ""
-            )
-            rows.append(
-                f"<code>{escape(obj.id)}</code> [{escape(str(obj.scope))}, "
-                f"confidence {obj.confidence:.2f}] {_preview(obj.content)}{edge_outline}"
-            )
-        sections.append(f"<h3>{escape(object_type)}</h3>{_outline(rows)}")
-    return "".join(sections)
-
-
-def _event_log(events: list[Event]) -> str:
-    ordered = sorted(events, key=lambda e: e.at, reverse=True)
-    rows = [
-        f"{e.at.isoformat()}  {e.actor}  {e.type}  <code>{escape(e.object_id or '-')}</code>"
-        for e in ordered
-    ]
-    return _outline(rows)
-
-
-def _search_index(objects: list[Any]) -> str:
-    rows = []
-    for obj in sorted(objects, key=lambda o: o.id):
-        terms = sorted(set(tokenize(obj.content)))
-        rows.append(f"<code>{escape(obj.id)}</code>: {escape(', '.join(terms)) or '(no terms)'}")
-    return _outline(rows)
-
-
-def _parse_rows[T](records: list[Any], parse: Callable[[Any], T]) -> tuple[list[T], list[str]]:
-    parsed: list[T] = []
-    errors: list[str] = []
-    for index, record in enumerate(records):
-        try:
-            parsed.append(parse(record))
-        except _ROW_ERRORS as exc:
-            errors.append(f"#{index}: {str(exc).splitlines()[0]}")
-    return parsed, errors
-
-
-def _skipped(label: str, errors: list[str]) -> str:
-    if not errors:
-        return ""
+def _gate(status: ReviewStatus) -> str:
+    """The M5 requirement, stated to the user rather than hidden in a disabled button."""
+    if status.can_compile:
+        return (
+            f'<div class="gate open"><strong>Compile is available.</strong> '
+            f"All {len(status.eligible)} eligible objects have been reviewed.</div>"
+        )
     return (
-        f'<p class="error">{len(errors)} {label} skipped (malformed):</p>'
-        + _outline([escape(e) for e in errors])
+        f'<div class="gate blocked"><strong>Compile is blocked.</strong> '
+        f"{len(status.unreviewed)} of {len(status.eligible)} eligible objects have not "
+        f"been reviewed since they last changed. Nothing leaves for another product "
+        f"until you have seen what it says.</div>"
     )
 
 
-def _render(snapshot: dict[str, Any]) -> str:
-    objects, object_errors = _parse_rows(snapshot.get("objects", []), object_from_record)
-    edges, edge_errors = _parse_rows(snapshot.get("edges", []), Edge.model_validate)
-    events, event_errors = _parse_rows(snapshot.get("events", []), Event.model_validate)
+def _object_card(obj: ContextObject, *, reviewed: bool) -> str:
+    kind = getattr(obj, "kind", obj.type)
+    scope_value = "" if obj.scope.type is ScopeType.GLOBAL else escape(obj.scope.id or "")
+    state = "reviewed" if reviewed else "unreviewed"
+    return f"""<div class="card {state}">
+<div><code>{escape(obj.id)}</code>
+ <span class="meta">{escape(str(kind))} · {escape(str(obj.scope))}
+ · confidence {obj.confidence:.2f} · v{obj.version}
+ · via {escape(str(obj.provenance.provider))} · {escape(str(obj.extraction_method))}</span></div>
+<form action="/edit" method="post">
+  <input type="hidden" name="object_id" value="{escape(obj.id)}">
+  <input type="text" name="content" value="{escape(obj.content)}">
+  <button type="submit">save</button>
+</form>
+<form action="/rescope" method="post" class="inline">
+  <input type="hidden" name="object_id" value="{escape(obj.id)}">
+  <input type="text" name="project" value="{scope_value}" placeholder="(blank = global)"
+         size="18">
+  <button type="submit">re-scope</button>
+</form>
+<form action="/merge" method="post" class="inline">
+  <input type="hidden" name="survivor_id" value="{escape(obj.id)}">
+  <input type="text" name="absorbed_id" placeholder="absorb object id" size="24">
+  <button type="submit">merge in</button>
+</form>
+<form action="/review" method="post" class="inline">
+  <input type="hidden" name="object_id" value="{escape(obj.id)}">
+  <button type="submit">{"reviewed ✓" if reviewed else "mark reviewed"}</button>
+</form>
+</div>"""
+
+
+def _event_log(events: list[Event]) -> str:
+    rows = [
+        f"<li>{e.at.isoformat()} <span class=\"meta\">{escape(str(e.actor))}</span> "
+        f"{escape(str(e.type))} <code>{escape(e.object_id or '-')}</code></li>"
+        for e in events
+    ]
+    return "<ul>" + "".join(rows) + "</ul>" if rows else '<p class="meta">(none)</p>'
+
+
+async def _render(store: Store, tenant: TenantId) -> str:
+    status = await review_status(store, tenant)
+    unreviewed_ids = {o.id for o in status.unreviewed}
+    # Unreviewed first: the page's job is to get the gate open, so the objects
+    # standing between the user and a compile belong at the top.
+    ordered = sorted(
+        status.eligible, key=lambda o: (o.id not in unreviewed_ids, str(o.scope), o.id)
+    )
+    cards = "".join(
+        _object_card(obj, reviewed=obj.id not in unreviewed_ids) for obj in ordered
+    )
+    events = await store.list_events(tenant, limit=40)
     return (
-        _skipped("objects", object_errors)
-        + _skipped("edges", edge_errors)
-        + _skipped("events", event_errors)
-        + "<h2>Canonical Context Graph</h2>" + _context_graph(objects, edges)
-        + "<h2>Event/Revision Log</h2>" + _event_log(events)
-        + "<h2>Search Index</h2>" + _search_index(objects)
+        _gate(status)
+        + f"<h2>Canonical Context Graph <span class='meta'>"
+        f"({status.reviewed_count}/{len(status.eligible)} reviewed)</span></h2>"
+        + (cards or '<p class="meta">(no compile-eligible objects)</p>')
+        + "<h2>Event/Revision Log</h2>"
+        + _event_log(events)
+    )
+
+
+async def _page(error: str = "") -> str:
+    tenant = _tenant()
+    flash = f'<p class="error">{escape(error)}</p>' if error else ""
+    return _PAGE.format(
+        tenant=escape(tenant), flash=flash, body=await _render(build_store(), tenant)
     )
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index() -> str:
-    return _PAGE.format(body="")
+async def index(error: str = "") -> str:
+    return await _page(error)
 
 
-@app.post("/upload", response_class=HTMLResponse)
-async def upload(snapshot: UploadFile) -> str:
-    raw = await snapshot.read()
+async def _act(action: str, **kwargs: object) -> RedirectResponse:
+    """Every mutation redirects home, so a refresh cannot repeat it."""
+    store, tenant = build_store(), _tenant()
+    operations = {"review": mark_reviewed, "edit": edit, "rescope": rescope, "merge": merge}
     try:
-        body = _render(json.loads(raw))
-    except (json.JSONDecodeError, *_ROW_ERRORS) as exc:
-        body = f'<p class="error">Could not read this snapshot: {escape(str(exc))}</p>'
-    return _PAGE.format(body=body)
+        await operations[action](store, tenant, **kwargs)  # type: ignore[operator]
+    except InspectorError as exc:
+        return RedirectResponse(f"/?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/review")
+async def post_review(object_id: Annotated[str, Form()]) -> RedirectResponse:
+    return await _act("review", object_id=object_id)
+
+
+@app.post("/edit")
+async def post_edit(
+    object_id: Annotated[str, Form()], content: Annotated[str, Form()]
+) -> RedirectResponse:
+    return await _act("edit", object_id=object_id, content=content)
+
+
+@app.post("/rescope")
+async def post_rescope(
+    object_id: Annotated[str, Form()], project: Annotated[str, Form()] = ""
+) -> RedirectResponse:
+    project = project.strip()
+    scope = Scope(type=ScopeType.PROJECT, id=project) if project else GLOBAL_SCOPE
+    return await _act("rescope", object_id=object_id, scope=scope)
+
+
+@app.post("/merge")
+async def post_merge(
+    survivor_id: Annotated[str, Form()], absorbed_id: Annotated[str, Form()]
+) -> RedirectResponse:
+    return await _act("merge", survivor_id=survivor_id, absorbed_id=absorbed_id.strip())
 
 
 def run() -> None:
     import uvicorn
-
-    from coletar.config import get_settings
 
     uvicorn.run(app, host="127.0.0.1", port=get_settings().inspector_port)
 

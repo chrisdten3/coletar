@@ -132,6 +132,91 @@ def compress(
 
 
 @app.command()
+def compile(
+    destination: str = typer.Option("local", help="Which provider compiler to run."),
+    out: str = typer.Option("build/compile", help="Directory to write artifacts into."),
+    base_model: str = typer.Option("llama3.1", help="FROM line for the Ollama Modelfile."),
+    project: str | None = typer.Option(None, help="Compile one project scope only."),
+    skip_review: bool = typer.Option(
+        False, "--skip-review", help="Compile without the Inspector review gate."
+    ),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """True Migration: compile the graph into a destination's native containers.
+
+    Reads the graph and writes files; it never mutates an object. The one thing it
+    does write back is the `compile.run` event, because a compile is a fact about
+    the graph's history even though it changed nothing in it.
+    """
+    from pathlib import Path
+
+    from coletar.compiler import ClaudeCompiler, LocalModelCompiler
+    from coletar.inspector.review import review_status
+    from coletar.schema.events import Actor, Event, EventType
+
+    compilers: dict[str, type] = {"local": LocalModelCompiler, "claude": ClaudeCompiler}
+    if destination not in compilers:
+        raise typer.BadParameter(
+            f"unknown destination {destination!r}; have {sorted(compilers)}"
+        )
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        store = build_store()
+
+        # The M5 gate. Enforced here rather than only in the Inspector's UI: a gate
+        # one surface can walk around is not a gate, and the CLI is the surface an
+        # automation would reach for.
+        status = await review_status(store, resolved)
+        if not status.can_compile and not skip_review:
+            raise typer.BadParameter(
+                f"{len(status.unreviewed)} of {len(status.eligible)} eligible objects "
+                "have not been reviewed since they last changed. Run "
+                "`coletar serve-inspector` and look at them, or pass --skip-review to "
+                "compile anyway (recorded in the compile.run event)."
+            )
+
+        objects = await store.list_objects(
+            resolved, scope=_scope(project) if project else None, limit=10_000
+        )
+        compiler = (
+            LocalModelCompiler(base_model=base_model)
+            if destination == "local"
+            else ClaudeCompiler()
+        )
+        out_dir = Path(out)
+        result = await compiler.compile(objects, out_dir=out_dir)
+
+        await store.append_event(
+            resolved,
+            Event(
+                type=EventType.COMPILE_RUN,
+                actor=Actor.COMPILER,
+                object_id=None,
+                detail={
+                    "destination": destination,
+                    "out_dir": str(out_dir),
+                    **result.manifest.summary(),
+                    "continuity_score": result.score.total,
+                    # An override has to be visible afterwards, or the gate teaches
+                    # the user nothing about what was in the package.
+                    "review_skipped": skip_review and not status.can_compile,
+                    "unreviewed_at_compile": len(status.unreviewed),
+                },
+            ),
+        )
+
+        typer.echo(f"tenant: {resolved}")
+        typer.echo(json.dumps(result.manifest.summary(), indent=2))
+        typer.echo("")
+        typer.echo(result.score.explain())
+        typer.echo("")
+        typer.echo(result.instructions)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
     from coletar.store.migrate import run_migrations

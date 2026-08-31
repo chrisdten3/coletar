@@ -46,13 +46,28 @@ box you type into. The store is multi-tenant end to end (M3.1): `tenant_id` is
 required on every store call, enforced by composite keys in Postgres, and proved by an
 adversarial suite run against both backends.
 
-**Not yet built:** every provider compiler (still scaffolding with contracts fixed and
-bodies unwritten) and the observability dashboard. The Context Inspector has a
-read-only first cut (below); review, edit, merge, re-scope and compile-gating are
-still M5. See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
+**True Migration works on two destinations.** The local-model compiler (M5.1) emits
+real Ollama containers, and the Claude compiler (M5.2) emits real Claude ones — one
+container per scope, a Migration Manifest naming every object's destination, and a
+Continuity Score computed from manifest facts. The local leg was verified the only
+way that claim can be verified: compiled, `ollama create`d, then queried with
+coletar not running.
 
-The Inspector does not yet show which tenant an object belongs to, so a snapshot
-holding more than one renders them merged — see the note in its section below.
+| | Measured |
+|---|---|
+| `object_coverage` on the seeded graph | **1.00** |
+| `scope_preservation` (hard gate) | **1.00** — no project fact reaches the global model |
+| `fidelity` | 0.69 local / 0.56 Claude — see below |
+
+The score ranks destinations in **both** directions, which is what keeps it a
+measurement rather than a preference: Claude wins on project-scoped context (a
+Project holds instructions *and* retrievable knowledge), Ollama wins on global
+context (a system prompt you control, versus a memory import Anthropic documents as
+experimental and re-extracted). On the global-heavy seeded graph that nets out to
+local **0.906** vs Claude **0.869**.
+
+**Not yet built:** the ChatGPT compiler (M6) and the observability dashboard.
+See [docs/ROADMAP.md](docs/ROADMAP.md) for exactly what is real.
 
 ## Quickstart
 
@@ -113,22 +128,46 @@ instruction snippets that make tool use actually reliable.
 
 ### The Context Inspector
 
-A read-only first cut: upload a store snapshot and browse the three boxes from
-the architecture diagram below as plain outlines.
-
 ```bash
 uv run coletar serve-inspector
 ```
 
-Then open `http://localhost:8789` and upload the file at `COLETAR_STORE_PATH`
-(`data/coletar.json` by default). The full Inspector — review, edit, merge,
-re-scope, gating compile — is still [M5](docs/ROADMAP.md).
+Open `http://localhost:8789`. Bound to the live store: review, edit, merge and
+re-scope objects, with the Event/Revision Log beside them.
 
-**Known gap:** it does not render `tenant_id`. A snapshot containing more than one
-tenant shows their objects merged into a single list with no indication, because the
-unknown key is ignored rather than rejected — so it looks correct instead of failing.
-Fine for a single-tenant snapshot, misleading for anything else, and the first thing
-to fix when the Inspector is picked back up.
+**Nothing compiles until you have seen it.** A compile is blocked while any
+compile-eligible object has not been reviewed since it last changed — a review is a
+statement about what an object said at the time, so editing it withdraws the
+approval. The gate is enforced in the CLI too (`--skip-review` overrides it, and the
+override is recorded in the `compile.run` event), because a gate one surface can walk
+around is not a gate.
+
+Review state is derived from the event log rather than stored on the object: the log
+is already the provenance record, and a `reviewed` column would be a second source of
+truth that replay could not reconstruct.
+
+Binds loopback only — it performs authenticated-user actions with no auth of its own.
+
+### True Migration
+
+```bash
+uv run coletar compile --destination local  --out build/local
+uv run coletar compile --destination claude --out build/claude
+```
+
+Compiles the graph into each destination's *actual* native containers — one per
+scope, so a project fact can never surface in an unrelated conversation. Ollama gets
+a Modelfile `SYSTEM` block per scope; Claude gets a Project per scope plus a
+`memory.txt` in Anthropic's documented import format. Both get a `MANIFEST.md`
+naming every object's destination and a `PROVENANCE.md` explaining where it came
+from.
+
+Neither compiler drives the destination's UI. Ollama you run yourself with
+`ollama create`; Claude has no Projects import API, so the package tells you exactly
+what to paste and upload. After that coletar is out of the loop — which is the point.
+
+Where each object lands and why is published in
+[docs/COMPILER.md](docs/COMPILER.md).
 
 ### With Postgres
 
@@ -198,6 +237,7 @@ demand. A black-box percentage is a badge, not a differentiator — see
 - [docs/SCOPE.md](docs/SCOPE.md) — the v0.2 product scope this repo implements
 - [docs/ROADMAP.md](docs/ROADMAP.md) — milestones, and what is stubbed today
 - [docs/CONNECTORS.md](docs/CONNECTORS.md) — per-provider connector reality + snippets
+- [docs/COMPILER.md](docs/COMPILER.md) — True Migration: native containers, fidelity, scope
 - [docs/CONTINUITY_SCORE.md](docs/CONTINUITY_SCORE.md) — the score, defined
 - [AGENTS.md](AGENTS.md) — the working agreement for this repo
 
