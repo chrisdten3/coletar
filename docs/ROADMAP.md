@@ -718,7 +718,21 @@ SCOPE §10 steps 5–6.
       contacts the base URL it was given and nothing else, which is a claim a test
       can check where a privacy policy cannot: every request goes through one method,
       so there is a single place a second destination could ever appear
-- [ ] Webhooks on the event log, with a documented retry policy
+- [x] Webhooks on the event log, with a documented retry policy — 5 attempts,
+      exponential backoff from 1s capped at 60s with **full jitter**, retrying
+      network errors and 408/429/5xx and deliberately not other 4xx, published in
+      [docs/CONNECTORS.md](CONNECTORS.md). **The payload carries the event, never the
+      object**: no content, no before/after, so a leaked URL leaks that something
+      changed rather than what it said, and a subscriber that needs the text calls
+      back through the authenticated API with its own key. Signed over
+      timestamp+body so a captured delivery cannot be replayed forever, with a stable
+      event id so retries can be made idempotent. Delivery writes no events, because
+      an event per delivery would be an event that triggers a delivery. Endpoints are
+      operator configuration and there is no API to add one — an endpoint a caller
+      can register is an exfiltration primitive wearing a feature's clothes. The SSRF
+      guard refuses https-less URLs and private/loopback literals but deliberately
+      does **not** resolve hostnames, and that residual is documented rather than
+      papered over
 
 ---
 

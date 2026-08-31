@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # human fetched deliberately rather than a response body.
     compile_output_dir: str = "build/api-compile"
 
+    # M7 webhooks. Deliveries carry event metadata only — never object content —
+    # so a leaked URL leaks that something changed, not what it said.
+    webhooks: str = ""
+    webhooks_allow_private: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:
