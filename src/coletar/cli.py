@@ -333,6 +333,40 @@ def import_claude(
 
 
 @app.command()
+def mirror(
+    out: str = typer.Option("~/coletar-vault", help="Where the Markdown vault lives."),
+    pull: bool = typer.Option(False, "--pull", help="Apply edits made in the vault."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="With --pull, change nothing."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Mirror the graph to Markdown you can open in Obsidian, or pull edits back.
+
+    The vault is a projection: the typed graph stays canonical, because supersession,
+    provenance and an immutable event log are things a directory of files cannot
+    make true. `--pull` applies your edits through the same ingest path every other
+    surface writes through, so they land as real events rather than as a silent
+    change with no history behind it.
+    """
+    from pathlib import Path
+
+    from coletar.mirror import mirror as run_mirror
+    from coletar.mirror import pull_edits
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        vault = Path(out).expanduser()
+        store = build_store()
+        if pull:
+            report = await pull_edits(store, resolved, vault, dry_run=dry_run)
+        else:
+            report = await run_mirror(store, resolved, vault)  # type: ignore[assignment]
+        typer.echo(json.dumps({"tenant": resolved, "vault": str(vault),
+                               **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
     from coletar.store.migrate import run_migrations

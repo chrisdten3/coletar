@@ -188,6 +188,25 @@ Everything imported lands at `account_export_parse` confidence (0.60), through t
 same extractor and the same ingest boundary as every other surface, so a preference
 restated across years of chats corroborates one object instead of creating a hundred.
 
+### Markdown mirror
+
+```bash
+uv run coletar mirror --out ~/coletar-vault    # project the graph to Markdown
+uv run coletar mirror --pull                   # apply edits you made in Obsidian
+```
+
+One file per object with frontmatter carrying its provenance, plus the event log by
+month. Supersession renders as an Obsidian wikilink, so a correction chain is
+navigable in the graph view.
+
+**The vault is a projection, not the source of truth.** The typed graph stays
+canonical, because supersession, provenance and an immutable event log are things a
+directory of files cannot make true — and they are what the audit story rests on.
+Edits are welcome: `--pull` applies them through the same ingest path every other
+surface writes through, so they land as real events rather than as a silent change.
+
+Deterministic, so the vault can live in git and a diff means the graph moved.
+
 ### True Migration
 
 ```bash

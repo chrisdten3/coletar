@@ -710,13 +710,21 @@ provenance, supersession, an immutable event log, replay.
       the failure mode worth a regression test. A parser handed the wrong format now
       refuses loudly rather than returning nothing, because "nothing" presents to the
       user as "you had no history"
-- [ ] **Markdown mirror.** Basic Memory's best idea, taken deliberately rather than
+- [x] **Markdown mirror.** Basic Memory's best idea, taken deliberately rather than
       copied: the typed graph stays canonical and every object is *mirrored* to
-      Markdown with frontmatter, plus the event log to an append-only file. That buys
-      the ownership story and Obsidian without giving up supersession, provenance and
-      atomic events — the things Markdown-as-primary cannot hold cleanly, and exactly
-      the things the compliance use case is buying
-- [ ] Obsidian / VS Code, which falls out of the mirror
+      Markdown with frontmatter, plus the event log by month. That buys the ownership
+      story without giving up supersession, provenance and atomic events — the things
+      Markdown-as-primary cannot hold cleanly, and exactly what the compliance case
+      is buying. **One-way by default**: an edit that silently became truth would put
+      a change in the graph with no event behind it, so `--pull` applies edits through
+      the same ingest path every other surface writes through, detecting them by
+      content hash rather than mtime because copying a vault rewrites every mtime.
+      A file the graph has moved past is refused rather than resolved — silently
+      picking a winner is how an edit disappears. Deterministic, so a vault lives in
+      git and a diff means the graph changed rather than that you ran the command
+- [x] Obsidian — supersession renders as a wikilink, so a correction chain is
+      navigable in the graph view, which is the one thing a file tree does better
+      than a database. VS Code needs nothing: it is a folder of Markdown
 - [ ] Temporal validity on facts — "what did this policy say on 3 March" is the
       Extraordinary use case, and `replay_object` already answers most of it
 
