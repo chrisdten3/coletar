@@ -154,3 +154,43 @@ Two known limitations, neither of which the labelled set can fix on its own:
 free — it is regular expressions — which is exactly why it is worth pushing as far as
 measurement says it can go before reaching for inference. When the model path lands, it
 should run against the user's own local model, where inference costs nothing.
+
+
+## M6.1 — the same extractor, a different register
+
+An account export is not a proxy transcript. The eight original patterns were tuned
+on live turns, where people write "I prefer X"; an export is years of standing
+instructions to the assistant, decisions a team took, and tools the user simply uses.
+
+Measured against a 100-turn labelled export set, the extractor fired on **4 of 35**
+durable statements — 100% precision, 11.4% recall. **The ≥85% precision bar passes
+vacuously at that recall**, which is the reason to report both numbers: precision on
+four extractions is not the claim precision on thirty-five would be.
+
+Three patterns were added for forms that recur across every surface rather than
+shapes reverse-engineered from one fixture — an imperative addressed to the assistant
+(`always`/`never`, anchored to a sentence start so "I would always use X" cannot
+reach it), a decision already taken (`we decided/settled/standardised`, where "we
+should" deliberately does not match), and habitual use of a named thing (`I use/run`).
+
+| set | before | after |
+|---|---|---|
+| M2.2 labelled turns — false-positive rate | 4.3% | **4.3%** |
+| M6.1 export set — precision | 100% | **100%** |
+| M6.1 export set — recall | 11.4% | **31.4%** |
+
+Nearly tripled export recall at **zero cost** on the independent set, which is the
+measurement that matters: the M2.2 set was not written for this change.
+
+### What these numbers are not
+
+The export fixture is synthetic and was authored alongside the patterns it measures.
+That makes its recall figure indicative rather than authoritative — tuning patterns
+against a fixture you wrote is circular, and the honest guard against it is that the
+*independent* M2.2 rate did not move. The number to trust is 4.3%.
+
+31.4% is also not a corridor anyone would call working. Regex over open-ended prose
+has a ceiling, and it is close. This measurement is the case for M6.2 doing the
+extracting with a model, stated in numbers rather than as an assumption — and the
+test asserts only that recall has not collapsed, because pinning it would freeze a
+limitation in place as though it were a target.

@@ -217,6 +217,35 @@ def compile(
 
 
 @app.command()
+def import_chatgpt(
+    archive: str,
+    project: str | None = typer.Option(None, help="Scope everything to one project."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Import a ChatGPT export ZIP you downloaded yourself.
+
+    Acquisition is human-initiated by design (§8.1): you click your own export button
+    in ChatGPT's settings, OpenAI emails you the archive, and this starts once the
+    file is on your disk. Nothing here touches a provider's site.
+    """
+    from pathlib import Path
+
+    from coletar.acquisition.chatgpt_export import ChatGPTExportError, import_export
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        try:
+            report = await import_export(
+                build_store(), resolved, Path(archive), scope=_scope(project)
+            )
+        except ChatGPTExportError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
     from coletar.store.migrate import run_migrations

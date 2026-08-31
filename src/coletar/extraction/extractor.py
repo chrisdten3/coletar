@@ -73,6 +73,26 @@ _PATTERNS: list[tuple[re.Pattern[str], MemoryKind, Trigger]] = [
     # Globex" is the ordinary way people write a correction.
     (re.compile(r"\b(?:actually|no),?\s*(?:it'?s|i meant)\s+(?P<body>.+)", re.I),
      MemoryKind.CORRECTION, Trigger.ASSERTION),
+    # M6.1. The eight patterns above were tuned on live proxy turns, where people
+    # write "I prefer X". An account export is years of a different register — a
+    # standing instruction to the assistant, a decision the team took, a tool the
+    # user simply uses — and against a 100-turn export set the extractor fired on 4
+    # of 35 durable statements. The additions below are the forms that recur across
+    # *all* surfaces, not shapes reverse-engineered from one fixture.
+    #
+    # An imperative addressed to the assistant. Anchored to a sentence start so
+    # "I would always use X" and "never mind" cannot reach it.
+    (re.compile(r"^(?:please\s+)?(?P<body>(?:always|never)\s+\S+.*)", re.I),
+     MemoryKind.INSTRUCTION, Trigger.META),
+    # A decision already taken, stated in the first person plural. `Decision` is an
+    # ObjectType, not a MemoryKind, so this lands as a FACT about the project —
+    # which is what it is. "We should" and "we could" deliberately do not match.
+    (re.compile(r"\bwe (?:decided|settled|standardi[sz]ed|agreed)\b\s*(?P<body>.+)", re.I),
+     MemoryKind.FACT, Trigger.ASSERTION),
+    # Present-tense habitual use of a named thing. Weaker than "I prefer", so the
+    # guards below carry more of the work here.
+    (re.compile(r"\bi (?:use|run)\s+(?P<body>.+)", re.I),
+     MemoryKind.PREFERENCE, Trigger.ASSERTION),
 ]
 
 _MAX_LEN = 400

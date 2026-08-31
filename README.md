@@ -158,6 +158,21 @@ truth that replay could not reconstruct.
 
 Binds loopback only — it performs authenticated-user actions with no auth of its own.
 
+### Importing a ChatGPT export
+
+```bash
+uv run coletar import-chatgpt ~/Downloads/chatgpt-export.zip
+```
+
+You click your own export button in ChatGPT's settings and OpenAI emails you the
+archive; automation starts once the file is on your disk (§8.1). The parser walks
+only the **active branch** of each conversation — `conversations.json` is a tree, and
+an answer the user edited away should not enter the graph beside one they kept.
+
+Everything imported lands at `account_export_parse` confidence (0.60), through the
+same extractor and the same ingest boundary as every other surface, so a preference
+restated across years of chats corroborates one object instead of creating a hundred.
+
 ### True Migration
 
 ```bash

@@ -1,0 +1,614 @@
+{
+  "_note": [
+    "M6.1 labelled set: 100 user turns from tests/fixtures/chatgpt_export.zip.",
+    "`durable` marks a turn stating something about the user that should follow",
+    "them between tools. Everything else is a question, a one-off request, pasted",
+    "material or chatter \u2014 extracting from it is a false positive.",
+    "",
+    "Each conversation also carries one abandoned branch, off the active path,",
+    "saying 'I want everything in Go from now on'. It is durable-sounding on",
+    "purpose: the parser must not reach it, because the user edited it away."
+  ],
+  "labels": [
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u0",
+      "text": "I prefer TypeScript over JavaScript for anything longer than a script.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u1",
+      "text": "Always give me the failing test output before you propose a fix.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u2",
+      "text": "I work in Pacific time and I don't take meetings before 10am.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u3",
+      "text": "We decided to use Postgres for the analytics service instead of Mongo.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u4",
+      "text": "My team is four engineers and we ship on Thursdays.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u5",
+      "text": "I'm allergic to shellfish, keep that in mind for restaurant suggestions.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u6",
+      "text": "I always want money handled as integer minor units, never floats.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u7",
+      "text": "Please stop suggesting Docker, I develop natively on macOS.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u8",
+      "text": "I use pnpm, not npm or yarn.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-00",
+      "node": "conv-00-u9",
+      "text": "My daughter's name is Ada and she's seven.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u0",
+      "text": "I'd rather read a table than a bulleted list.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u1",
+      "text": "We standardised on Tailwind for all new frontend work.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u2",
+      "text": "I've been a backend engineer for about eleven years.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u3",
+      "text": "Never use em dashes in anything you write for me.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u4",
+      "text": "I'm learning Portuguese and I'm roughly B1.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u5",
+      "text": "Our deploy target is Fly.io, we moved off Heroku last year.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u6",
+      "text": "I prefer short replies. Two paragraphs at most unless I ask.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u7",
+      "text": "I'm vegetarian.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u8",
+      "text": "The company is called Northwind and we do logistics software.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-01",
+      "node": "conv-01-u9",
+      "text": "I take my coffee black and I drink about four cups a day.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u0",
+      "text": "Write dates as YYYY-MM-DD for me, always.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u1",
+      "text": "I've switched from vim to Helix as my main editor.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u2",
+      "text": "My budget for the kitchen renovation is 40 thousand.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u3",
+      "text": "I don't want any AI-generated images in my slide decks.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u4",
+      "text": "We use trunk-based development, no long-lived feature branches.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u5",
+      "text": "I'm based in Lisbon now, I moved from Berlin in March.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u6",
+      "text": "Please always cite your sources with links.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u7",
+      "text": "I find Kubernetes overkill for our scale and I don't want to use it.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u8",
+      "text": "My partner is a physician and works nights.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-02",
+      "node": "conv-02-u9",
+      "text": "I want all code examples in Python 3.12 or newer.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u0",
+      "text": "We settled on Stripe for payments after comparing it with Adyen.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u1",
+      "text": "I'm training for a half marathon in October.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u2",
+      "text": "I read at a technical level, don't simplify things for me.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u3",
+      "text": "Our test suite runs under pytest with asyncio_mode set to auto.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u4",
+      "text": "I have a strong preference for tabs over spaces.",
+      "durable": true
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u5",
+      "text": "What's the difference between a mutex and a semaphore?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u6",
+      "text": "Can you explain how HNSW indexes work?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u7",
+      "text": "What time is it in Tokyo right now?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u8",
+      "text": "How do I reverse a linked list in Rust?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-03",
+      "node": "conv-03-u9",
+      "text": "Why is my Docker build so slow?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u0",
+      "text": "What does this error mean?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u1",
+      "text": "Is Postgres or MySQL faster for writes?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u2",
+      "text": "Who won the world cup in 1998?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u3",
+      "text": "How many calories are in an avocado?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u4",
+      "text": "What's a good name for a golden retriever?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u5",
+      "text": "Could you summarise this article for me?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u6",
+      "text": "What's the capital of Uruguay?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u7",
+      "text": "How does OAuth PKCE actually work?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u8",
+      "text": "Should I use a heap or a balanced tree here?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-04",
+      "node": "conv-04-u9",
+      "text": "What's the weather going to be like tomorrow?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u0",
+      "text": "Write me a haiku about compilers.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u1",
+      "text": "Fix the indentation in this snippet.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u2",
+      "text": "Translate this paragraph into French.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u3",
+      "text": "Make this email sound friendlier.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u4",
+      "text": "Generate ten test cases for this function.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u5",
+      "text": "Rewrite this to be half as long.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u6",
+      "text": "Draft a standup update for today.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u7",
+      "text": "Give me a regex for matching UK postcodes.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u8",
+      "text": "Turn this list into a markdown table.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-05",
+      "node": "conv-05-u9",
+      "text": "Explain this stack trace.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u0",
+      "text": "Come up with five taglines for a coffee shop.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u1",
+      "text": "Convert this SQL to an ORM query.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u2",
+      "text": "Proofread this paragraph.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u3",
+      "text": "Write a cover letter for this job posting.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u4",
+      "text": "Sketch an outline for a talk on distributed tracing.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u5",
+      "text": "Traceback (most recent call last):\n  File \"app.py\", line 42, in <module>\n    raise ValueError",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u6",
+      "text": "{\"status\": 500, \"error\": \"internal server error\", \"trace_id\": \"abc123\"}",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u7",
+      "text": "def fib(n):\n    return n if n < 2 else fib(n-1) + fib(n-2)",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u8",
+      "text": "npm ERR! code ERESOLVE\nnpm ERR! could not resolve dependency",
+      "durable": false
+    },
+    {
+      "conversation": "conv-06",
+      "node": "conv-06-u9",
+      "text": "SELECT id, name FROM users WHERE created_at > now() - interval '7 days';",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u0",
+      "text": "| id | name | status |\n|----|------|--------|\n| 1  | a    | ok     |",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u1",
+      "text": "<div class=\"container\"><span>hello</span></div>",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u2",
+      "text": "commit 9f2a1b\nAuthor: someone\nDate: Tue Mar 4",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u3",
+      "text": "[INFO] Build succeeded in 4.\uff12s",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u4",
+      "text": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: settings",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u5",
+      "text": "2026-01-14 10:22:31 WARN connection pool exhausted",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u6",
+      "text": "pip install -r requirements.txt",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u7",
+      "text": "import numpy as np\nimport pandas as pd",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u8",
+      "text": "$ git status\nOn branch main\nnothing to commit",
+      "durable": false
+    },
+    {
+      "conversation": "conv-07",
+      "node": "conv-07-u9",
+      "text": "<?xml version=\"1.0\"?><root><item/></root>",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u0",
+      "text": "thanks, that worked",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u1",
+      "text": "ok",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u2",
+      "text": "hmm, not quite what I meant",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u3",
+      "text": "perfect, thank you",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u4",
+      "text": "can you try again",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u5",
+      "text": "Suppose someone preferred Java \u2014 what would you tell them?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u6",
+      "text": "My colleague thinks we should use GraphQL.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u7",
+      "text": "A hypothetical user who hates dark mode would want what?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u8",
+      "text": "Imagine I were a beginner. How would you explain it?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-08",
+      "node": "conv-08-u9",
+      "text": "What would a designer say about this layout?",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u0",
+      "text": "nevermind",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u1",
+      "text": "wait, go back",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u2",
+      "text": "that's wrong",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u3",
+      "text": "keep going",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u4",
+      "text": "one sec",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u5",
+      "text": "Let's start over.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u6",
+      "text": "Actually never mind that.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u7",
+      "text": "Sounds good.",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u8",
+      "text": "\ud83d\udc4d",
+      "durable": false
+    },
+    {
+      "conversation": "conv-09",
+      "node": "conv-09-u9",
+      "text": "Could you elaborate?",
+      "durable": false
+    }
+  ]
+}

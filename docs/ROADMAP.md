@@ -623,8 +623,19 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 - [ ] Desktop folder-watcher for the user-initiated export ZIP — detection within
       10s, zero false positives across 50 unrelated files
-- [ ] ZIP parser → typed objects at `account_export_parse` confidence, ≥85%
-      extraction precision against a hand-labelled 100-object fixture set
+- [x] ZIP parser → typed objects at `account_export_parse` confidence. **Precision
+      100% against the hand-labelled 100-turn set**, clearing the ≥85% bar — but it
+      clears it *vacuously*, and that is the finding. The extractor fired on 4 of 35
+      durable statements, and precision on four extractions is not the claim
+      precision on thirty-five would be. Three general patterns took export recall
+      11.4% -> 31.4% at zero cost on the independent M2.2 set (4.3% FP, unchanged).
+      Still not a working corridor: regex over open-ended prose has a ceiling and
+      this is near it, which is the case for M6.2 in numbers rather than assumption.
+      **The parser's real discipline is the tree walk** — `conversations.json` holds
+      a graph, every edit and regeneration forks it, and all branches ship. Walking
+      the active branch only means an instruction the user *edited away* never enters
+      the graph at the same confidence as one they kept. Verified: 0 of 10 planted
+      abandoned turns reached the import
 - [ ] Raw archive stored separately from derived objects, so it can be re-parsed as
       extraction improves
 - [ ] `ChatGPTCompiler` → Custom GPT package the **user** uploads. No UI driving.
