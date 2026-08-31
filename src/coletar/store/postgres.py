@@ -73,6 +73,9 @@ def _locality_clause(caller_surface: Provider | None) -> tuple[str, list[Any]]:
 #: half matters between a correction being written and compression next running --
 #: retrieval must not serve the stale fact in that window (§6). The supersession
 #: subquery is itself tenant-scoped: another tenant's correction is none of ours.
+#: Bounds the supersedes walk. A cycle is bad data, not a reason to hang.
+_MAX_SUPERSEDES_DEPTH = 16
+
 _ACTIVE_PREDICATE = """
     o.tenant_id = %s
     AND o.retired_at IS NULL
@@ -429,6 +432,7 @@ class PostgresStore:
         *,
         scope: Scope | None = None,
         caller_surface: Provider | None = None,
+        include_restricted: bool = False,
         top_k: int = 12,
     ) -> list[Scored]:
         query_vector = (await self._embedder.embed([query]))[0]
@@ -445,40 +449,71 @@ class PostgresStore:
             else:
                 scope_clause = "AND o.scope_type = 'global'"
         locality_clause, locality_params = _locality_clause(caller_surface)
+        sensitivity_clause = "" if include_restricted else "AND o.sensitivity <> 'restricted'"
 
         # Over-fetch from each half: the final ordering is the blend below, so the
         # candidate pool has to be wider than the number of rows we return.
         fetch = max(top_k * 4, 50)
+        # Candidate generation deliberately does *not* exclude superseded rows, and
+        # deliberately does not apply scope, locality or sensitivity. A correction
+        # rarely repeats the value it corrects, so the only text matching "is Chris
+        # still at Acme?" is the sentence being retired -- narrowing it away here is
+        # what no reranker could repair. `resolve` walks each candidate forward to the
+        # object that now speaks for it, and every policy filter is applied to *that*
+        # row in the outer WHERE, never to the ancestor that merely matched.
         sql = f"""
-        WITH candidates AS (
+        WITH RECURSIVE cand AS (
             (
                 SELECT o.id FROM context_object o
                 JOIN object_embedding e
                   ON e.tenant_id = o.tenant_id AND e.object_id = o.id
-                WHERE {_ACTIVE_PREDICATE} {scope_clause} {locality_clause}
+                WHERE o.tenant_id = %s AND o.retired_at IS NULL
                 ORDER BY e.embedding <=> %s
                 LIMIT %s
             )
             UNION
             (
                 SELECT o.id FROM context_object o
-                WHERE {_ACTIVE_PREDICATE} {scope_clause} {locality_clause}
+                WHERE o.tenant_id = %s AND o.retired_at IS NULL
                   AND o.content %% %s
                 LIMIT %s
             )
+        ),
+        resolve(cand_id, cur_id, depth) AS (
+            SELECT c.id, c.id, 0 FROM cand c
+            UNION ALL
+            SELECT r.cand_id, s.id, r.depth + 1
+            FROM resolve r
+            JOIN context_object s
+              ON s.tenant_id = %s AND s.supersedes = r.cur_id
+            -- A correction cycle is bad data, not a reason to hang the query.
+            WHERE r.depth < {_MAX_SUPERSEDES_DEPTH}
+        ),
+        head AS (
+            SELECT DISTINCT ON (cand_id) cand_id, cur_id
+            FROM resolve ORDER BY cand_id, depth DESC
         )
-        SELECT {_OBJECT_COLUMNS}, e.embedding AS embedding
-        FROM context_object o
-        JOIN candidates c ON c.id = o.id AND o.tenant_id = %s
+        SELECT {_OBJECT_COLUMNS},
+               e.embedding AS embedding,
+               m.content AS match_content,
+               me.embedding AS match_embedding
+        FROM head h
+        JOIN context_object o ON o.tenant_id = %s AND o.id = h.cur_id
+        JOIN context_object m ON m.tenant_id = %s AND m.id = h.cand_id
         LEFT JOIN object_embedding e
           ON e.tenant_id = o.tenant_id AND e.object_id = o.id
+        LEFT JOIN object_embedding me
+          ON me.tenant_id = m.tenant_id AND me.object_id = m.id
+        WHERE o.retired_at IS NULL
+          {scope_clause} {locality_clause} {sensitivity_clause}
         """
-        # Each half of the union carries its own tenant parameter, because
-        # _ACTIVE_PREDICATE is interpolated into both.
         params = [
-            tenant_id, *scope_params, *locality_params, query_array, fetch,
-            tenant_id, *scope_params, *locality_params, query, fetch,
+            tenant_id, query_array, fetch,
+            tenant_id, query, fetch,
             tenant_id,
+            tenant_id,
+            tenant_id,
+            *scope_params, *locality_params,
         ]
 
         pool = await self._get_pool()
@@ -487,29 +522,36 @@ class PostgresStore:
             rows = await cur.fetchall()
 
         query_tokens = set(tokenize(query))
-        scored: list[Scored] = []
+        # Keyed by the object actually returned: a correction reached through two
+        # different stale ancestors is one hit at its best score, not two.
+        best: dict[str, Scored] = {}
         for row in rows:
             obj = _to_record(row)
             # pgvector hands back its own `Vector` wrapper; `to_list()` is its
             # accessor, and the ranking blend below wants plain floats.
-            embedding = row.get("embedding")
+            embedding = row.get("match_embedding")
             vector = [] if embedding is None else embedding.to_list()
-            lexical = lexical_score(query_tokens, set(tokenize(obj.content)))
+            # Relevance comes from the text that matched; trust and recency come from
+            # the object being returned. Scoring a correction by its ancestor's
+            # confidence would let a retired guess vouch for what replaced it.
+            lexical = lexical_score(query_tokens, set(tokenize(str(row["match_content"]))))
             similarity = cosine(query_vector, vector)
             if lexical <= 0.0 and similarity <= 0.0:
                 continue
-            scored.append(
-                Scored(
-                    obj=obj,
-                    components=rank_score(
-                        lexical=lexical,
-                        vector=similarity,
-                        confidence=obj.confidence,
-                        updated_at=obj.updated_at,
-                    ),
-                )
+            hit = Scored(
+                obj=obj,
+                components=rank_score(
+                    lexical=lexical,
+                    vector=similarity,
+                    confidence=obj.confidence,
+                    updated_at=obj.updated_at,
+                ),
             )
-        scored.sort(key=lambda hit: (hit.score, hit.obj.id), reverse=True)
+            current = best.get(obj.id)
+            if current is None or hit.score > current.score:
+                best[obj.id] = hit
+
+        scored = sorted(best.values(), key=lambda hit: (hit.score, hit.obj.id), reverse=True)
         return scored[:top_k]
 
 

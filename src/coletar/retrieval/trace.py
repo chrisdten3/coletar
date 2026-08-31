@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from coletar.retrieval.context import RetrievedContext
 from coletar.retrieval.ranking import RANKING_VERSION
+from coletar.retrieval.strategy import STRATEGY_VERSION
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import Scope
 from coletar.schema.tenancy import TenantId
@@ -63,6 +64,10 @@ class ComponentVersions:
     embedder: str
     ranking: str = RANKING_VERSION
     backend: str = "unknown"
+    #: Which reranking strategy ran. `published` is the deterministic default and
+    #: the backend-parity contract; anything else is a caller opting in.
+    strategy: str = "published"
+    strategy_version: str = STRATEGY_VERSION
 
     def as_dict(self) -> dict[str, str]:
         return {"embedder": self.embedder, "ranking": self.ranking, "backend": self.backend}
@@ -124,6 +129,7 @@ def build_trace(
     backend: str = "unknown",
     surface: str = "unknown",
     principal: str | None = None,
+    strategy: str = "published",
     record_query_text: bool = False,
 ) -> RetrievalTrace:
     return RetrievalTrace(
@@ -133,7 +139,9 @@ def build_trace(
         principal=principal,
         top_k=top_k,
         token_budget=token_budget,
-        versions=ComponentVersions(embedder=embedder_model, backend=backend),
+        versions=ComponentVersions(
+            embedder=embedder_model, backend=backend, strategy=strategy
+        ),
         returned_ids=[obj.id for obj in context.objects],
         component_scores=[c.as_dict() for c in context.components],
         token_estimate=context.token_estimate,

@@ -73,15 +73,34 @@ def _query_for(content: str) -> str:
 def graph(monkeypatch) -> InMemoryStore:
     """One canonical graph, which both surfaces are pointed at.
 
-    This is the M3.2 shortcut recorded in the roadmap: the proxy reaches the store
-    directly rather than calling the MCP server, so it bypasses auth and tenant
-    resolution — it *is* the trusted local process. Fine for a single-user daemon,
-    and an explicit M4 item to make it an MCP client.
+    M3.2 shortcut, closed in M4.2: the proxy used to reach the store directly and
+    bypass auth, tenant resolution and scope. It now holds a `ContextClient` carrying
+    an explicit principal, so both surfaces in this harness resolve their tenant the
+    same way — from an identity, not from configuration one of them happened to read.
+    The client is still in-process here, because what this file measures is
+    propagation through the graph, not transport.
     """
     store = InMemoryStore(embedder=HashingEmbedder(768))
-    monkeypatch.setattr(proxy_module, "build_store", lambda: store)
     monkeypatch.setattr(mcp_server, "build_store", lambda: store)
     return store
+
+
+def _install_proxy_client(monkeypatch, store: InMemoryStore, tenant: TenantId) -> None:
+    """Point the proxy at one tenant's graph, as a named principal."""
+    from coletar.mcp.auth import DEFAULT_SCOPES
+    from coletar.proxy.client import LOCAL_PRINCIPAL_ID, LocalContextClient
+    from coletar.schema.objects import Provider
+
+    client = LocalContextClient(
+        store,
+        Principal(
+            id=LOCAL_PRINCIPAL_ID,
+            tenant_id=tenant,
+            scopes=DEFAULT_SCOPES,
+            surface=Provider.LOCAL,
+        ),
+    )
+    monkeypatch.setattr(proxy_module, "context_client", lambda: client)
 
 
 @pytest.fixture
@@ -103,7 +122,7 @@ def upstream(monkeypatch) -> dict:
 
 def _surfaces(graph: InMemoryStore, upstream: dict, monkeypatch, tenant: TenantId):
     """Adapters over the two real surfaces, shaped for the harness."""
-    monkeypatch.setattr(proxy_module, "proxy_tenant", lambda: tenant)
+    _install_proxy_client(monkeypatch, graph, tenant)
     principal = Principal(id="claude-connector", tenant_id=tenant)
 
     async def proxy_write(content: str) -> str:
@@ -202,7 +221,7 @@ async def test_a_connector_write_reaches_the_local_models_system_prompt(
 ):
     """The promise, end to end and literally: Claude writes, and the very next thing
     the local model is asked carries that memory in its system prompt."""
-    monkeypatch.setattr(proxy_module, "proxy_tenant", lambda: ALICE)
+    _install_proxy_client(monkeypatch, graph, ALICE)
 
     with principal_scope(Principal(id="claude-connector", tenant_id=ALICE)):
         await mcp_server.mcp.call_tool(
@@ -229,7 +248,7 @@ async def test_a_connector_write_reaches_the_local_models_system_prompt(
 # -- tenancy across the surfaces ----------------------------------------------
 async def test_propagation_does_not_cross_tenants(graph, upstream, monkeypatch):
     """M3.1 and M3.2 together: propagation is a property *within* a tenant."""
-    monkeypatch.setattr(proxy_module, "proxy_tenant", lambda: ALICE)
+    _install_proxy_client(monkeypatch, graph, ALICE)
 
     with TestClient(proxy_module.app) as client:
         client.post(
@@ -253,13 +272,14 @@ async def test_a_mismatched_proxy_tenant_silently_stops_propagation(
 ):
     """The first thing that goes wrong when someone configures this for real.
 
-    The proxy resolves its tenant from configuration and the connector from its
-    principal; if those disagree, both surfaces work perfectly and nothing
-    propagates. That is correct isolation behaving exactly as designed, and it is
-    indistinguishable from a broken store unless you know to look — so it is pinned
-    here as documented behaviour rather than left as a debugging story.
+    Both surfaces now resolve their tenant from a principal rather than one reading
+    configuration, which makes the mismatch a provisioning error instead of a config
+    drift — but it does not make it *loud*. If the two principals name different
+    tenants, both surfaces work perfectly and nothing propagates. That is correct
+    isolation behaving exactly as designed, and it is indistinguishable from a broken
+    store unless you know to look, so it stays pinned as documented behaviour.
     """
-    monkeypatch.setattr(proxy_module, "proxy_tenant", lambda: BOB)  # config says Bob
+    _install_proxy_client(monkeypatch, graph, BOB)  # the proxy's key says Bob
 
     with TestClient(proxy_module.app) as client:
         client.post(

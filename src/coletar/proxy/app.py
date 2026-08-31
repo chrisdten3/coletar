@@ -7,9 +7,14 @@ whole loop is on the user's machine.
 
 It also doubles as the reference implementation of the connector pattern in §3.1 --
 Ollama has no native MCP client, so this *is* the bridge for the local leg. Its
-writes are recorded as connector writes under a `local-proxy` principal, so the
-event log distinguishes "the bridge extracted this from my words" from "a frontier
-model called write_memory".
+writes are recorded as connector writes under a named principal, so the event log
+distinguishes "the bridge extracted this from my words" from "a frontier model
+called write_memory".
+
+M4.2: it no longer opens the database. Everything it needs from the graph goes
+through a `ContextClient` carrying an explicit principal -- in-process by default so
+the wedge still runs with no infrastructure, or as an MCP client holding no database
+credentials when a server is configured. See `coletar.proxy.client`.
 """
 
 from __future__ import annotations
@@ -24,29 +29,26 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from coletar.config import get_settings
 from coletar.extraction import extract_memories
-from coletar.ingest import remember
-from coletar.retrieval import retrieve
-from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import GLOBAL_SCOPE, Memory, Provider, Scope, ScopeType
-from coletar.schema.tenancy import TenantId
-from coletar.schema.tenancy import tenant_id as parse_tenant_id
-from coletar.store import build_store
-from coletar.store.base import Store
+from coletar.proxy.client import ContextClient, build_context_client
+from coletar.schema.objects import GLOBAL_SCOPE, Memory, Scope, ScopeType
 
-#: The proxy holds no bearer token -- it is a local daemon, not a remote connector --
-#: so it names itself explicitly rather than writing anonymously.
-PROXY_PRINCIPAL = "local-proxy"
+#: Built once per process. The client owns the principal, so which graph the daemon
+#: writes into is decided at startup and printed there, never per request.
+_client: ContextClient | None = None
 
 
-def proxy_tenant() -> TenantId:
-    """The proxy is an application boundary, so it may resolve a configured tenant.
+def context_client() -> ContextClient:
+    global _client
+    if _client is None:
+        _client = build_context_client()
+    return _client
 
-    Unlike the MCP server, which derives the tenant from an authenticated principal,
-    this daemon has no caller identity -- it is the trusted local process. The tenant
-    is therefore configuration, and `run()` prints it at startup so the operator can
-    see which graph they are about to write into.
-    """
-    return parse_tenant_id(get_settings().default_tenant_id)
+
+def reset_client() -> None:
+    """Drop the process-wide client. Tests need this; a running server does not."""
+    global _client
+    _client = None
+
 
 app = FastAPI(title="coletar local proxy", version="0.1.0")
 
@@ -124,31 +126,15 @@ class SSEAssembler:
             return
 
 
-async def _record(store: Store, tenant: TenantId, memory: Memory, scope: Scope) -> None:
-    # Through the ingest boundary, so a preference the user restates in a later
-    # conversation corroborates the object that already says it rather than growing
-    # the graph a copy the compiler would later emit twice.
-    await remember(
-        store,
-        tenant,
-        memory,
-        event=Event(
-            type=EventType.CONNECTOR_WRITE,
-            object_id=memory.id,
-            actor=Actor.CONNECTOR,
-            provider=memory.provenance.provider,
-            detail={
-                "kind": memory.kind,
-                "scope": str(scope),
-                "principal": PROXY_PRINCIPAL,
-            },
-        ),
-        caller_surface=Provider.LOCAL,
-    )
+async def _record(client: ContextClient, memory: Memory, scope: Scope) -> None:
+    # Through the client, which goes through the ingest boundary, so a preference the
+    # user restates in a later conversation corroborates the object that already says
+    # it rather than growing the graph a copy the compiler would later emit twice.
+    await client.write(memory, scope=scope)
 
 
 async def _extract_and_store(
-    store: Store, tenant: TenantId, *, user_text: str, assistant_text: str, scope: Scope
+    client: ContextClient, *, user_text: str, assistant_text: str, scope: Scope
 ) -> None:
     """Runs *after* the response has been delivered — never in front of it.
 
@@ -167,7 +153,7 @@ async def _extract_and_store(
         for memory in await extract_memories(
             user_text=user_text, assistant_text=assistant_text, scope=scope
         ):
-            await _record(store, tenant, memory, scope)
+            await _record(client, memory, scope)
     except Exception as exc:  # noqa: BLE001 - see the docstring
         warnings.warn(f"coletar: extraction failed for this turn: {exc!r}", stacklevel=2)
 
@@ -180,8 +166,7 @@ async def healthz() -> dict[str, str]:
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, background: BackgroundTasks) -> Any:
     settings = get_settings()
-    store = build_store()
-    tenant = proxy_tenant()
+    client = context_client()
     body: dict[str, Any] = await request.json()
 
     messages: list[dict[str, Any]] = body.get("messages", [])
@@ -192,22 +177,9 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
 
     query = _last_user_message(messages)
     if query:
-        context = await retrieve(
-            store,
-            tenant,
-            query,
-            scope=scope,
-            # The local model is the `Provider.LOCAL` surface: an object kept
-            # local_only to Claude or ChatGPT must not leak into this prompt.
-            caller_surface=Provider.LOCAL,
-            top_k=settings.retrieval_top_k,
-            token_budget=settings.retrieval_token_budget,
-            # Injecting memory into a local model's prompt is as consequential as an
-            # MCP search, so it leaves the same record.
-            surface="proxy",
-            principal=PROXY_PRINCIPAL,
-        )
-        body["messages"] = _inject(messages, context.as_prompt_block())
+        # Scope, locality and the retrieval trace are all the client's business
+        # now: it holds the principal, and the principal is what decides them.
+        body["messages"] = _inject(messages, await client.context_block(query, scope=scope))
 
     headers = {"Content-Type": "application/json"}
     if settings.upstream_api_key:
@@ -221,8 +193,8 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
             assembler = SSEAssembler()
             delivered_cleanly = False
             async with (
-                httpx.AsyncClient(timeout=None) as client,
-                client.stream("POST", url, json=body, headers=headers) as upstream_response,
+                httpx.AsyncClient(timeout=None) as http,
+                http.stream("POST", url, json=body, headers=headers) as upstream_response,
             ):
                 async for chunk in upstream_response.aiter_bytes():
                     # Forward first, parse second. Reassembly must never sit between
@@ -236,8 +208,7 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
             # the model never answered should not teach us anything.
             if delivered_cleanly:
                 await _extract_and_store(
-                    store,
-                    tenant,
+                    client,
                     user_text=query,
                     assistant_text=assembler.reply,
                     scope=scope,
@@ -245,8 +216,8 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
 
         return StreamingResponse(upstream(), media_type="text/event-stream")
 
-    async with httpx.AsyncClient(timeout=300.0) as client:
-        response = await client.post(url, json=body, headers=headers)
+    async with httpx.AsyncClient(timeout=300.0) as http:
+        response = await http.post(url, json=body, headers=headers)
 
     if response.status_code != 200:
         return JSONResponse(status_code=response.status_code, content=response.json())
@@ -257,7 +228,7 @@ async def chat_completions(request: Request, background: BackgroundTasks) -> Any
     # it. The streaming path below already has this property, because its extraction
     # runs once the stream has finished being forwarded.
     background.add_task(
-        _extract_and_store, store, tenant, user_text=query, assistant_text=reply, scope=scope
+        _extract_and_store, client, user_text=query, assistant_text=reply, scope=scope
     )
 
     return JSONResponse(content=payload)
@@ -269,7 +240,8 @@ def run() -> None:
     settings = get_settings()
     # Visible rather than implied: the operator should not have to read .env to
     # find out whose graph this daemon is about to write into.
-    print(f"coletar proxy -> tenant {proxy_tenant()}, upstream {settings.upstream_base_url}")
+    print(f"coletar proxy -> {context_client().label}")
+    print(f"                upstream {settings.upstream_base_url}")
     uvicorn.run(app, host="127.0.0.1", port=settings.proxy_port)
 
 

@@ -35,6 +35,7 @@ from coletar.schema.objects import (
     Provider,
     Scope,
     ScopeType,
+    Sensitivity,
     object_from_record,
 )
 from coletar.schema.tenancy import LEGACY_TENANT, CrossTenantError, TenantId
@@ -333,6 +334,29 @@ class InMemoryStore:
             index.put(object_id, vector)
             self._tokens[(tenant_id, object_id)] = set(tokenize(content))
 
+    def _replacement_heads(self, tenant_id: TenantId) -> dict[str, str]:
+        """Every superseded id mapped to the live object that now speaks for it.
+
+        Chains are followed to their head, so a fact corrected twice still resolves
+        to what is true now rather than to the middle of its own history.
+        """
+        replaced_by = {
+            obj.supersedes: object_id
+            for (tenant, object_id), obj in self._objects.items()
+            if tenant == tenant_id and obj.supersedes
+        }
+        heads: dict[str, str] = {}
+        for stale in replaced_by:
+            seen = {stale}
+            current = stale
+            while current in replaced_by:
+                current = replaced_by[current]
+                if current in seen:  # a correction cycle is bad data, not a hang
+                    break
+                seen.add(current)
+            heads[stale] = current
+        return heads
+
     async def search(
         self,
         tenant_id: TenantId,
@@ -340,6 +364,7 @@ class InMemoryStore:
         *,
         scope: Scope | None = None,
         caller_surface: Provider | None = None,
+        include_restricted: bool = False,
         top_k: int = 12,
     ) -> list[Scored]:
         await self._ensure_embeddings(tenant_id)
@@ -349,39 +374,58 @@ class InMemoryStore:
         # vectors are not candidates, rather than being candidates a later filter is
         # trusted to remove.
         similarities = self._index(tenant_id).similarities(query_vector)
-        superseded = self._superseded_ids(tenant_id)
+        heads = self._replacement_heads(tenant_id)
         now = datetime.now(UTC)
 
-        scored: list[Scored] = []
+        # Keyed by the object actually returned, so a correction reached through two
+        # different stale ancestors is one hit at its best score, not three.
+        best: dict[str, Scored] = {}
         for (tenant, object_id), obj in self._objects.items():
-            if tenant != tenant_id:
+            if tenant != tenant_id or not obj.is_active:
                 continue
-            # Stage 1, the policy filter (§5.1): retired and superseded objects and
-            # anything out of scope never reach candidate generation at all, so no
-            # later stage has to remember to exclude them.
-            if not obj.is_active or object_id in superseded:
+
+            # Stage 1, candidate generation (§5.1). A superseded object stays a
+            # *candidate* -- "is Chris still at Acme?" only matches the sentence
+            # containing "Acme", and the correction naming Globex does not repeat it.
+            # Dropping it here is why corrections measured 50%: the reranker never
+            # got the chance, because narrowing had already thrown the match away.
+            returned = self._objects.get((tenant_id, heads.get(object_id, object_id)))
+
+            # Every policy check applies to the object handed back, never to the one
+            # that merely matched -- otherwise a stale ancestor's scope or locality
+            # would decide who may read its replacement.
+            if returned is None or not returned.is_active:
                 continue
-            if not _in_search_scope(obj.scope, scope):
+            if not _in_search_scope(returned.scope, scope):
                 continue
-            if not obj.locality.visible_to(caller_surface):
+            if not returned.locality.visible_to(caller_surface):
                 continue
+            if returned.sensitivity is Sensitivity.RESTRICTED and not include_restricted:
+                continue
+
             lexical = lexical_score(query_tokens, self._tokens.get((tenant_id, object_id), set()))
             vector = similarities.get(object_id, 0.0)
             if lexical <= 0.0 and vector <= 0.0:
                 continue
-            scored.append(
-                Scored(
-                    obj=obj,
-                    components=rank_score(
-                        lexical=lexical,
-                        vector=vector,
-                        confidence=obj.confidence,
-                        updated_at=obj.updated_at,
-                        now=now,
-                    ),
-                )
+
+            # Relevance comes from the text that matched; trust and recency come from
+            # the object being returned. Scoring a correction by its ancestor's
+            # confidence would let a retired guess vouch for the fact that replaced it.
+            hit = Scored(
+                obj=returned,
+                components=rank_score(
+                    lexical=lexical,
+                    vector=vector,
+                    confidence=returned.confidence,
+                    updated_at=returned.updated_at,
+                    now=now,
+                ),
             )
-        scored.sort(key=lambda hit: (hit.score, hit.obj.id), reverse=True)
+            current = best.get(returned.id)
+            if current is None or hit.score > current.score:
+                best[returned.id] = hit
+
+        scored = sorted(best.values(), key=lambda hit: (hit.score, hit.obj.id), reverse=True)
         # Only the returned slice is copied, so the cost is bounded by top_k rather
         # than by the size of the corpus.
         return [

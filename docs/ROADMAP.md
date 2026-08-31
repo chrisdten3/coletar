@@ -453,11 +453,18 @@ Stated here rather than discovered at the end:
 SCOPE §6. Views over the substrate M1–M3 already built, not a second data model.
 
 - [x] Compression job: superseded-chain retirement, schedulable and on-demand
-- [ ] **The local proxy becomes an MCP client.** It calls `build_store()` directly
-      today, so it bypasses authentication, tenant resolution and scope enforcement.
-      Fine for a single-user local daemon, wrong for anything else: both surfaces
-      should pass through the same auth, tenancy and event semantics rather than one
-      of them holding database credentials
+- [x] **The local proxy becomes an MCP client.** It no longer opens the database.
+      Everything it needs goes through a `ContextClient` carrying an explicit
+      principal: `LocalContextClient` keeps the zero-infrastructure default and gains
+      an identity with stated scopes, `RemoteContextClient` speaks MCP over
+      streamable HTTP with an API key and holds no database credentials at all.
+      The real problem was never the credentials — a caller holding a connection has
+      no *identity*, so it cannot be granted read without write, confined to a tenant
+      it did not choose, or revoked. Notably the remote client exposes no principal,
+      because it cannot know one: the key maps to a principal on the server, and an
+      identity a client can describe is one a client can claim. Proved against a live
+      server on a real port, not a test transport — which reproduced the M3.3
+      DNS-rebinding guard in miniature
 - [x] **Dedup/merge on write** (`coletar.ingest`). Near-duplicates used to be dropped
       only at *assembly* time, which protects retrieval and not the compiler:
       `list_objects` is what a compile reads, so True Migration would have emitted
@@ -474,29 +481,63 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       with the regex extractor, seconds once M6.2's model does the extracting — and
       a failing extractor can no longer break a chat, since the reply has already
       left
-- [ ] Retrieval strategy interfaces separate candidate generation, fusion, reranking
+- [x] **Sensitivity policy filter.** `context.py` and `ranking.py` both documented
+      one; neither backend had it, so a `restricted` memory was returned by
+      `retrieve()` and rendered into the injected block — reaching local system
+      prompts, the MCP tool and the browser bridge. Only `restricted` is withheld;
+      the Inspector opts back in, because an object nobody can review is one
+      nobody can delete
+- [x] Retrieval strategy interfaces separate candidate generation, fusion, reranking
       and context assembly; the current published formula remains the deterministic
-      default and backend-parity contract
-- [ ] **Supersession-aware candidate generation.** M2.3 measured corrections at 50%
-      on the hashing default: a superseded object is correctly hidden, but the
-      correction rarely repeats the old value, so "is Chris still at Acme?" matches
-      nothing. Match the superseded object for recall, follow its `supersedes` edge,
-      return the replacement — and never the stale object itself
-- [ ] **Ranking within a scope.** `scope_isolation` sits at 77.8% on *both* backends,
-      so it is structural rather than semantic: global and project objects compete
-      and the right one loses. Zero leaks either way — isolation is not the problem
+      default and backend-parity contract. The suite measures identically with the
+      default, which is the point. The trace now carries a `rerank` stage time and
+      the strategy name, because M4.1's diagnosis depended on telling narrowing apart
+      from ranking and a stage with no number is a stage nobody can blame
+- [x] **Supersession-aware candidate generation.** Corrections **50% -> 90%**,
+      temporal 80% -> 90%, hit@5 85.8% -> 89.6%, MRR 0.676 -> 0.741, leaks still 0,
+      and both backends identical to three decimals. Superseded objects are
+      candidates again and redirect to the object that replaced them; chains resolve
+      to the head and the stale object is never returned. Every policy check applies
+      to the row handed back, so an ancestor cannot smuggle its replacement past
+      scope, locality or sensitivity. Measured cost: a correction inherits its
+      ancestor's relevance to unrelated queries, costing one paraphrase query.
+      Damping was tried across 1.0-0.75, bought nothing, and was not shipped
+- [ ] **Ranking within a scope.** Still 77.8%, and **this entry's diagnosis was
+      wrong**. "Global and project objects compete and the right one loses" describes
+      neither failure. A scope-affinity term was written, measured across weights
+      1.0-1.6, and reverted: it fixed zero misses. One wanted object never ranks at
+      all (`beacon_db` never says "database"); the other ranks 6th and is *global*, so
+      a project boost pushes it further down. Both survive a better embedder, so it
+      is not vocabulary either. See docs/RETRIEVAL.md — the next attempt should start
+      from those two sentences, not from the category name
 - [ ] Postgres sparse/full-text candidate path supplements HNSW ANN; trigram matching
       remains an identifier/fuzzy-match signal rather than the lexical retriever
-- [ ] Configurable reranking: reciprocal-rank fusion and MMR first; optional bounded
-      local cross-encoder only if it improves the labelled suite within the latency
-      budget. No reranker may bypass scope, sensitivity, retirement or supersession
+- [x] Configurable reranking: RRF and MMR ship behind the interface and **off**.
+      MMR is a generalisation of the default rather than an alternative — at
+      `lambda_=1.0` it reproduces the published order exactly — and RRF fuses by
+      position because scores from different retrievers share no scale, which is the
+      seam the Postgres sparse path plugs into. Neither improves this corpus, and
+      that is documented rather than hidden. No reranker can bypass policy
+      structurally: strategies only ever see what `Store.search` already filtered.
+      The bounded cross-encoder stays unbuilt — it was conditional on improving the
+      labelled suite, and the two cheaper rerankers did not
 - [x] Context assembly deduplicates near-identical results and skips an oversized hit
       when a later useful hit still fits, instead of terminating packing immediately
       — **delivered in M2.3**, since the retrieval trace could not report
       `deduplicated` and `skipped_oversized` without the assembly stage that produces
       them
-- [ ] Token budget honoured at retrieval time, with ≥40% token reduction on the
-      seeded corpus and no loss from the M1.2 top-5 set
+- [~] Token budget honoured at retrieval time — it truncates, reports `truncated`,
+      and skips an oversized hit rather than terminating the pack, all pinned by
+      tests. **The ≥40% reduction with no loss is not reachable on this corpus**, and
+      three approaches were measured to establish that: a relative score floor
+      (-40.2%, costs 2 queries), a confidence-gated floor (-35.9%, costs 2), and a
+      lower near-duplicate threshold (-0.0%, costs 1 — dropping a duplicate frees no
+      tokens because the next candidate backfills the slot). The cause is measured,
+      not guessed: 55 objects averaging 16 tokens, and 5 of 1485 pairs overlapping by
+      half or more. M4's dedup-on-write already collected this win at the *ingest*
+      boundary, so assembly is being asked to compress what is already compressed.
+      Revisit against a corpus with real redundancy — a raw import — rather than
+      shipping a lossy default
 - [ ] Low-confidence clustering pass (needs embeddings — now available)
 - [ ] Observability dashboard over the event log: TTL, object size, last access,
       live activity feed, retrieval score explanation, token use and latency

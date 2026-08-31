@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     # Bearer keys, comma-separated, as `id:secret` or `id:secret:read|write`.
     # Empty means the server refuses to start -- it never serves unauthenticated.
     mcp_api_keys: str = ""
+
+    # M4.2: when set, the local proxy reaches the graph as an MCP client instead
+    # of opening the database itself. Unset keeps the zero-infrastructure default,
+    # which is what makes the wedge work before anything is deployed.
+    mcp_url: str = ""
+    mcp_api_key: str = ""
     # Origins the browser bridge may call from. An allowlist, never a wildcard: these
     # endpoints are authenticated, and a wildcard would let any page a user visits
     # attempt to spend their token.

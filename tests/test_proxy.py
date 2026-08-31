@@ -15,8 +15,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from coletar.proxy import app as proxy_module
-from coletar.proxy.app import PROXY_PRINCIPAL, SSEAssembler, proxy_tenant
+from coletar.proxy.app import SSEAssembler
+from coletar.proxy.client import LOCAL_PRINCIPAL_ID, LocalContextClient
 from coletar.schema import Actor, EventType, Memory, MemoryKind
+from coletar.schema.objects import Provider as _Provider
+from coletar.schema.tenancy import tenant_id as _parse_tenant
 from coletar.store import InMemoryStore
 
 #: Build plan M2.2: added round-trip latency stays under 2 seconds.
@@ -26,7 +29,7 @@ ADDED_LATENCY_BUDGET_S = 2.0
 #: rather than from a caller. These tests must therefore act in *that* tenant, not in
 #: the generic test one — asserting against a tenant the daemon never writes to would
 #: pass for the wrong reason.
-PROXY_TENANT = proxy_tenant()
+PROXY_TENANT = _parse_tenant("tenant_proxy_test")
 
 
 def _sse(*frames: str) -> list[bytes]:
@@ -72,8 +75,24 @@ def streaming_upstream(monkeypatch):
 
 @pytest.fixture
 def store(monkeypatch):
+    """The proxy no longer opens a store; it holds a client that holds a principal.
+
+    Tests install the in-process client explicitly, which is also the shape a
+    deployment takes: whose graph the daemon writes into is decided once, at startup.
+    """
+    from coletar.mcp.auth import DEFAULT_SCOPES, Principal
+
     s = InMemoryStore()
-    monkeypatch.setattr(proxy_module, "build_store", lambda: s)
+    client = LocalContextClient(
+        s,
+        Principal(
+            id=LOCAL_PRINCIPAL_ID,
+            tenant_id=PROXY_TENANT,
+            scopes=DEFAULT_SCOPES,
+            surface=_Provider.LOCAL,
+        ),
+    )
+    monkeypatch.setattr(proxy_module, "context_client", lambda: client)
     return s
 
 
@@ -293,7 +312,7 @@ async def test_proxy_writes_are_attributed_to_the_proxy(store, upstream):
     assert event.actor is Actor.CONNECTOR
     # The bridge names itself, so the log distinguishes "extracted from my words"
     # from "a frontier model called write_memory".
-    assert event.detail["principal"] == PROXY_PRINCIPAL
+    assert event.detail["principal"] == LOCAL_PRINCIPAL_ID
 
 
 async def test_ordinary_conversation_writes_nothing(store, upstream):
