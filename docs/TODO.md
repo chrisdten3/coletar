@@ -133,7 +133,13 @@ A demo is close. A product someone else can use is not.
 
 ### 6. Live Sync coverage
 - [ ] ChatGPT connector via Developer Mode remote MCP (read path)
-- [ ] Client-side DOM capture for Claude and ChatGPT — **blocked on the AGENTS.md amendment**
+- [ ] Client-side DOM capture for Claude and ChatGPT — **unblocked**; AGENTS.md was
+      amended 2026-08-31. Content script per provider, `MutationObserver` on the
+      transcript, emitting to the existing `/v1/capture` so extraction, guards,
+      dedup and provenance are unchanged — only the source is new
+- [ ] Per-provider DOM selectors are the ongoing maintenance cost. MemoryPlugin's
+      own docs warn their Gemini sync breaks when that UI changes; budget for the
+      same rather than being surprised by it
 - [ ] Per-site toggles and a visible capture indicator
 - [ ] Reliability harness: how often does a model call the tool unprompted? **Never measured**
 
