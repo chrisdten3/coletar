@@ -15,13 +15,22 @@ repo implements; section references below (§2, §3.1, …) point into it.
 These are product boundaries, not preferences. Violating one is a bug even if the
 tests pass.
 
-1. **No automated extraction from any provider.** Never automate a click on a
-   provider's site, never read an authenticated page, never reuse a session cookie.
-   Live Sync happens by capture-by-tool-call through official MCP connectors.
-   Migration acquisition is human-initiated — the user clicks their own export button,
-   and automation begins once the file has landed. Anthropic and OpenAI both prohibit
-   programmatic extraction in unambiguous language, and Anthropic has suspended
-   accounts over it (§8.1, §11).
+1. **Client-side capture is allowed; server-side credential use is not.** Amended
+   2026-08-31. What is permitted is what Mem0's OpenMemory and MemoryPlugin already do: **a browser extension, running
+   in the user's own browser, under the user's own session, reading pages the user is
+   actively looking at, with their consent.**
+   Still prohibited, and these are the parts that matter:
+   - **No server-side session replay.** Never store, forward or reuse a provider
+     session cookie or OAuth token on a server. That is what got OpenClaw, OpenCode,
+     Roo Code and Goose blocked in January 2026, and it is the line between "the user
+     is browsing" and "we are impersonating the user".
+   - **No headless automation.** No Playwright, Puppeteer or scripted browser driving
+     a provider's UI, whether local or hosted.
+   - **No background reading.** Only pages the user has open and is looking at. Not
+     their archive, not their other conversations.
+
+   Migration acquisition stays **human-initiated** regardless: the user clicks their
+   own export button, and automation begins once the file has landed (§8.1, §11).
 
 2. **No UI driving on the destination side either.** The ChatGPT compiler emits a
    package the *user* uploads through GPT Builder. It does not drive GPT Builder.

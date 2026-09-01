@@ -317,18 +317,30 @@ not separate subsystems — that's the whole reason the graph carries `supersede
 
 ## The acquisition boundary
 
-This is a product constraint, not an MVP shortcut, and it is enforced in the code:
+A product constraint, not an MVP shortcut, and enforced in the code. Amended
+2026-08-31 to permit client-side capture; the lines below are what remains, and they
+are the ones that matter.
 
-- **Never** automate a click on a provider's site.
-- **Never** read an authenticated provider page.
-- **Never** reuse a provider session cookie.
+- **Never** store, forward or reuse a provider session cookie or OAuth token on a
+  server. That is what got OpenClaw, OpenCode, Roo Code and Goose blocked in January
+  2026, and it is the line between "the user is browsing" and "we are impersonating
+  the user".
+- **Never** drive a provider's UI with Playwright, Puppeteer or any headless browser.
+- **Never** read in the background — only pages the user has open and is looking at,
+  not their archive.
 
-Live Sync happens by **capture-by-tool-call** — the provider's own model calls the
-MCP server, through the integration point that provider built for the purpose.
-Migration acquisition is **human-initiated**: the user clicks their own export
-button, and everything after the file lands is automated. Anthropic and OpenAI both
-prohibit programmatic extraction in unambiguous language, and Anthropic has
-suspended accounts over it. Design to the boundary, not around it.
+What *is* permitted is what Mem0's OpenMemory and MemoryPlugin already do: a browser
+extension, in the user's own browser, under their own session, reading pages they are
+actively viewing, with their consent.
+
+**The risk is real and is stated so it stays visible.** Anthropic's Consumer Terms
+prohibit automated access and prohibit powering an application from a consumer
+subscription, and permit suspension without notice. **The account at risk is the
+user's, not ours.** Anyone selling on provenance should be able to answer "how do you
+obtain this data" well, and that answer is now more complicated than it was.
+
+Migration acquisition stays **human-initiated** regardless: the user clicks their own
+export button, and everything after the file lands is automated.
 
 ## Continuity Score
 
