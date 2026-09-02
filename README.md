@@ -16,6 +16,12 @@ Two modes sit on top of the same substrate:
 
 Live Sync is "Plaid for memory." True Migration is closer to actually switching banks.
 
+**Focus, as of 2026-09-02.** The product is Live Sync and bulk acquisition, and what
+differentiates it is **selective context**, **provenance**, and **temporal state** —
+deciding which assistant may read which fact, knowing where every fact came from, and
+being able to ask what the graph believed at a past moment. True Migration stays
+built and stays the trust story; it is not what the product is sold on.
+
 ## Status
 
 **M1 and M2 complete.** The §2 object model, both store backends (zero-infrastructure
@@ -128,7 +134,8 @@ labelled set, measured in [docs/EXTRACTION.md](docs/EXTRACTION.md).
 ### The MCP server
 
 ```bash
-uv run coletar serve-mcp
+uv run coletar serve-mcp        # streamable HTTP, for hosted connectors
+uv run coletar serve-mcp-stdio  # stdio, for Claude Desktop — no deployment at all
 ```
 
 Exposes `search_context`, `write_memory`, `get_project_state` and `list_open_loops`
@@ -136,6 +143,12 @@ over streamable HTTP. This is the same server consumers add as a Claude Custom
 Connector and developers call directly. See
 [docs/CONNECTORS.md](docs/CONNECTORS.md) for the per-provider setup and the
 instruction snippets that make tool use actually reliable.
+
+The stdio form is the cheapest working connector: Claude Desktop launches coletar
+as a subprocess and speaks MCP on stdin and stdout, so there is no host, no TLS and
+no public URL. Identity comes from the operating system rather than a token,
+because the client launched the process — the same trust model as the local proxy,
+and safe for the same reason: nothing binds a port.
 
 ### The Context Inspector
 

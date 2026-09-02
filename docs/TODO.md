@@ -259,6 +259,32 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
 - [ ] **Multi-surface propagation on real providers** — the harness proves it
       in-process; nothing has proven it across two live tools
 
+## Recorded, deliberately not started
+
+**The gate above closes first.** None of these begin until the pre-product list is
+done — a fifth feature on one provider is worth less than a second provider, and
+ChatGPT still has no working surface at all.
+
+Each was checked against the competitive set and none appear to be done by anyone.
+Full reasoning in [ROADMAP.md](ROADMAP.md#m10--recorded-deliberately-not-started).
+
+- [ ] **Read receipts** — every write is logged; no read is. The graph cannot answer
+      "who has seen this", which for a privileged matter is the more urgent question.
+      Makes locality *provable*. The natural first build
+- [ ] **Redaction instead of withholding** — "handling a litigation matter" beats a
+      binary toggle; a per-destination rendering, which the compilers already do
+- [ ] **Crypto-shredding** — resolves never-hard-delete against GDPR erasure by
+      deleting a per-object key rather than the row
+- [ ] **Policy rules rather than per-object flags** — "nothing tagged
+      client-confidential leaves my local model", governing future memories too.
+      This is what an IT team buys
+- [ ] **Diff-based review queue** — a real import produced 205 unreviewed objects.
+      Nobody reviews 205 of anything; review what changed
+- [ ] **Conflict detection** — surface contradictions instead of silently picking
+- [ ] **Retention schedules** — `ttl_days` exists and nothing acts on it
+- [ ] **Per-surface context budgets** — budget as a property of the surface
+- [ ] **Break-glass access** — an override that is loud and impossible to use quietly
+
 ## The shortest path to a demo
 
 Everything here already works. This is a sequencing note, not new engineering.
