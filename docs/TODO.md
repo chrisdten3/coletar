@@ -146,7 +146,7 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 |---|---|---|
 | Claude web | extension composer bridge | ✅ verified live |
 | Claude web | Custom Connector → hosted MCP | built, **not deployed** |
-| Claude Desktop | local MCP via `claude_desktop_config.json` | ❌ **stdio transport not built** |
+| Claude Desktop | local MCP via `claude_desktop_config.json` | ✅ **built + verified** |
 | Claude Desktop | Custom Connector (remote) | built, **not deployed** |
 | Claude Code | transcript importer | ✅ built + tested |
 | ChatGPT web | Developer Mode remote MCP | ❌ never wired or tested |
@@ -154,10 +154,9 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 | ChatGPT Desktop | anything | ❌ no path investigated |
 | Ollama / local | proxy inject + extract | ✅ verified live |
 
-- [ ] **stdio transport for the MCP server.** Claude Desktop's local config launches
-      a server over stdio; ours is streamable-HTTP only, because ChatGPT requires
-      remote. Both are needed, and stdio is the one that works with *no deployment
-      at all* — which makes it the cheapest path to a working Claude Desktop demo
+- [x] **stdio transport for the MCP server** — `coletar serve-mcp-stdio`. Identity
+      comes from the OS rather than a token, because the client launches us as its
+      own subprocess; stdout is kept clean because it *is* the protocol channel
 - [ ] ChatGPT connector via Developer Mode remote MCP (read path)
 - [ ] Client-side DOM capture for Claude and ChatGPT — **unblocked**; AGENTS.md was
       amended 2026-08-31. Content script per provider, `MutationObserver` on the
@@ -242,7 +241,8 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
 - Both storage backends identical on the retrieval suite
 
 **Must be built and tested before product work starts:**
-- [ ] **stdio MCP transport** — the only Claude Desktop path that needs no host
+- [x] **stdio MCP transport** — done. Claude Desktop works with no deployment at
+      all; verified by a real client handshaking with a real subprocess
 - [ ] **ChatGPT: any working surface at all.** Nothing works today. Developer Mode
       remote MCP needs a deployment; the extension does not. Pick one and prove it
 - [ ] **ChatGPT export parser verified** against a real export (still pending)

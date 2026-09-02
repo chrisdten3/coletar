@@ -16,6 +16,7 @@ it as a tool — the sanctioned integration point each provider built for the pu
 | **Claude** | User adds coletar as a Custom Connector | ✅ | ✅ | Fully sanctioned on individual accounts. The strongest live-sync leg — build here first. |
 | **ChatGPT** | Remote MCP connector via Developer Mode (Plus/Pro+) | ✅ | ⚠️ gated | Full write-capable custom connectors are restricted to Business/Enterprise/Edu. Individual tiers get read (search/fetch) plus the explicit "remember this" confirmed-write flow. **Remote HTTPS only — never stdio.** |
 | **Gemini** | Unconfirmed | ? | ? | No verified third-party connector path for the consumer app. Do not spend engineering time until a real hook is confirmed. |
+| **Claude Desktop** | `claude_desktop_config.json` → **stdio**, no deployment |  ✅ | ✅ | The only connector path that needs no host, no TLS and no public URL. `coletar serve-mcp-stdio`. |
 | **Local models** | coletar's own proxy / bridge | ✅ | ✅ | Ollama has no native MCP client, so we are the bridge. No third-party dependency at all. |
 
 ## How propagation works
@@ -293,3 +294,44 @@ whenever DNS blips at startup.
 So the residual is real and stated: **a hostname you control can still resolve to a
 private address.** What actually holds the line is that endpoints are operator
 configuration. `COLETAR_WEBHOOKS_ALLOW_PRIVATE=true` relaxes it for local testing.
+
+
+## Claude Desktop over stdio
+
+The cheapest working connector: no host, no TLS, no public URL. Claude Desktop
+launches coletar as a subprocess and speaks MCP on its stdin and stdout.
+
+`~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "coletar": {
+      "command": "uv",
+      "args": ["--directory", "/path/to/coletar", "run", "coletar", "serve-mcp-stdio"],
+      "env": { "COLETAR_DEFAULT_TENANT_ID": "tenant_local" }
+    }
+  }
+}
+```
+
+Restart Claude Desktop; the tools appear under the connector menu.
+
+### Two things that differ from the HTTP server
+
+**Identity comes from the operating system, not a token.** Over HTTP the bearer token
+is the identity because anyone on the network can open a socket. A stdio server is
+launched *by* the user, as a subprocess of their own client — the OS already decided
+who this is, and a token pasted into the config file beside the command that reads it
+proves nothing. This is the same reasoning the local proxy uses, and the same limit
+applies: it is safe **because** it is local, and nothing here binds a port.
+
+**Nothing may write to stdout.** stdout *is* the protocol channel. A startup banner
+like the HTTP server prints would be parsed as a malformed JSON-RPC frame and the
+client would drop the connection with no useful error. Diagnostics go to stderr,
+which Claude Desktop logs. There is a test that completes a real handshake against a
+real subprocess, which only passes if stdout carried protocol and nothing else.
+
+**Locality follows the surface**, which defaults to `Provider.CLAUDE` here. A memory
+marked local-only to another surface will not be returned — the same gate as every
+other read path.

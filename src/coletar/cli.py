@@ -48,6 +48,26 @@ def serve_proxy() -> None:
 
 
 @app.command()
+def serve_mcp_stdio() -> None:
+    """Serve MCP over stdio, for Claude Desktop's local connector config.
+
+    The only connector path that needs **no deployment** — no host, no TLS, no public
+    URL. Claude Desktop launches this as a subprocess and speaks MCP on its stdin and
+    stdout, so the operating system has already decided who the caller is.
+
+    Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+        {"mcpServers": {"coletar": {
+            "command": "uv",
+            "args": ["--directory", "/path/to/coletar", "run", "coletar",
+                     "serve-mcp-stdio"]}}}
+    """
+    from coletar.mcp.server import serve_stdio
+
+    serve_stdio()
+
+
+@app.command()
 def serve_mcp() -> None:
     """Run the hosted MCP server (streamable HTTP)."""
     from coletar.mcp.server import run
