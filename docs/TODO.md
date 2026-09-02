@@ -278,21 +278,47 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       (`p03`, `p18`, named in `DECLINED_BY_POLICY`); the paste gate itself costs no
       labelled recall. Precision 95.2%, recall 90.9%, bar 85%
 - [ ] 🔴 **The extractor cannot tell a standing preference from task context.**
-      Exposed by the same run, and separate from the paste problem. Of the 129
-      memories now surviving, 115 are `preference`, and a sample reads: "I use the
-      cohere api in js", "I run my python app from react", "I do not want to find
-      the median of medians or use quickselect". These are sentences about the
-      task in front of the user in one conversation, not durable facts — stored,
-      they become permanent claims about someone from a homework problem they
-      finished two years ago. Some are also mangled fragments ("i run the model
-      on", "I like a HTML file to an JS file") and at least one is past tense and
-      no longer true ("I use to want to me a physical therapist").
-      The `i use|run` and `i prefer|like` patterns are doing most of the damage;
-      they were tuned on live proxy turns where people state standing preferences,
-      and an account export is a different register. This is the semantic judgement
-      the M6.2 model-assisted path exists for — `KNOWN_FALSE_POSITIVES` already
-      makes that argument for one case, and the real corpus says it generalises.
-      Until it is fixed, a real import is still not worth storing
+      Of the 129 memories surviving the paste guards, 89 come from one pattern —
+      `i (?:use|run)`, whose own comment already concedes it is the weakest — and
+      most are sentences about whatever task was open in one conversation: "I use
+      the cohere api in js", "I do not want to find the median of medians".
+      **Three lexical approaches were measured and rejected** (2026-09-02), and the
+      negative results are the useful part:
+      - *turn contains a question* — deletes real memories. "I run almost everyday
+        as a way to distress" and "I use the subway to get to work" are durable
+        facts stated in turns that happen to also ask something
+      - *deictic reference in the body* — 60 of 129, mostly junk but takes "I use
+        the STAR method, a MECE framework" with it
+      - *cross-conversation recurrence* — the idea being that a standing preference
+        recurs and task context appears once. It separates typo fragments ("I use
+        reatflow") from sustained work, but the **most**-recurring memory is "I do
+        not want ListIterator to modify frontPtr" across 8 conversations: a
+        semester-long assignment. Recurrence measures topic persistence, not
+        durability
+      What is actually missing is three judgements, none of them lexical: who said
+      the sentence, who it is about, and whether it outlives the conversation. That
+      is the M6.2 model path — but see the hardware entry below before planning it.
+      Shipped in the meantime: past-tense habits (`I used to` / the common
+      misspelling `I use to`) are no longer stored as current ones, which was
+      inverting the meaning of 6 statements in the export
+- [ ] 🔴 **The local-inference assumption does not hold on the target hardware.**
+      M6.2's design says "inference on the local leg is free". The dev machine is an
+      8GB M1; `llama3.1` is 4.7GB and running extraction against it shuts the
+      machine down — which also explains the older "ran out of memory at 30 of 100
+      turns" note, previously written off as a fluke. Before any more of the product
+      rests on local extraction, one of these has to be decided: a much smaller
+      model (`qwen2.5:0.5b` is installed and fits), server-side extraction at import
+      time, or a hosted model with the cost and data-handling questions that opens.
+      Note the whole graph-vs-third-party design below depends on this
+- [ ] **Third-party facts have nowhere to live.** Raised 2026-09-02. The paste guard
+      drops a pasted email wholesale, which is right for privacy and wrong for
+      context: "Amanda from Walleye BD reached out about a quant dev internship" is
+      a true, durable fact about the *user*, while "I'm on Walleye's Business
+      Development team" is Amanda's PII. Same turn, and the difference is which
+      claim you keep, not whether you keep the turn. The extractor can only emit
+      first-person memories, so there is nowhere to put Amanda even once a model
+      reads the turn correctly — this is probably an object plus an edge rather than
+      a Memory, which is what the typed graph in §3 is for
 
 ## The shortest path to a demo
 

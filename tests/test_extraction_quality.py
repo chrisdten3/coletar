@@ -289,3 +289,27 @@ async def test_the_guard_reports_which_signal_fired() -> None:
     assert _looks_pasted("I prefer tabs.") is None
     assert _looks_pasted("Dear Sam,\nI prefer tabs.") == "opens_like_a_letter"
     assert _looks_pasted("x" * 1001) == "long_enough_to_be_a_document"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "turn",
+    [
+        "I used to want to be a physical therapist.",
+        "I use to want to be a physical therapist.",  # the common misspelling
+    ],
+)
+async def test_a_dropped_habit_is_not_stored_as_a_current_one(turn: str) -> None:
+    """`i (?:use|run)` reads "I used to X" as present tense, and the misspelling
+    "I use to" matches the trigger exactly. Storing either inverts the meaning:
+    the graph asserts a career the user explicitly left."""
+    assert await extract_memories(user_text=turn) == []
+
+
+@pytest.mark.asyncio
+async def test_abandoning_one_habit_does_not_suppress_a_live_preference() -> None:
+    """Sentence-scoped, like every other guard."""
+    extracted = await extract_memories(
+        user_text="I used to want to be a physical therapist. I prefer fixed-point integers for money."
+    )
+    assert [m.content for m in extracted] == ["I prefer fixed-point integers for money"]
