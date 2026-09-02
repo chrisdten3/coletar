@@ -307,8 +307,23 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       machine down — which also explains the older "ran out of memory at 30 of 100
       turns" note, previously written off as a fluke. Before any more of the product
       rests on local extraction, one of these has to be decided: a much smaller
-      model (`qwen2.5:0.5b` is installed and fits), server-side extraction at import
-      time, or a hosted model with the cost and data-handling questions that opens.
+      model, server-side extraction at import time, or a hosted model with the cost
+      and data-handling questions that opens.
+      **`qwen2.5:0.5b` was measured 2026-09-02 and does not work.** It fits the
+      machine comfortably (0.4GB, 38%→30% free RAM) and fails on quality, in both
+      possible architectures:
+      - *as proposer* (model proposes, guards dispose — the current design):
+        precision 59.5% against a 15% false-positive bar, recall 100%, and `kind`
+        wrong on 13 of 22. It fires on nearly every labelled negative
+      - *as filter over regex candidates* (the inverse, which the numbers above
+        suggest): 8 of 12 on hand-picked cases, and it judged "I prefer fixed-point
+        integers over doubles for money" **not durable** — the canonical example in
+        the propagation harness and the README. Disqualifying on its own
+      One genuinely encouraging result, worth not losing: on the third-party case
+      the model refused a pasted recruiter email outright and, given "I had a call
+      with Amanda from Walleye BD yesterday", produced two correct facts about the
+      *user*. The attribution judgement is reachable; 0.5b is just not the model
+      that reaches it reliably.
       Note the whole graph-vs-third-party design below depends on this
 - [ ] **Third-party facts have nowhere to live.** Raised 2026-09-02. The paste guard
       drops a pasted email wholesale, which is right for privacy and wrong for
