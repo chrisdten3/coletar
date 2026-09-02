@@ -260,12 +260,39 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       chatgpt.com — but the bridge hardcoding `Provider.CLAUDE`, which would have
       injected Claude-only memories into ChatGPT's composer and recorded ChatGPT
       captures as Claude. The surface now comes from the `Origin` header
-- [ ] **ChatGPT export parser verified** against a real export (still pending)
+- [x] **ChatGPT export parser verified** against a real export — done 2026-09-02.
+      The parser did not work: large exports ship 46 `conversations-NNN.json`
+      shards with no `conversations.json`, and it raised "is it a ChatGPT export?"
+      on a genuine one. Fixed; 4,259 conversations and 17,881 user turns now parse
+      from either the ZIP or the unpacked folder
+- [x] **Full-corpus extraction measurement** — done 2026-09-02, and it did not need
+      a bigger machine. The default import path is the deterministic pattern
+      extractor, not the model: 17,881 turns in 1.8s, 230 memories, 1.3% yield.
+      The earlier 30-of-100 memory failure was the model-assisted path only
+- [ ] 🔴 **BLOCKER — the extractor treats pasted text as the user's own testimony.**
+      Found by the first real-corpus run. Of 230 memories extracted from the
+      ChatGPT export, at least 7 are *other people's* self-introductions pasted in
+      by the user — recruiters from Palantir and BlackRock, a founder, students —
+      stored as first-person facts about the user. 91 of 230 source turns are over
+      1,000 characters, the signature of a paste rather than a typed sentence.
+      Two failures, and the second is the serious one:
+      **correctness** (the graph asserts the user is someone else) and **privacy**
+      (third-party names and employers enter the graph, then ride into every prompt
+      sent to OpenAI and Anthropic on recall). A product selling data provenance
+      cannot forward strangers' PII to two frontier labs.
+      This is the same lesson `chatgpt_export.py` already states for the Claude Code
+      importer — the record's *position* lies about its meaning — unlearned for
+      pasted prose. No real export should be imported until this is fixed.
+      Likely shape of a fix: length and register heuristics, refusing turns that
+      read as correspondence, and never extracting an identity claim whose name
+      does not match the account holder
 - [ ] **Reliability harness** — how often does a model call the tool unprompted?
       Never measured, and it is the number that says whether Live Sync works or
       merely exists
 - [ ] **The `kind` problem** — 164 of 205 imported objects came back tagged `fact`.
-      Needs a larger local model, and it affects every downstream surface
+      Narrower than written: the deterministic extractor assigns kind by pattern and
+      came back 158 preference / 36 fact / 33 instruction / 3 goal on 17,881 real
+      turns. The collapse to `fact` is the model-assisted path only
 - [ ] **Full-corpus extraction measurement** — model extraction was measured on 30
       of 100 turns before the machine ran out of memory
 - [x] **Locality end-to-end through a real provider** — done 2026-09-02. A
