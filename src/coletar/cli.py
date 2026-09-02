@@ -624,7 +624,7 @@ def propagation(
         "From now on, always use uv instead of pip.",
         "Remember that Ledger deploys to Fly.io on every merge.",
         "I never use an ORM in this project.",
-        "My name is Christopher, but everyone calls me Chris.",
+        "I always use ruff before opening a pull request.",
     ][:trials]
     inbound = [
         "Priya owns the invoicing module and reviews its pull requests.",

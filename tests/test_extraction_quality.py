@@ -33,6 +33,20 @@ FALSE_POSITIVE_BAR = 0.15
 #: for the model-assisted path at M6.2 rather than more regex.
 KNOWN_FALSE_POSITIVES = {"n22"}
 
+#: Labelled durable, and deliberately never extracted. Both are identity claims.
+#: "My name is X" is either the account holder's own name — which the product
+#: already has and gains nothing from storing — or somebody else's, pasted in with
+#: the email they were replying to. Measured on a real 17,881-turn export, the
+#: pattern fired 17 times and at least seven of those were strangers: recruiters,
+#: a founder, students, recorded as first-person facts about the user and then
+#: rendered into prompts sent to OpenAI and Anthropic on recall.
+#:
+#: The labels stay `durable: true` because they *are* true durable facts. Editing
+#: ground truth to match the implementation is how an eval stops meaning anything.
+#: This is a policy decision costing real recall, so it is named here rather than
+#: absorbed into the recall number.
+DECLINED_BY_POLICY = {"p03", "p18"}
+
 
 @dataclass
 class Scorecard:
@@ -105,6 +119,7 @@ async def test_recall_is_reported_and_not_traded_away_for_precision(labelled_tur
     precision by suppressing real memories, this is what notices."""
     card = await _score(labelled_turns)
     assert card.recall >= 0.85, card.summary()
+    assert set(card.false_negatives) <= DECLINED_BY_POLICY, card.summary()
 
 
 async def test_every_extracted_memory_is_correctly_typed(labelled_turns):
@@ -212,3 +227,65 @@ async def test_the_model_assisted_path_is_implemented_and_guarded():
 
     assert 0.0 < GROUNDING_FLOOR <= 1.0
     assert callable(extract_with_model)
+
+
+# --- pasted text is not testimony -------------------------------------------------
+#
+# Found by running a real 17,881-turn ChatGPT export through the extractor. The
+# sentence-level guards all assume the turn is the user talking; on real usage a
+# large share of user turns are pasted email, job descriptions and assignments. The
+# names below are invented — the real cases were living people's, which is the whole
+# problem.
+
+
+@pytest.mark.asyncio
+async def test_a_pasted_email_does_not_become_a_fact_about_the_reader() -> None:
+    """The failure that motivated the guard: a recruiter's introduction, pasted in
+    so the assistant could help draft a reply, stored as who the user is."""
+    turn = (
+        "Hi Sam,\n\n"
+        "My name is Dana Whitfield and I manage University Recruiting at Initech. "
+        "I work at Initech on the early-careers team and I prefer to set up a call "
+        "before sharing the full job description.\n\n"
+        "Best regards,\n"
+        "Dana"
+    )
+    assert await extract_memories(user_text=turn) == []
+
+
+@pytest.mark.asyncio
+async def test_an_identity_claim_is_never_extracted() -> None:
+    """Either it is the account holder's own name, which the product already has,
+    or it is somebody else's. Neither is worth the risk of the second."""
+    assert await extract_memories(user_text="My name is Dana Whitfield.") == []
+
+
+@pytest.mark.asyncio
+async def test_a_short_typed_statement_still_extracts() -> None:
+    """The guard must cost pasted text, not ordinary use."""
+    extracted = await extract_memories(user_text="I prefer fixed-point integers for money.")
+    assert [m.content for m in extracted] == ["I prefer fixed-point integers for money"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("turn", "why"),
+    [
+        ("Hi Sam,\n\nI use Postgres for everything.", "opens like a letter"),
+        ("I use Postgres for everything.\n\nBest regards,\n", "closes like a letter"),
+        ("I use Postgres for everything. " + "Filler sentence. " * 80, "document length"),
+    ],
+)
+async def test_each_paste_signal_suppresses_the_turn(turn: str, why: str) -> None:
+    assert await extract_memories(user_text=turn) == [], why
+
+
+@pytest.mark.asyncio
+async def test_the_guard_reports_which_signal_fired() -> None:
+    """A user is entitled to ask why something is not a memory, so the reason is a
+    value rather than a bool buried in a branch."""
+    from coletar.extraction.extractor import _looks_pasted
+
+    assert _looks_pasted("I prefer tabs.") is None
+    assert _looks_pasted("Dear Sam,\nI prefer tabs.") == "opens_like_a_letter"
+    assert _looks_pasted("x" * 1001) == "long_enough_to_be_a_document"

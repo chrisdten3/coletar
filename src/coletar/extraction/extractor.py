@@ -62,7 +62,6 @@ _PATTERNS: list[tuple[re.Pattern[str], MemoryKind, Trigger]] = [
     (re.compile(r"\bremember that\s+(?P<body>.+)", re.I), MemoryKind.FACT, Trigger.META),
     (re.compile(r"\b(?:from now on|going forward),?\s+(?P<body>.+)", re.I),
      MemoryKind.INSTRUCTION, Trigger.META),
-    (re.compile(r"\bmy name is\s+(?P<body>.+)", re.I), MemoryKind.FACT, Trigger.ASSERTION),
     (re.compile(r"\bi work (?:at|for)\s+(?P<body>.+)", re.I),
      MemoryKind.FACT, Trigger.ASSERTION),
     (re.compile(r"\bi (?:prefer|like|always use)\s+(?P<body>.+)", re.I),
@@ -143,6 +142,58 @@ _STRUCTURAL = re.compile(r'("\s*[}\])]|[{\[]\s*"|"\s*:|\\n|</?\w+>)')
 #: A bracketed placeholder is a template someone pasted, not a statement they made:
 #: "I'm working on [the larger task] for [who it's for]".
 _PLACEHOLDER = re.compile(r"[\[<]\s*[a-z][^\]>]{2,40}\s*[\]>]")
+
+# --- turn-level: is this the user speaking at all? ------------------------------
+#
+# The guards above ask whether a *sentence* is a statement. They all assume the turn
+# itself is the user talking. On a real ChatGPT history that assumption is simply
+# false a lot of the time: people paste in the email they were sent, the job
+# description they are answering, the assignment they were given. Measured over
+# 17,881 turns of a real export, the extractor produced 230 memories of which at
+# least seven were *other people's* self-introductions — recruiters, a founder,
+# students — stored as first-person facts about the account holder. That is wrong
+# about the user, and it puts strangers' names and employers into a graph that gets
+# rendered into prompts and sent to OpenAI and Anthropic on every recall.
+#
+# This is the same lesson as `claude_code.py`, where 94% of records marked as user
+# input were tool output: the record's *position* lies about its meaning. There it
+# was structure; here it is prose, which is harder, so these guards are deliberately
+# blunt. Precision over recall — dropping a real memory costs almost nothing.
+
+#: A salutation or a sign-off means the text is correspondence. Usually it is a
+#: letter written *to* the user, pasted in so the assistant can help them reply, in
+#: which case every first-person sentence in it belongs to somebody else.
+_SALUTATION = re.compile(
+    r"^\s*(?:dear|hi|hello|hey|greetings)\b[^.!?\n]{0,40}[,:]", re.I | re.M
+)
+_SIGN_OFF = re.compile(
+    r"^\s*(?:best regards|best wishes|best|sincerely|warm(?:est)? regards|"
+    r"kind regards|regards|cheers|yours truly|yours sincerely)\s*,?\s*$",
+    re.I | re.M,
+)
+
+#: Past this many characters a "turn" is a document, not a message. Measured on the
+#: 17,881-turn export: among turns that yielded a memory the median is 144
+#: characters and the 75th percentile is 1,680. The distribution is bimodal — short
+#: typed messages against pasted documents — so the exact cut matters less than
+#: being somewhere in the empty middle.
+_PASTED_LEN = 1_000
+
+
+def _looks_pasted(text: str) -> str | None:
+    """Why this turn is not the user speaking in their own voice, or None if it is.
+
+    Returns a reason rather than a bool so the decision is legible in a test failure
+    and in the Context Inspector, where "why is this not a memory?" is a question a
+    user is entitled to ask.
+    """
+    if len(text) > _PASTED_LEN:
+        return "long_enough_to_be_a_document"
+    if _SALUTATION.search(text):
+        return "opens_like_a_letter"
+    if _SIGN_OFF.search(text):
+        return "closes_like_a_letter"
+    return None
 
 
 def _sentences(text: str) -> list[str]:
@@ -228,6 +279,12 @@ async def extract_memories(
     statements about the user are inference, not testimony.
     """
     del assistant_text  # reserved for the model-assisted path; see docs/EXTRACTION.md
+
+    # Before asking what the sentences say, ask whether the user wrote them. A
+    # pasted email's first-person sentences are testimony about its author, not
+    # about the person who pasted it.
+    if _looks_pasted(user_text):
+        return []
 
     found: list[Memory] = []
     seen: set[str] = set()
