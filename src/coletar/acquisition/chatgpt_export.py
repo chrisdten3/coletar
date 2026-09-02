@@ -26,8 +26,9 @@ dropped rather than guessed at.
 from __future__ import annotations
 
 import json
+import re
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,6 +37,17 @@ from typing import Any
 #: The only file in the archive this parser reads. `user.json`, `message_feedback`
 #: and `model_comparisons` carry nothing about what the user believes.
 CONVERSATIONS = "conversations.json"
+
+#: Exports large enough to be split ship `conversations-000.json`, `-001`, and so on
+#: instead of the single file, with no other structural change. Observed on a real
+#: 2026-08 export: 46 shards, 4,521 conversations, no `conversations.json` at all.
+#: Zero-padded, so lexicographic order is numeric order.
+CONVERSATION_SHARD = re.compile(r"(?:^|/)conversations-\d+\.json$")
+
+#: OpenAI's own per-conversation flag for "do not remember this". It is the user
+#: declining, recorded by the provider, and it survives into the export. Importing
+#: past it would be taking with a file what consent was refused for in the product.
+DO_NOT_REMEMBER = "is_do_not_remember"
 
 #: Only plain text is the user speaking in their own words. `code`, `multimodal_text`,
 #: `execution_output`, `thoughts` and friends are either not prose or not theirs, and
@@ -139,6 +151,11 @@ def parse_conversation(raw: dict[str, Any]) -> ExportedConversation | None:
     mapping = raw.get("mapping")
     if not isinstance(mapping, dict):
         return None
+    # The user already answered this question inside ChatGPT. An importer that reads
+    # past the answer because it arrived in a file rather than an API is doing the
+    # thing the acquisition boundary exists to prevent (AGENTS.md §1).
+    if raw.get(DO_NOT_REMEMBER):
+        return None
     conversation = ExportedConversation(
         id=str(raw.get("id") or raw.get("conversation_id") or ""),
         title=str(raw.get("title") or "").strip() or "(untitled)",
@@ -166,29 +183,55 @@ def parse_conversation(raw: dict[str, Any]) -> ExportedConversation | None:
 
 
 def read_export(archive: Path) -> Iterator[ExportedConversation]:
-    """Conversations from a ChatGPT export ZIP, active branch only.
+    """Conversations from a ChatGPT export, active branch only.
 
-    The archive is read through `ZipFile.open` and never extracted to disk, so a
-    crafted entry name cannot escape anywhere — the classic zip-slip does not apply
-    to a reader that never writes.
+    Accepts either the ZIP OpenAI emails or the directory it unpacks to. macOS
+    expands downloads by default, so the folder is what most users are actually
+    holding by the time they come looking for an importer, and refusing it would be
+    refusing the common case on a technicality.
+
+    A ZIP is read through `ZipFile.open` and never extracted to disk, so a crafted
+    entry name cannot escape anywhere — the classic zip-slip does not apply to a
+    reader that never writes. A directory is read only at the paths named by
+    `_conversation_entries`, which are matched against a fixed pattern rather than
+    taken from the archive, so a hostile filename has nothing to steer.
     """
     if not archive.exists():
         raise ChatGPTExportError(f"{archive} does not exist")
+
+    if archive.is_dir():
+        names = sorted(child.name for child in archive.iterdir() if child.is_file())
+        for name in _conversation_entries(names, source=archive.name):
+            yield from _conversations_in(
+                (archive / name).read_bytes(), name, archive.name
+            )
+        return
+
     try:
         with zipfile.ZipFile(archive) as bundle:
-            name = _conversations_entry(bundle)
-            with bundle.open(name) as handle:
-                payload = json.load(handle)
+            entries = _conversation_entries(bundle.namelist(), source=archive.name)
+            for name in entries:
+                # One shard at a time. A large export is large because the user has
+                # years of history, which is exactly the person least able to afford
+                # the whole thing being resident at once.
+                with bundle.open(name) as handle:
+                    payload = handle.read()
+                yield from _conversations_in(payload, name, archive.name)
     except zipfile.BadZipFile as exc:
         raise ChatGPTExportError(f"{archive.name} is not a readable ZIP: {exc}") from exc
-    except json.JSONDecodeError as exc:
-        raise ChatGPTExportError(
-            f"{CONVERSATIONS} in {archive.name} is not valid JSON: {exc}"
-        ) from exc
 
-    if not isinstance(payload, list):
-        raise ChatGPTExportError(f"{CONVERSATIONS} should hold a list of conversations")
-    for raw in payload:
+
+def _conversations_in(
+    payload: bytes, name: str, source: str
+) -> Iterator[ExportedConversation]:
+    """Parse one conversations file, whichever of the two layouts it came from."""
+    try:
+        parsed = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ChatGPTExportError(f"{name} in {source} is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ChatGPTExportError(f"{name} should hold a list of conversations")
+    for raw in parsed:
         if not isinstance(raw, dict):
             continue
         conversation = parse_conversation(raw)
@@ -196,17 +239,31 @@ def read_export(archive: Path) -> Iterator[ExportedConversation]:
             yield conversation
 
 
-def _conversations_entry(bundle: zipfile.ZipFile) -> str:
-    """Exports have shipped both flat and inside a dated top-level folder."""
-    names = bundle.namelist()
+def _conversation_entries(names: Sequence[str], *, source: str) -> list[str]:
+    """The conversation files in an export, in order.
+
+    Three layouts have shipped: flat, nested inside a dated top-level folder, and —
+    once an export is big enough — split into numbered shards with no single
+    `conversations.json` present at all. The shard case is the one a parser written
+    against the old format fails on, and it fails on the largest histories, which
+    are the ones worth importing.
+    """
     if CONVERSATIONS in names:
-        return CONVERSATIONS
+        return [CONVERSATIONS]
     nested = [n for n in names if n.endswith(f"/{CONVERSATIONS}")]
     if nested:
-        return min(nested, key=len)
+        return [min(nested, key=len)]
+
+    shards = sorted(n for n in names if CONVERSATION_SHARD.search(n))
+    if shards:
+        # A nested export puts every shard at the same depth. Taking only the
+        # shallowest guards against a stray copy in a subfolder being read twice.
+        depth = min(n.count("/") for n in shards)
+        return [n for n in shards if n.count("/") == depth]
+
     raise ChatGPTExportError(
-        f"no {CONVERSATIONS} in this archive — is it a ChatGPT export? "
-        f"It holds: {', '.join(sorted(names)[:6]) or '(nothing)'}"
+        f"no {CONVERSATIONS} and no conversations-NNN.json in {source} — is it a "
+        f"ChatGPT export? It holds: {', '.join(sorted(names)[:6]) or '(nothing)'}"
     )
 
 
