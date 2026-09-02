@@ -269,40 +269,30 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       a bigger machine. The default import path is the deterministic pattern
       extractor, not the model: 17,881 turns in 1.8s, 230 memories, 1.3% yield.
       The earlier 30-of-100 memory failure was the model-assisted path only
-- [ ] 🔴 **BLOCKER — the extractor treats pasted text as the user's own testimony.**
-      Found by the first real-corpus run. Of 230 memories extracted from the
-      ChatGPT export, at least 7 are *other people's* self-introductions pasted in
-      by the user — recruiters from Palantir and BlackRock, a founder, students —
-      stored as first-person facts about the user. 91 of 230 source turns are over
-      1,000 characters, the signature of a paste rather than a typed sentence.
-      Two failures, and the second is the serious one:
-      **correctness** (the graph asserts the user is someone else) and **privacy**
-      (third-party names and employers enter the graph, then ride into every prompt
-      sent to OpenAI and Anthropic on recall). A product selling data provenance
-      cannot forward strangers' PII to two frontier labs.
-      This is the same lesson `chatgpt_export.py` already states for the Claude Code
-      importer — the record's *position* lies about its meaning — unlearned for
-      pasted prose. No real export should be imported until this is fixed.
-      Likely shape of a fix: length and register heuristics, refusing turns that
-      read as correspondence, and never extracting an identity claim whose name
-      does not match the account holder
-- [ ] **Reliability harness** — how often does a model call the tool unprompted?
-      Never measured, and it is the number that says whether Live Sync works or
-      merely exists
-- [ ] **The `kind` problem** — 164 of 205 imported objects came back tagged `fact`.
-      Narrower than written: the deterministic extractor assigns kind by pattern and
-      came back 158 preference / 36 fact / 33 instruction / 3 goal on 17,881 real
-      turns. The collapse to `fact` is the model-assisted path only
-- [ ] **Full-corpus extraction measurement** — model extraction was measured on 30
-      of 100 turns before the machine ran out of memory
-- [x] **Locality end-to-end through a real provider** — done 2026-09-02. A
-      `local_only` memory scoped to Claude was written to Postgres; the same query,
-      the same API key and the same server returned it in claude.ai's composer and
-      `nothing relevant` in ChatGPT's. The surface comes from the `Origin` header,
-      which Chrome sets and the page cannot forge. This is the first proof of the
-      central claim above the `retrieve()` layer
-- [ ] **Multi-surface propagation on real providers** — the harness proves it
-      in-process; nothing has proven it across two live tools
+- [x] **The extractor treated pasted text as the user's own testimony** — fixed
+      2026-09-02. Two guards: identity claims (`my name is`) are never extracted at
+      all, and a turn that reads as correspondence or runs past document length is
+      not mined. On the real 17,881-turn export this took extraction from 230
+      memories to 129 with **zero** remaining identity claims — the seven strangers
+      are gone. On the labelled set the whole recall cost is the identity policy
+      (`p03`, `p18`, named in `DECLINED_BY_POLICY`); the paste gate itself costs no
+      labelled recall. Precision 95.2%, recall 90.9%, bar 85%
+- [ ] 🔴 **The extractor cannot tell a standing preference from task context.**
+      Exposed by the same run, and separate from the paste problem. Of the 129
+      memories now surviving, 115 are `preference`, and a sample reads: "I use the
+      cohere api in js", "I run my python app from react", "I do not want to find
+      the median of medians or use quickselect". These are sentences about the
+      task in front of the user in one conversation, not durable facts — stored,
+      they become permanent claims about someone from a homework problem they
+      finished two years ago. Some are also mangled fragments ("i run the model
+      on", "I like a HTML file to an JS file") and at least one is past tense and
+      no longer true ("I use to want to me a physical therapist").
+      The `i use|run` and `i prefer|like` patterns are doing most of the damage;
+      they were tuned on live proxy turns where people state standing preferences,
+      and an account export is a different register. This is the semantic judgement
+      the M6.2 model-assisted path exists for — `KNOWN_FALSE_POSITIVES` already
+      makes that argument for one case, and the real corpus says it generalises.
+      Until it is fixed, a real import is still not worth storing
 
 ## The shortest path to a demo
 

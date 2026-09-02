@@ -41,7 +41,7 @@ PROXY_STATEMENTS = [
     "From now on, always use uv instead of pip.",
     "Remember that Ledger deploys to Fly.io on every merge.",
     "I never use an ORM in this project.",
-    "My name is Christopher, but everyone calls me Chris.",
+    "I always use ruff before opening a pull request.",
 ]
 
 #: Different facts for the connector leg. Writing the *same* fact from both surfaces
