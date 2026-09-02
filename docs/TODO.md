@@ -150,7 +150,7 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 | Claude Desktop | Custom Connector (remote) | built, **not deployed** |
 | Claude Code | transcript importer | ✅ built + tested |
 | ChatGPT web | Developer Mode remote MCP | ❌ never wired or tested |
-| ChatGPT web | extension capture | ❌ not built (now unblocked) |
+| ChatGPT web | extension composer bridge | ✅ **built** — surface from `Origin` |
 | ChatGPT Desktop | anything | ❌ no path investigated |
 | Ollama / local | proxy inject + extract | ✅ verified live |
 
@@ -221,6 +221,18 @@ table stakes for enterprise, not an edge. The edge is the capability underneath 
 - [ ] Model extraction measured on only 30 of 100 turns (machine ran out of memory)
 - [ ] Proxy rate limiting is in-process; two workers means two buckets
 - [ ] Webhook SSRF guard does not resolve hostnames (documented, deliberate)
+- [ ] **`/v1/remember` has no `local_only`** — the browser bridge can only write
+      global memories, so a user on claude.ai cannot mark anything Claude-only from
+      the UI. The capability exists on the MCP path (`server.py`, where locality
+      binds to the calling principal's surface) but not on the REST bridge. Locality
+      is the differentiation; a write path that cannot express it is a product hole,
+      not a rough edge
+- [ ] **The in-process store is a silent footgun for local testing.** With
+      `COLETAR_STORE_BACKEND=memory` the graph lives inside the server process, so
+      `coletar remember` writes into a short-lived process and vanishes — no error,
+      no warning, the CLI prints an object id. Anyone testing the extension against
+      a memory-backed server will conclude retrieval is broken. Either warn on
+      startup or have the CLI refuse to write to a backend it does not share
 
 ---
 
@@ -243,8 +255,11 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
 **Must be built and tested before product work starts:**
 - [x] **stdio MCP transport** — done. Claude Desktop works with no deployment at
       all; verified by a real client handshaking with a real subprocess
-- [ ] **ChatGPT: any working surface at all.** Nothing works today. Developer Mode
-      remote MCP needs a deployment; the extension does not. Pick one and prove it
+- [x] **ChatGPT has a working surface.** The extension bridge serves it with no
+      deployment. The gap was never the manifest — which already matched
+      chatgpt.com — but the bridge hardcoding `Provider.CLAUDE`, which would have
+      injected Claude-only memories into ChatGPT's composer and recorded ChatGPT
+      captures as Claude. The surface now comes from the `Origin` header
 - [ ] **ChatGPT export parser verified** against a real export (still pending)
 - [ ] **Reliability harness** — how often does a model call the tool unprompted?
       Never measured, and it is the number that says whether Live Sync works or
@@ -253,9 +268,12 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       Needs a larger local model, and it affects every downstream surface
 - [ ] **Full-corpus extraction measurement** — model extraction was measured on 30
       of 100 turns before the machine ran out of memory
-- [ ] **Locality end-to-end through a real provider**, not just through `retrieve()`:
-      write a `local_only` memory, confirm Claude sees it and ChatGPT does not, on
-      the actual surfaces
+- [x] **Locality end-to-end through a real provider** — done 2026-09-02. A
+      `local_only` memory scoped to Claude was written to Postgres; the same query,
+      the same API key and the same server returned it in claude.ai's composer and
+      `nothing relevant` in ChatGPT's. The surface comes from the `Origin` header,
+      which Chrome sets and the page cannot forge. This is the first proof of the
+      central claim above the `retrieve()` layer
 - [ ] **Multi-surface propagation on real providers** — the harness proves it
       in-process; nothing has proven it across two live tools
 

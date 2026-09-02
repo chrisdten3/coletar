@@ -386,3 +386,165 @@ async def test_an_unknown_style_is_a_clean_rejection(client, store):
             "/v1/search", json={"query": "x", "style": "fancy"}, headers=AUTH
         )
     assert response.status_code == 400
+
+
+# --- the surface comes from the origin, not from the body ------------------------
+
+
+def _bridge_client(store, keys=None):
+    """The bridge behind the real middleware, so Origin handling is exercised."""
+    from fastapi import FastAPI
+    from starlette.routing import Route
+
+    from coletar.mcp.auth import ApiKeyAuthenticator, AuthMiddleware
+
+    app = FastAPI()
+    for path, endpoint, methods in rest.routes():
+        app.router.routes.append(Route(path, endpoint, methods=methods))
+    wrapped = AuthMiddleware(
+        app,
+        ApiKeyAuthenticator.from_config(keys or KEYS),
+        allowed_origins=frozenset(
+            {"https://claude.ai", "https://chatgpt.com", "https://chat.openai.com"}
+        ),
+    )
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=wrapped), base_url="http://testserver"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_memory_local_to_claude_is_not_injected_into_chatgpt(monkeypatch):
+    """The bug this replaces, stated as the thing it would have done.
+
+    The extension's manifest already matched chatgpt.com while the bridge hardcoded
+    `Provider.CLAUDE`. A memory the user marked local-only to Claude would have been
+    injected into ChatGPT's composer — which is precisely the guarantee the product
+    is sold on.
+    """
+    from coletar.schema.objects import Locality, LocalityMode, Memory, Provider
+
+    store = InMemoryStore()
+    monkeypatch.setattr(rest, "build_store", lambda: store)
+    await store.put_object(
+        TENANT,
+        Memory.from_write(
+            "Handling the Schumer v. Pelosi matter.",
+            locality=Locality(
+                mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.CLAUDE})
+            ),
+        ),
+    )
+
+    async with _bridge_client(store) as client:
+        # A query that lexically matches, so a miss here is locality and not relevance.
+        body = {"query": "Schumer Pelosi matter", "top_k": 10}
+        headers = {"authorization": "Bearer sk-bridge"}
+
+        from_claude = await client.post(
+            "/v1/search", json=body, headers={**headers, "origin": "https://claude.ai"}
+        )
+        from_chatgpt = await client.post(
+            "/v1/search", json=body, headers={**headers, "origin": "https://chatgpt.com"}
+        )
+
+    claude_hits = [r["content"] for r in from_claude.json()["results"]]
+    chatgpt_hits = [r["content"] for r in from_chatgpt.json()["results"]]
+    assert any("Schumer" in c for c in claude_hits)
+    assert not any("Schumer" in c for c in chatgpt_hits)
+
+
+@pytest.mark.asyncio
+async def test_the_body_cannot_claim_a_surface(monkeypatch):
+    """`body.surface` is client-supplied and stays a trace label. A page that asks to
+    be treated as Claude is still treated as whatever origin the browser reported."""
+    from coletar.schema.objects import Locality, LocalityMode, Memory, Provider
+
+    store = InMemoryStore()
+    monkeypatch.setattr(rest, "build_store", lambda: store)
+    await store.put_object(
+        TENANT,
+        Memory.from_write(
+            "Claude-only secret.",
+            locality=Locality(
+                mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.CLAUDE})
+            ),
+        ),
+    )
+
+    async with _bridge_client(store) as client:
+        response = await client.post(
+            "/v1/search",
+            json={"query": "secret", "surface": "claude", "top_k": 10},
+            headers={
+                "authorization": "Bearer sk-bridge",
+                "origin": "https://chatgpt.com",
+            },
+        )
+    assert not any("secret" in r["content"] for r in response.json()["results"])
+
+
+@pytest.mark.asyncio
+async def test_a_capture_records_the_tool_it_was_typed_into(monkeypatch):
+    """Provenance should answer "where did this come from" with the tool, not with
+    us. Attributing everything to one default erases the distinction the graph
+    exists to keep."""
+    from coletar.schema.objects import Provider
+
+    store = InMemoryStore()
+    monkeypatch.setattr(rest, "build_store", lambda: store)
+
+    async with _bridge_client(store) as client:
+        await client.post(
+            "/v1/remember",
+            json={"content": "I prefer fixed-point integers for money."},
+            headers={
+                "authorization": "Bearer sk-bridge",
+                "origin": "https://chatgpt.com",
+            },
+        )
+
+    objects = await store.list_objects(TENANT, limit=10)
+    assert objects
+    assert objects[0].provenance.provider is Provider.CHATGPT
+
+
+@pytest.mark.asyncio
+async def test_an_unrecognised_origin_is_refused_not_defaulted(monkeypatch):
+    """Defaulting is how the original bug happened: silently choosing a surface means
+    silently choosing whose locality rules apply."""
+    store = InMemoryStore()
+    monkeypatch.setattr(rest, "build_store", lambda: store)
+
+    from coletar.mcp import rest as rest_module
+
+    assert "https://evil.example" not in rest_module.BRIDGE_ORIGINS
+    async with _bridge_client(store) as client:
+        response = await client.post(
+            "/v1/search",
+            json={"query": "anything"},
+            headers={
+                "authorization": "Bearer sk-bridge",
+                "origin": "https://evil.example",
+            },
+        )
+    # The CORS gate refuses it first; either way it never reaches the graph.
+    assert response.status_code in (403, 200)
+    if response.status_code == 200:
+        assert response.json().get("error") == "unknown_origin"
+
+
+@pytest.mark.asyncio
+async def test_a_non_browser_caller_falls_back_to_its_key(monkeypatch):
+    """The SDK, a script and curl send no Origin. They are not browsers, so they get
+    the identity their key was issued for rather than a refusal."""
+    store = InMemoryStore()
+    monkeypatch.setattr(rest, "build_store", lambda: store)
+
+    async with _bridge_client(store) as client:
+        response = await client.post(
+            "/v1/search",
+            json={"query": "anything"},
+            headers={"authorization": "Bearer sk-bridge"},
+        )
+    assert response.status_code == 200

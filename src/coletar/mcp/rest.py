@@ -68,6 +68,52 @@ class RememberRequest(BaseModel):
     surface: str = "bridge"
 
 
+#: Which provider an origin *is*. Set by the browser on every cross-origin request
+#: and unforgeable by the page, which is what makes it the right source for a
+#: locality decision — unlike `body.surface`, which the page controls and which is
+#: therefore only ever a trace label.
+#:
+#: This existed as a hardcoded `Provider.CLAUDE` while the extension already matched
+#: chatgpt.com in its manifest. The consequence was not cosmetic: a memory marked
+#: local-only to Claude would have been injected into ChatGPT's composer, and a
+#: capture typed into ChatGPT would have been recorded with Claude provenance. Both
+#: are precisely the guarantees this product rests on.
+BRIDGE_ORIGINS: dict[str, Provider] = {
+    "https://claude.ai": Provider.CLAUDE,
+    "https://chatgpt.com": Provider.CHATGPT,
+    "https://chat.openai.com": Provider.CHATGPT,
+}
+
+
+def _surface_for(request: Request, principal: Principal) -> Provider | JSONResponse:
+    """The surface this request genuinely came from.
+
+    A browser sets `Origin` and a page cannot change it, so it is trustworthy in a
+    way nothing in the body is. A caller without one is not a browser — the SDK, a
+    script, curl — and falls back to the identity its key was issued for.
+
+    An origin we do not recognise is refused rather than defaulted. Defaulting is how
+    the bug this replaces happened: silently choosing a surface means silently
+    choosing whose locality rules apply.
+    """
+    origin = request.headers.get("origin")
+    if origin is None:
+        return principal.surface
+    surface = BRIDGE_ORIGINS.get(origin)
+    if surface is None:
+        return JSONResponse(
+            {
+                "error": "unknown_origin",
+                "message": (
+                    f"{origin} is not a recognised bridge origin; coletar will not "
+                    "guess which surface's locality rules apply"
+                ),
+            },
+            status_code=403,
+        )
+    return surface
+
+
 def _scope(project_id: str | None) -> Scope:
     if not project_id or not project_id.strip():
         return GLOBAL_SCOPE
@@ -91,6 +137,9 @@ async def search(request: Request) -> JSONResponse:
     principal = _require(SCOPE_READ)
     if isinstance(principal, JSONResponse):
         return principal
+    surface = _surface_for(request, principal)
+    if isinstance(surface, JSONResponse):
+        return surface
     try:
         body = SearchRequest.model_validate(await request.json())
     except Exception as exc:  # noqa: BLE001 - any malformed body is a 400
@@ -110,10 +159,8 @@ async def search(request: Request) -> JSONResponse:
         principal.tenant_id,
         body.query,
         scope=_scope(body.project_id),
-        # These endpoints exist only for the claude.ai composer extension (M3.6) --
-        # never derived from `body.surface`, which is client-supplied and untrusted
-        # for anything but the trace label below.
-        caller_surface=Provider.CLAUDE,
+        # From the Origin header, never from `body.surface` — see `_surface_for`.
+        caller_surface=surface,
         top_k=body.top_k,
         token_budget=settings.retrieval_token_budget,
         surface=body.surface,
@@ -138,6 +185,9 @@ async def remember_endpoint(request: Request) -> JSONResponse:
     principal = _require(SCOPE_WRITE)
     if isinstance(principal, JSONResponse):
         return principal
+    surface = _surface_for(request, principal)
+    if isinstance(surface, JSONResponse):
+        return surface
     try:
         body = RememberRequest.model_validate(await request.json())
     except Exception as exc:  # noqa: BLE001
@@ -153,7 +203,11 @@ async def remember_endpoint(request: Request) -> JSONResponse:
         content=cleaned,
         kind=body.kind,
         scope=scope,
-        provider=Provider.COLETAR,
+        # The surface they actually typed into, so "where did this come from" answers
+        # with the tool rather than with us. `Provider.COLETAR` was right when there
+        # was one bridge; with two it would erase the distinction the graph exists to
+        # keep.
+        provider=surface,
         # The user typed it themselves, in their own words, and chose to send it.
         # That is the highest-confidence tier there is (§3.1).
         extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
@@ -169,7 +223,7 @@ async def remember_endpoint(request: Request) -> JSONResponse:
             actor=Actor.USER,
             detail={"principal": principal.id, "surface": body.surface, "scope": str(scope)},
         ),
-        caller_surface=Provider.CLAUDE,
+        caller_surface=surface,
     )
     # Named for `IngestResult`, so one API does not describe the same outcome two
     # ways depending on which endpoint you reached it through.
@@ -193,6 +247,9 @@ async def capture(request: Request) -> JSONResponse:
     principal = _require(SCOPE_WRITE)
     if isinstance(principal, JSONResponse):
         return principal
+    surface = _surface_for(request, principal)
+    if isinstance(surface, JSONResponse):
+        return surface
     try:
         body = CaptureRequest.model_validate(await request.json())
     except Exception as exc:  # noqa: BLE001
@@ -216,6 +273,10 @@ async def capture(request: Request) -> JSONResponse:
     store = build_store()
     stored: list[dict[str, Any]] = []
     for memory in await extract_memories(user_text=text, scope=scope):
+        # The extractor does not know which page this came from; the Origin header
+        # does. Without this, everything captured anywhere is attributed to the
+        # extractor's default.
+        memory.provenance.provider = surface
         result = await remember(
             store,
             principal.tenant_id,
@@ -230,7 +291,7 @@ async def capture(request: Request) -> JSONResponse:
                     "scope": str(scope),
                 },
             ),
-            caller_surface=Provider.CLAUDE,
+            caller_surface=surface,
         )
         stored.append(
             {"id": result.object_id, "content": memory.content,
