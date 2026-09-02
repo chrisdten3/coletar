@@ -172,6 +172,107 @@ def test_a_corrupt_archive_is_a_message_not_a_traceback(tmp_path: Path) -> None:
         list(read_export(path))
 
 
+# --- sharded exports -------------------------------------------------------------
+#
+# Observed on a real 2026-08 export: 46 `conversations-NNN.json` files, 4,521
+# conversations, and no `conversations.json` anywhere in the archive. The parser
+# written against the single-file layout raised "is it a ChatGPT export?" on a
+# genuine one — and it does so precisely on the largest histories.
+
+
+def _conversation(node_id: str, text: str) -> dict:
+    return {
+        "id": f"conv-{node_id}",
+        "current_node": node_id,
+        "mapping": {
+            node_id: {
+                "id": node_id,
+                "parent": None,
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"content_type": "text", "parts": [text]},
+                },
+            }
+        },
+    }
+
+
+def test_a_sharded_export_is_read(tmp_path: Path) -> None:
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        bundle.writestr("conversations-000.json", json.dumps([_conversation("a", "I use vim.")]))
+        bundle.writestr("conversations-001.json", json.dumps([_conversation("b", "I use tabs.")]))
+    texts = [m.text for c in read_export(path) for m in c.messages]
+    assert texts == ["I use vim.", "I use tabs."]
+
+
+def test_shards_are_read_in_numeric_order(tmp_path: Path) -> None:
+    """Import order decides which of two conflicting statements supersedes the
+    other, so a reader that shuffled shards would make the graph depend on
+    filesystem iteration order."""
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        for n in (2, 0, 10, 1):
+            bundle.writestr(
+                f"conversations-{n:03d}.json", json.dumps([_conversation(f"n{n}", f"turn {n}")])
+            )
+    assert [m.text for c in read_export(path) for m in c.messages] == [
+        "turn 0",
+        "turn 1",
+        "turn 2",
+        "turn 10",
+    ]
+
+
+def test_an_unpacked_export_directory_is_read(tmp_path: Path) -> None:
+    """macOS expands downloads by default, so the folder is what the user has."""
+    folder = tmp_path / "chatgpt-export"
+    folder.mkdir()
+    (folder / "conversations-000.json").write_text(
+        json.dumps([_conversation("a", "I ship on Fridays.")])
+    )
+    (folder / "user.json").write_text("{}")
+    assert [m.text for c in read_export(folder) for m in c.messages] == ["I ship on Fridays."]
+
+
+def test_the_single_file_layout_still_works(tmp_path: Path) -> None:
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        bundle.writestr("conversations.json", json.dumps([_conversation("a", "I use zsh.")]))
+    assert [m.text for c in read_export(path) for m in c.messages] == ["I use zsh."]
+
+
+def test_a_conversation_marked_do_not_remember_is_not_imported(tmp_path: Path) -> None:
+    """The user already declined inside ChatGPT. Reading past that because the
+    answer arrived in a file is what the acquisition boundary forbids."""
+    raw = _conversation("a", "My salary is 250000 dollars.")
+    raw["is_do_not_remember"] = True
+    assert parse_conversation(raw) is None
+
+
+def test_do_not_remember_is_honoured_through_the_archive(tmp_path: Path) -> None:
+    kept = _conversation("a", "I prefer Postgres.")
+    refused = _conversation("b", "Do not remember this one.")
+    refused["is_do_not_remember"] = True
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as bundle:
+        bundle.writestr("conversations-000.json", json.dumps([kept, refused]))
+    assert [m.text for c in read_export(path) for m in c.messages] == ["I prefer Postgres."]
+
+
+def test_a_missing_directory_says_so(tmp_path: Path) -> None:
+    with pytest.raises(ChatGPTExportError, match="does not exist"):
+        list(read_export(tmp_path / "nope"))
+
+
+def test_a_folder_without_conversations_names_both_layouts(tmp_path: Path) -> None:
+    folder = tmp_path / "downloads"
+    folder.mkdir()
+    (folder / "user.json").write_text("{}")
+    with pytest.raises(ChatGPTExportError, match="conversations-NNN.json"):
+        list(read_export(folder))
+
+
 # --- the measured bar ------------------------------------------------------------
 
 
