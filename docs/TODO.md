@@ -14,6 +14,15 @@ packaged. CI does not run the tests.
 
 A demo is close. A product someone else can use is not.
 
+**Repositioned 2026-09-02.** The focus is Live Sync and bulk acquisition (backfill),
+with the differentiation carried by **selective context (locality)**, **data
+provenance**, and **temporal model state**. True Migration is deprioritised — it
+stays built and it stays the trust story ("you can leave"), but it is no longer what
+the product is sold on.
+
+That repositioning aims almost entirely at things that already exist. What is missing
+is *coverage* — which model surfaces are actually wired up — and compliance.
+
 ---
 
 ## Done
@@ -131,7 +140,24 @@ A demo is close. A product someone else can use is not.
 - [ ] Publish the Python SDK to PyPI and the JS SDK to npm
 - [ ] Installable desktop app for the proxy and watcher (currently CLI-only)
 
-### 6. Live Sync coverage
+### 6. Live Sync coverage — **the real gap, audited 2026-09-02**
+
+| Surface | Mechanism | State |
+|---|---|---|
+| Claude web | extension composer bridge | ✅ verified live |
+| Claude web | Custom Connector → hosted MCP | built, **not deployed** |
+| Claude Desktop | local MCP via `claude_desktop_config.json` | ❌ **stdio transport not built** |
+| Claude Desktop | Custom Connector (remote) | built, **not deployed** |
+| Claude Code | transcript importer | ✅ built + tested |
+| ChatGPT web | Developer Mode remote MCP | ❌ never wired or tested |
+| ChatGPT web | extension capture | ❌ not built (now unblocked) |
+| ChatGPT Desktop | anything | ❌ no path investigated |
+| Ollama / local | proxy inject + extract | ✅ verified live |
+
+- [ ] **stdio transport for the MCP server.** Claude Desktop's local config launches
+      a server over stdio; ours is streamable-HTTP only, because ChatGPT requires
+      remote. Both are needed, and stdio is the one that works with *no deployment
+      at all* — which makes it the cheapest path to a working Claude Desktop demo
 - [ ] ChatGPT connector via Developer Mode remote MCP (read path)
 - [ ] Client-side DOM capture for Claude and ChatGPT — **unblocked**; AGENTS.md was
       amended 2026-08-31. Content script per provider, `MutationObserver` on the
@@ -149,7 +175,20 @@ A demo is close. A product someone else can use is not.
 - [ ] End-to-end encryption decision — it conflicts with server-side retrieval
 - [ ] Interim: the Markdown mirror already syncs via Dropbox or iCloud for free
 
-### 8. The enterprise wedge
+### 8. The enterprise wedge — now the primary bet
+
+Verified competitive position (research 2026-09-02): **Mem0's "selective memory" is
+write-time extraction filtering, not read-time access control**, and its
+`user_id`/`agent_id` are partitions for applying different extraction rules rather
+than access policies. No competitor found controls which assistant may *read* an
+individual memory. That is coletar's `Locality`, and it is the differentiator.
+
+**But Mem0 is already SOC 2 Type 1, HIPAA and GDPR compliant.** Certification is
+table stakes for enterprise, not an edge. The edge is the capability underneath it.
+
+- [ ] Locality in the UI — the whiteboard scenario needs to be a toggle, not an API
+      argument. This is the demo, and it currently has no interface
+- [ ] Locality presets — "work only", "never leave my local model", per-project rules
 - [ ] Temporal validity in the UI — set and view `valid_from`/`valid_until`
 - [ ] Audit export: signed, timestamped report of what was known and when
 - [ ] PDF ingestion for policy documents (a deliberate dependency decision)
@@ -185,6 +224,40 @@ A demo is close. A product someone else can use is not.
 - [ ] Webhook SSRF guard does not resolve hostnames (documented, deliberate)
 
 ---
+
+## Before any product work: what must be true locally
+
+The instruction is that everything local and model-side works before touching
+website, auth or deployment. Audited 2026-09-02 — this is the list.
+
+**Verified working, no deployment needed:**
+- Locality across surfaces — the whiteboard scenario runs exactly as drawn: Claude
+  sees 3 facts, ChatGPT and the local model see 2, the case detail is withheld
+- Local model round trip — a 0.5b model answered from the graph with nothing in the
+  prompt, and the retrieval trace was recorded
+- Claude export backfill — 205 objects from a real export
+- Claude Code transcript import
+- Claude web via the extension
+- As-of and in-force queries on both temporal axes
+- Both storage backends identical on the retrieval suite
+
+**Must be built and tested before product work starts:**
+- [ ] **stdio MCP transport** — the only Claude Desktop path that needs no host
+- [ ] **ChatGPT: any working surface at all.** Nothing works today. Developer Mode
+      remote MCP needs a deployment; the extension does not. Pick one and prove it
+- [ ] **ChatGPT export parser verified** against a real export (still pending)
+- [ ] **Reliability harness** — how often does a model call the tool unprompted?
+      Never measured, and it is the number that says whether Live Sync works or
+      merely exists
+- [ ] **The `kind` problem** — 164 of 205 imported objects came back tagged `fact`.
+      Needs a larger local model, and it affects every downstream surface
+- [ ] **Full-corpus extraction measurement** — model extraction was measured on 30
+      of 100 turns before the machine ran out of memory
+- [ ] **Locality end-to-end through a real provider**, not just through `retrieve()`:
+      write a `local_only` memory, confirm Claude sees it and ChatGPT does not, on
+      the actual surfaces
+- [ ] **Multi-surface propagation on real providers** — the harness proves it
+      in-process; nothing has proven it across two live tools
 
 ## The shortest path to a demo
 
