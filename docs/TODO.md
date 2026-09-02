@@ -150,7 +150,7 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 | Claude Desktop | Custom Connector (remote) | built, **not deployed** |
 | Claude Code | transcript importer | ✅ built + tested |
 | ChatGPT web | Developer Mode remote MCP | ❌ never wired or tested |
-| ChatGPT web | extension capture | ❌ not built (now unblocked) |
+| ChatGPT web | extension composer bridge | ✅ **built** — surface from `Origin` |
 | ChatGPT Desktop | anything | ❌ no path investigated |
 | Ollama / local | proxy inject + extract | ✅ verified live |
 
@@ -243,8 +243,11 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
 **Must be built and tested before product work starts:**
 - [x] **stdio MCP transport** — done. Claude Desktop works with no deployment at
       all; verified by a real client handshaking with a real subprocess
-- [ ] **ChatGPT: any working surface at all.** Nothing works today. Developer Mode
-      remote MCP needs a deployment; the extension does not. Pick one and prove it
+- [x] **ChatGPT has a working surface.** The extension bridge serves it with no
+      deployment. The gap was never the manifest — which already matched
+      chatgpt.com — but the bridge hardcoding `Provider.CLAUDE`, which would have
+      injected Claude-only memories into ChatGPT's composer and recorded ChatGPT
+      captures as Claude. The surface now comes from the `Origin` header
 - [ ] **ChatGPT export parser verified** against a real export (still pending)
 - [ ] **Reliability harness** — how often does a model call the tool unprompted?
       Never measured, and it is the number that says whether Live Sync works or

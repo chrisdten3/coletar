@@ -14,6 +14,7 @@ it as a tool — the sanctioned integration point each provider built for the pu
 | Provider | Mechanism | Read | Write | Notes |
 |---|---|---|---|---|
 | **Claude** | User adds coletar as a Custom Connector | ✅ | ✅ | Fully sanctioned on individual accounts. The strongest live-sync leg — build here first. |
+| **ChatGPT** | Browser extension composer bridge — **no deployment** | ✅ | ✅ | Same extension as Claude; the surface is derived from the `Origin` header server-side, never claimed by the page. |
 | **ChatGPT** | Remote MCP connector via Developer Mode (Plus/Pro+) | ✅ | ⚠️ gated | Full write-capable custom connectors are restricted to Business/Enterprise/Edu. Individual tiers get read (search/fetch) plus the explicit "remember this" confirmed-write flow. **Remote HTTPS only — never stdio.** |
 | **Gemini** | Unconfirmed | ? | ? | No verified third-party connector path for the consumer app. Do not spend engineering time until a real hook is confirmed. |
 | **Claude Desktop** | `claude_desktop_config.json` → **stdio**, no deployment |  ✅ | ✅ | The only connector path that needs no host, no TLS and no public URL. `coletar serve-mcp-stdio`. |

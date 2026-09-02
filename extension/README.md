@@ -77,3 +77,19 @@ read the page do exist; none of them discuss what happens to your account if a p
 decides that is automated extraction of Output. Anthropic suspended accounts over
 third-party automation in early 2026, against users' own subscriptions. That is the
 line this stays on the right side of.
+
+
+## Two providers, one extension
+
+The manifest matches `claude.ai`, `chatgpt.com` and `chat.openai.com`, and the
+composer lookup is generic — `div[contenteditable="true"]` and `textarea` — so the
+same content script serves both without a per-site selector.
+
+**The extension does not tell coletar which provider it is on, and cannot.** The
+surface is derived server-side from the browser's `Origin` header, which the page
+cannot forge. That matters because the surface decides two things: which memories
+locality permits it to read, and which provider is recorded as the origin of anything
+captured. A page that could name its own surface could read another tool's
+local-only context by asking nicely.
+
+An origin coletar does not recognise is refused rather than defaulted.
