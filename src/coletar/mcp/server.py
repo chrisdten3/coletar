@@ -32,6 +32,7 @@ from starlette.responses import JSONResponse
 from coletar.config import get_settings
 from coletar.ingest import remember
 from coletar.mcp.auth import (
+    DEFAULT_SCOPES,
     SCOPE_READ,
     SCOPE_WRITE,
     ApiKeyAuthenticator,
@@ -39,6 +40,7 @@ from coletar.mcp.auth import (
     AuthMiddleware,
     Principal,
     current_principal,
+    principal_scope,
 )
 from coletar.mcp.ratelimit import RateLimiter
 from coletar.mcp.schemas import (
@@ -66,6 +68,7 @@ from coletar.schema.objects import (
     ScopeType,
     Sensitivity,
 )
+from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
 
 #: One memory per call, so a compound statement is split by the model rather than
@@ -478,6 +481,66 @@ def check_deployable(host: str) -> None:
             f"loses its entire graph on restart. Set COLETAR_STORE_BACKEND=postgres "
             f"and COLETAR_DATABASE_URL, or bind 127.0.0.1 for local use."
         )
+
+
+#: The surface a stdio client is assumed to be. Claude Desktop is the reason this
+#: transport exists; anything else can override it, because locality decisions hang
+#: off this value and guessing wrong silently widens what a client may read.
+STDIO_DEFAULT_SURFACE = Provider.CLAUDE
+
+
+def stdio_principal() -> Principal:
+    """Who a stdio caller is.
+
+    **A different trust model, not a missing one.** Over HTTP the bearer token is the
+    identity, because anyone on the network can open a socket. A stdio server is
+    launched *by* the user, *on* their machine, as a subprocess of their own client —
+    the operating system already decided who this is, and demanding a token they would
+    paste into a config file beside the command that reads it proves nothing.
+
+    That is the same reasoning the local proxy uses (M4.2), and the same limit
+    applies: this is safe precisely because it is local. It must never be reachable
+    over a network, which is why nothing here binds a port.
+    """
+    settings = get_settings()
+    return Principal(
+        id="claude-desktop",
+        tenant_id=parse_tenant_id(settings.default_tenant_id),
+        scopes=DEFAULT_SCOPES,
+        surface=STDIO_DEFAULT_SURFACE,
+    )
+
+
+def serve_stdio() -> None:
+    """Serve MCP over stdio, for a client that launches us as a subprocess.
+
+    Claude Desktop's `claude_desktop_config.json` starts a command and speaks MCP on
+    its stdin and stdout. That makes this the only connector path needing **no
+    deployment at all** — no host, no TLS, no public URL — which is why it exists
+    despite streamable HTTP being the form ChatGPT requires.
+
+    **Nothing may write to stdout.** stdout *is* the protocol channel here: a startup
+    banner like the HTTP server's would be parsed as a malformed JSON-RPC frame and
+    the client would drop the connection with no useful error. Diagnostics go to
+    stderr, which the client logs and ignores.
+    """
+    import asyncio
+    import sys
+
+    principal = stdio_principal()
+    print(
+        f"coletar mcp (stdio) -> tenant {principal.tenant_id}, "
+        f"surface {principal.surface}, backend {get_settings().store_backend}",
+        file=sys.stderr,
+    )
+
+    async def _run() -> None:
+        # Held for the whole process: there is one caller and one identity, so the
+        # ContextVar the tools read is set once rather than per request.
+        with principal_scope(principal):
+            await mcp.run_stdio_async()
+
+    asyncio.run(_run())
 
 
 def run() -> None:
