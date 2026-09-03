@@ -1,0 +1,31 @@
+{
+  "_comment": "Task context that the pattern extractor stores as standing preferences, plus durable controls it must keep. Shapes are taken from a real 17,881-turn ChatGPT export; the wording is rewritten so no private content is committed. Every `durable: false` entry here is one the heuristic gets wrong today.",
+  "turns": [
+    {"id": "t01", "durable": false, "user": "I run npm test and it fails on the auth suite, any idea why?"},
+    {"id": "t02", "durable": false, "user": "I use figma for this mockup, how do I export the frames?"},
+    {"id": "t03", "durable": false, "user": "I do not want the sidebar to scroll over the content area here."},
+    {"id": "t04", "durable": false, "user": "I use the Cohere API in this script to embed the docs, how do I batch it?"},
+    {"id": "t05", "durable": false, "user": "I do not want ListIterator to modify frontPtr in this assignment."},
+    {"id": "t06", "durable": false, "user": "I run server.js and the port is already in use."},
+    {"id": "t07", "durable": false, "user": "I use RAG for this prototype, is chunking at 512 tokens sensible?"},
+    {"id": "t08", "durable": false, "user": "I do not want to find the median of medians for this problem."},
+    {"id": "t09", "durable": false, "user": "I run the build and it times out after nine minutes."},
+    {"id": "t10", "durable": false, "user": "I use React here to fetch data and handle the login form."},
+    {"id": "t11", "durable": false, "user": "I do not want to see the solution yet, just a hint."},
+    {"id": "t12", "durable": false, "user": "I run git checkout with verbose and it prints nothing."},
+    {"id": "t13", "durable": false, "user": "I use sqlite to access the db in this notebook."},
+    {"id": "t14", "durable": false, "user": "I do not want to hard code the company lookup in this function."},
+    {"id": "t15", "durable": false, "user": "I use tfidfvectorizer to make vectors for the rows in this dataset."},
+
+    {"id": "t16", "durable": true, "kind": "preference", "user": "I prefer fixed-point integers over doubles for money, in every project."},
+    {"id": "t17", "durable": true, "kind": "instruction", "user": "From now on, always use uv instead of pip."},
+    {"id": "t18", "durable": true, "kind": "fact", "user": "I run almost every day as a way to destress."},
+    {"id": "t19", "durable": true, "kind": "fact", "user": "I take the subway to get to work."},
+    {"id": "t20", "durable": true, "kind": "preference", "user": "I never use an ORM, on any project."},
+    {"id": "t21", "durable": true, "kind": "preference", "user": "I use the STAR method whenever I answer behavioural questions."},
+    {"id": "t22", "durable": true, "kind": "goal", "user": "I'm building a bookkeeping service called Ledger."},
+    {"id": "t23", "durable": true, "kind": "fact", "user": "I work at a quantitative trading firm on the markets team."},
+    {"id": "t24", "durable": true, "kind": "instruction", "user": "Remember that my timezone is US Eastern."},
+    {"id": "t25", "durable": true, "kind": "preference", "user": "I always write tests before the implementation."}
+  ]
+}

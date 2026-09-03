@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -23,7 +24,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 from coletar.extraction.frontier import ExtractionUnavailable, propose  # noqa: E402
 from coletar.extraction.proposal import Proposal  # noqa: E402
 
-FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "extraction_set.json"
+FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
+
+#: Which labelled set to score against. `live` is the original 55 turns, and is the
+#: heuristic's own specification written as test cases — it flatters the patterns and
+#: punishes anything else. `transient` is the set the heuristic actually fails: task
+#: context it stores as standing preference.
+SETS = {"live": "extraction_set.json", "transient": "transient_set.json"}
 
 
 async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[str]]:
@@ -76,8 +83,12 @@ async def main() -> None:
     models = sys.argv[1:] or ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"]
     print("  this calls a paid API — 55 turns per model\n")
 
-    raw = json.loads(FIXTURE.read_text())
+    which = os.environ.get("BENCH_SET", "live")
+    if which not in SETS:
+        sys.exit(f"BENCH_SET must be one of {sorted(SETS)}")
+    raw = json.loads((FIXTURES / SETS[which]).read_text())
     turns = raw if isinstance(raw, list) else raw.get("turns") or list(raw.values())[0]
+    print(f"  set: {which}")
 
     print(f"  {len(turns)} labelled turns; bars are precision >=0.85, kind exact\n")
     print(f"  {'model':22} {'prec':>6} {'recall':>7} {'kind✗':>6} {'n/a':>5} {'secs':>6}")
