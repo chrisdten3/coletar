@@ -301,30 +301,30 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       Shipped in the meantime: past-tense habits (`I used to` / the common
       misspelling `I use to`) are no longer stored as current ones, which was
       inverting the meaning of 6 statements in the export
-- [ ] 🔴 **The local-inference assumption does not hold on the target hardware.**
-      M6.2's design says "inference on the local leg is free". The dev machine is an
-      8GB M1; `llama3.1` is 4.7GB and running extraction against it shuts the
-      machine down — which also explains the older "ran out of memory at 30 of 100
-      turns" note, previously written off as a fluke. Before any more of the product
-      rests on local extraction, one of these has to be decided: a much smaller
-      model, server-side extraction at import time, or a hosted model with the cost
-      and data-handling questions that opens.
-      **`qwen2.5:0.5b` was measured 2026-09-02 and does not work.** It fits the
-      machine comfortably (0.4GB, 38%→30% free RAM) and fails on quality, in both
-      possible architectures:
-      - *as proposer* (model proposes, guards dispose — the current design):
-        precision 59.5% against a 15% false-positive bar, recall 100%, and `kind`
-        wrong on 13 of 22. It fires on nearly every labelled negative
-      - *as filter over regex candidates* (the inverse, which the numbers above
-        suggest): 8 of 12 on hand-picked cases, and it judged "I prefer fixed-point
-        integers over doubles for money" **not durable** — the canonical example in
-        the propagation harness and the README. Disqualifying on its own
-      One genuinely encouraging result, worth not losing: on the third-party case
-      the model refused a pasted recruiter email outright and, given "I had a call
-      with Amanda from Walleye BD yesterday", produced two correct facts about the
-      *user*. The attribution judgement is reachable; 0.5b is just not the model
-      that reaches it reliably.
-      Note the whole graph-vs-third-party design below depends on this
+- [x] **The local-inference assumption does not hold on the target hardware** —
+      resolved 2026-09-03. Model-assisted extraction moved to a frontier provider
+      behind `extraction_provider`; the local leg stays the default and is the slot
+      a larger open-weights model drops into. AGENTS.md §1 amended in the same
+      commit — the user chooses the backend, only candidate turns are sent, and the
+      provider is a named subprocessor
+- [ ] **Build a labelled set from export prose.** The only benchmark that exists is
+      55 live-proxy turns, and on it the heuristic beats every frontier model
+      outright (`docs/EXTRACTION.md`) — unsurprising, since it is the register the
+      patterns were tuned on. The model path is justified by the *other* register:
+      31.4% heuristic recall over export prose, and third-party PII on a real
+      corpus. Neither has a head-to-head. ~100 hand-labelled turns sampled from a
+      real export would settle model-vs-heuristic for backfill. It would have to be
+      synthesised or consented to before being committed — the source corpus is one
+      person's private history
+- [ ] **Live sync does not need a model, on current evidence.** Measured
+      2026-09-03: the heuristic beats Haiku, Sonnet and Opus on precision, recall,
+      `kind` and latency on live turns simultaneously, and at 1.5–5s per turn a
+      model is felt by a user waiting on the composer button. Revisit only if a
+      labelled *live* set shows the heuristic missing something real
+- [ ] **Do not pay for the Opus tier on extraction.** Sonnet 5 scored equal or
+      better than Opus 5 on the same set at 1.67× less input cost. Treat the
+      precision ordering across models as noise at n=55 — Haiku's `kind` errors
+      moved 0→1 between two runs on identical input
 - [ ] **Third-party facts have nowhere to live.** Raised 2026-09-02. The paste guard
       drops a pasted email wholesale, which is right for privacy and wrong for
       context: "Amanda from Walleye BD reached out about a quant dev internship" is

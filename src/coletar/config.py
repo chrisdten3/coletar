@@ -76,6 +76,20 @@ class Settings(BaseSettings):
     # any other way at consumer scale.
     extraction_model: str = "llama3.1"
 
+    # Which backend does model-assisted extraction. `ollama` keeps inference on the
+    # user's own machine and costs nothing; `anthropic` buys the semantic judgement
+    # the local leg could not deliver — measured 2026-09-02, a 0.5b model scored
+    # 59.5% precision against a 15% false-positive bar, and llama3.1 does not fit an
+    # 8GB machine at all. Selecting a backend is a data-handling decision as much as
+    # a quality one: `anthropic` sends candidate turns to a third party, which
+    # AGENTS.md §1 now covers explicitly.
+    extraction_provider: str = "ollama"
+
+    # The frontier model used when extraction_provider is `anthropic`. Credentials
+    # are resolved by the SDK from ANTHROPIC_API_KEY rather than duplicated here —
+    # one place for a secret to live is the whole point.
+    frontier_extraction_model: str = "claude-opus-5"
+
     # M7: per-principal rate limit on the hosted surfaces. Keyed by credential,
     # not by IP — an office NAT is not one caller and a rotating client is not
     # several.

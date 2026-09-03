@@ -133,6 +133,40 @@ answer." That is semantics, and no additional regex reaches it. It is pinned by 
 the test suite rather than absorbed into a percentage, so a regression appears as a new
 identifier rather than as a number drifting upward.
 
+## Frontier models measured against the heuristic (2026-09-03)
+
+One run, 55 labelled live-proxy turns, via `scripts/bench_extraction.py`.
+
+| path | precision | recall | `kind` wrong | seconds |
+|---|---|---|---|---|
+| heuristic (regex) | 0.952 | 0.909 | 0 | ~0 |
+| `claude-sonnet-5` | 0.947 | 0.818 | 2 | 269 |
+| `claude-opus-5` | 0.944 | 0.773 | 2 | 173 |
+| `claude-haiku-4-5` | 0.929 | 0.591 | 1 | 80 |
+
+Read this carefully, because it is easy to over-read.
+
+**On live turns the heuristic wins outright** — precision, recall, `kind`, and
+latency at once. M2.2's conclusion that a model on the live path would be
+speculative work survives contact with the evidence. Adding one would make the
+composer bridge slower *and* worse, and at 1.5–5s per turn the user is waiting.
+
+**Opus is not better than Sonnet here**, at 1.67x the input price. Nothing in this
+table justifies the Opus tier for extraction.
+
+**The precision spread is noise.** 0.929 to 0.952 across n=55 is a handful of
+turns, and Haiku's `kind` errors moved 0 -> 1 between two runs of the same model on
+the same set. The recall gaps are wide enough to believe; the precision ordering is
+not.
+
+**This set cannot answer the question the models exist for.** It is 55 live-proxy
+turns — the register the patterns were tuned on, which is why they win. The model
+path was justified by export prose, where the heuristic measures 31.4% recall and
+produced third-party PII on a real corpus. There is no labelled export set, so the
+import-path comparison is still unmeasured. Building one is the next honest step,
+and until it exists "use a model for backfill" rests on the 31.4% figure and the
+Walleye failure rather than on a head-to-head.
+
 ## Where this stops, and what comes next
 
 The heuristic clears M2.2's bar on live turns, so a model on the live path would be

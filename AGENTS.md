@@ -32,6 +32,26 @@ tests pass.
    Migration acquisition stays **human-initiated** regardless: the user clicks their
    own export button, and automation begins once the file has landed (§8.1, §11).
 
+   **Extraction may call a third-party model.** Added 2026-09-03. This constraint is
+   about *acquisition* — how content reaches us — and extraction is a separate flow
+   that it did not previously describe. Model-assisted extraction sends the user's
+   own turns to a frontier provider, because the judgement it needs is not reachable
+   locally: a 0.5b model scores 59.5% precision against a 15% bar, `llama3.1` does
+   not fit an 8GB machine, and regex reaches 31.4% recall over export prose. The
+   boundary that applies here is different from the acquisition one, and narrower:
+   - **The user chooses the backend.** `extraction_provider` defaults to `ollama`,
+     which keeps inference on their machine. Sending their conversations to a third
+     party is opt-in, not a default they discover afterwards.
+   - **Only candidate turns, never the graph.** Extraction sends the turn being
+     mined. It does not send stored memories, other conversations, or anything the
+     user has already accepted into the graph.
+   - **The provider is a subprocessor and must be named as one.** Whatever the
+     compliance story says about where a user's conversations go, this flow is part
+     of it. A product selling data provenance does not get to have an unlisted one.
+   - **§7 still governs what comes back.** The transcript is untrusted, the schema a
+     model may return has nowhere to put a confidence or a locality, and every
+     candidate is grounded against the source before it becomes an object.
+
 2. **No UI driving on the destination side either.** The ChatGPT compiler emits a
    package the *user* uploads through GPT Builder. It does not drive GPT Builder.
 
