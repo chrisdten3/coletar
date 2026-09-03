@@ -316,6 +316,25 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       real export would settle model-vs-heuristic for backfill. It would have to be
       synthesised or consented to before being committed — the source corpus is one
       person's private history
+- [ ] **Capture now, extract later** — designed 2026-09-03 in
+      [`CAPTURE_AND_BATCH.md`](CAPTURE_AND_BATCH.md), not built. Splits capture from
+      extraction: the live surfaces store the turn verbatim as an `EPISODE` and run
+      the heuristic for instant availability, and a batch job re-extracts through a
+      frontier model at Batches-API prices. Collapses the two extraction paths into
+      one, which is what stops "it knows this from my export but not from
+      yesterday". Most of the schema already supports it — `EPISODE`, `supersedes`,
+      the Inspector's episode lineage, `jobs/`. **Retention enforcement comes
+      first:** `ttl_days` is declared on every object and enforced nowhere, and
+      capture without a working expiry means accumulating users' raw conversations
+      indefinitely
+- [ ] **Enforce `ttl_days`.** Declared on the schema, present in the Postgres
+      columns, read by the Inspector for display, and acted on by nothing. Blocks
+      the capture design above, and is a compliance answer the product currently
+      cannot give
+- [ ] **Index entity names.** Dedup is per-import and casefolded-name only, so a
+      second import of the same corpus creates a second Amanda. Continuous capture
+      makes that permanent rather than per-file; `payload->>'name'` needs an index on
+      both backends
 - [ ] **Live sync does not need a model, on current evidence.** Measured
       2026-09-03: the heuristic beats Haiku, Sonnet and Opus on precision, recall,
       `kind` and latency on live turns simultaneously, and at 1.5–5s per turn a
