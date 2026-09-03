@@ -640,11 +640,24 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
       through the same sentence guards the regex path uses, so a model changes
       recall and cannot change what counts as a durable assertion. Grounding is
       the anti-fabrication guard and it is structural — a model that invents
-      cannot point at a sentence containing its claim. Measured on `qwen2.5:0.5b`
-      against the M6.1 set: **100% precision, 96.7% recall** against the regex
-      path's 31.4%, over 30 of 100 turns before the 8GB measuring machine ran out
-      of memory — reported partial rather than extrapolated. `kind` is unreliable
-      at 0.5b (both samples labelled `goal`), which the score does not capture.
+      cannot point at a sentence containing its claim.
+
+      **The backend is a frontier provider as of 2026-09-03**, selected by
+      `extraction_provider`, with the local leg kept as the default and as the slot
+      a larger open-weights model drops into. Two measurements, and they disagree
+      because they are different sets — read both or neither:
+
+      - *M6.1 export set, 30 of 100 turns* (the machine ran out of memory):
+        `qwen2.5:0.5b` at 100% precision, 96.7% recall, against the regex path's
+        31.4%. Partial, and reported rather than extrapolated.
+      - *55-turn labelled live set*: the same model at **59.5% precision** against
+        a 15% false-positive bar, with `kind` wrong on 13 of 22. Unusable.
+
+      The second is not a contradiction of the first; it is a different register.
+      The live set is the one the regex patterns were tuned on, so it flatters
+      them and punishes anything else — see `EXTRACTION.md`. Neither set answers
+      the question that decides the import path, because no labelled set drawn
+      from export prose exists yet.
       Grounding does **not** stop injection, only fabrication; that boundary is
       pinned by a test and held by user-turns-only upstream and M5.3's gate
       downstream
