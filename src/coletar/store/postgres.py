@@ -339,6 +339,24 @@ class PostgresStore:
             )
 
     # -- edges --------------------------------------------------------------
+    async def find_entity(self, tenant_id: TenantId, name: str) -> ContextObject | None:
+        wanted = name.strip().casefold()
+        if not wanted:
+            return None
+        # lower(payload->>'name') matches the expression in ix_object_entity_name.
+        # Written any other way the index is not used and this becomes a scan.
+        sql = (
+            f"SELECT {_OBJECT_COLUMNS} FROM context_object o "
+            "WHERE o.tenant_id = %s AND o.type = 'entity' "
+            "AND lower(o.payload->>'name') = %s AND o.retired_at IS NULL "
+            "LIMIT 1"
+        )
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(sql, (tenant_id, wanted))
+            row = await cur.fetchone()
+        return _to_record(row) if row else None
+
     async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:

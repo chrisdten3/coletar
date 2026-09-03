@@ -121,6 +121,19 @@ class Store(Protocol):
         belongs to another tenant."""
         ...
 
+    async def find_entity(self, tenant_id: TenantId, name: str) -> ContextObject | None:
+        """The active entity with this name, or None.
+
+        Narrow rather than a general payload query on purpose: entity-by-name is the
+        one lookup the graph actually needs, and a generic `find_by_payload` would
+        be an unindexed scan wearing a helpful name.
+
+        Matching is casefolded, which merges two different Amandas. That is the
+        conservative direction — a merged entity is visible and separable in the
+        Inspector, a thousand duplicates are neither.
+        """
+        ...
+
     async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
         """Idempotent on (src_id, dst_id, type) within a tenant. Re-asserting an edge
         is not a second edge and does not append a second event. Both endpoints must

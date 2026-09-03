@@ -153,6 +153,23 @@ def compress(
 
 
 @app.command()
+def expire(tenant: str | None = TENANT_OPTION) -> None:
+    """Retire objects whose ttl_days has run out (§6).
+
+    Retires; never deletes. A user must still be able to see what a fact used to say
+    and when it stopped applying.
+    """
+    from coletar.jobs import expire as run_expire
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        report = await run_expire(build_store(), resolved)
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
+@app.command()
 def compile(
     destination: str = typer.Option("local", help="Which provider compiler to run."),
     out: str = typer.Option("build/compile", help="Directory to write artifacts into."),

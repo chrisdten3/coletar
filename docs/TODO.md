@@ -309,11 +309,11 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       first:** `ttl_days` is declared on every object and enforced nowhere, and
       capture without a working expiry means accumulating users' raw conversations
       indefinitely
-- [ ] **Enforce `ttl_days`.** Declared on the schema, present in the Postgres
+- [x] **Enforce `ttl_days`** — done 2026-09-03. Declared on the schema, present in the Postgres
       columns, read by the Inspector for display, and acted on by nothing. Blocks
       the capture design above, and is a compliance answer the product currently
       cannot give
-- [ ] **Index entity names.** Dedup is per-import and casefolded-name only, so a
+- [x] **Index entity names** — done 2026-09-03. Dedup is per-import and casefolded-name only, so a
       second import of the same corpus creates a second Amanda. Continuous capture
       makes that permanent rather than per-file; `payload->>'name'` needs an index on
       both backends
