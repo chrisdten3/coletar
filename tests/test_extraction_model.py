@@ -335,9 +335,40 @@ async def test_the_provider_setting_chooses_the_backend(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_failed_frontier_call_yields_nothing_rather_than_raising() -> None:
-    """A failed extraction is a turn that yields nothing, not an import that dies on
-    turn 4,000 of 17,881."""
+async def test_an_unreachable_provider_is_not_a_turn_with_nothing_in_it(monkeypatch) -> None:
+    """The distinction a 529 on the first real run exposed. A turn the provider
+    never examined must not look identical to a turn examined and found empty —
+    that is how an import silently skips thousands and still reports success."""
+    import httpx
+    from anthropic import APIStatusError
+
     from coletar.extraction import frontier
 
-    assert await frontier.propose(transcript="x", model="nonexistent-model") is None
+    class _Overloaded:
+        async def parse(self, **_: object) -> object:
+            raise APIStatusError(
+                "Overloaded",
+                response=httpx.Response(529, request=httpx.Request("POST", "http://x")),
+                body=None,
+            )
+
+    class _Client:
+        messages = _Overloaded()
+
+        async def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("anthropic.AsyncAnthropic", lambda **_: _Client())
+    with pytest.raises(frontier.ExtractionUnavailable):
+        await frontier.propose(transcript="x", model="claude-haiku-4-5")
+
+
+@pytest.mark.asyncio
+async def test_a_missing_credential_fails_on_the_first_turn_not_the_last() -> None:
+    """Misconfiguration is a third class again: not a turn found empty, and not a
+    transient blip worth retrying 17,881 times. It should stop the import at once."""
+    from coletar.extraction import frontier
+
+    with pytest.raises(Exception) as caught:
+        await frontier.propose(transcript="x", model="claude-haiku-4-5")
+    assert not isinstance(caught.value, frontier.ExtractionUnavailable)

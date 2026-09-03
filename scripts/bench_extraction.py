@@ -21,7 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 
-from coletar.extraction.frontier import propose  # noqa: E402
+from coletar.extraction.frontier import ExtractionUnavailable, propose  # noqa: E402
 from coletar.extraction.proposal import Proposal  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent.parent / "tests" / "fixtures" / "extraction_set.json"
@@ -34,8 +34,16 @@ async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[s
     wrong_kind: list[str] = []
     t0 = time.time()
 
+    unavailable = 0
     for turn in turns:
-        proposal: Proposal | None = await propose(transcript=str(turn["user"]), model=model)
+        try:
+            proposal: Proposal | None = await propose(transcript=str(turn["user"]), model=model)
+        except ExtractionUnavailable:
+            # Never examined. Counting these separately is the whole point — folding
+            # them into "found nothing" would quietly depress recall and make an
+            # overloaded provider look like a worse model.
+            unavailable += 1
+            continue
         got = list(proposal.memories) if proposal else []
         if turn.get("durable"):
             if got:
@@ -55,6 +63,7 @@ async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[s
         "precision": round(len(tp) / writes, 3) if writes else 0.0,
         "recall": round(len(tp) / durable, 3) if durable else 0.0,
         "wrong_kind": len(wrong_kind),
+        "unavailable": unavailable,
         "false_positives": fp,
     }
 
@@ -68,12 +77,12 @@ async def main() -> None:
     turns = raw if isinstance(raw, list) else raw.get("turns") or list(raw.values())[0]
 
     print(f"  {len(turns)} labelled turns; bars are precision >=0.85, kind exact\n")
-    print(f"  {'model':22} {'prec':>6} {'recall':>7} {'kind✗':>6} {'secs':>6}")
+    print(f"  {'model':22} {'prec':>6} {'recall':>7} {'kind✗':>6} {'n/a':>5} {'secs':>6}")
     for model in models:
         card = await score(model, turns)
         print(
             f"  {model:22} {card['precision']:>6} {card['recall']:>7} "
-            f"{card['wrong_kind']:>6} {card['seconds']:>6}"
+            f"{card['wrong_kind']:>6} {card['unavailable']:>5} {card['seconds']:>6}"
         )
 
 

@@ -30,6 +30,24 @@ from coletar.extraction.proposal import Proposal
 
 logger = logging.getLogger(__name__)
 
+
+class ExtractionUnavailable(Exception):
+    """The turn was never examined — the provider was unreachable, overloaded or
+    rate-limiting.
+
+    Distinct from a `None` proposal, which means the model *did* read the turn and
+    found nothing. Collapsing the two is how an import of 17,881 turns skips
+    thousands and still reports success: every skipped turn looks like a turn with
+    no durable content in it. Observed on the first real run, where a 529 from one
+    model was swallowed as an empty result.
+    """
+
+
+#: Transient failures are worth retrying before giving up on a turn. The SDK
+#: default is 2; an import is long enough that a brief overload should not cost a
+#: turn, and short enough that we should not retry forever.
+MAX_RETRIES = 5
+
 #: Enough for a proposal several times larger than any real turn produces. On
 #: Claude Opus 5 thinking is on by default and `max_tokens` caps thinking *and*
 #: response together, so a tight budget here truncates mid-object rather than
@@ -80,12 +98,13 @@ async def propose(
     nothing" from "the call failed" — the first is a result worth recording, the
     second is not.
     """
-    from anthropic import AsyncAnthropic
+    from anthropic import APIConnectionError, APIStatusError, AsyncAnthropic
+    from pydantic import ValidationError
 
     from coletar.config import get_settings
 
     resolved = model or get_settings().frontier_extraction_model
-    client = AsyncAnthropic()
+    client = AsyncAnthropic(max_retries=MAX_RETRIES)
     try:
         response = await client.messages.parse(
             model=resolved,
@@ -96,11 +115,17 @@ async def propose(
             ],
             output_format=Proposal,
         )
-    except Exception:
-        # A failed extraction is a turn that yields nothing, not an import that
-        # dies on turn 4,000 of 17,881. The traceback goes to the log; the caller
-        # gets a value it can carry on with.
-        logger.warning("frontier extraction failed for a turn", exc_info=True)
+    except (APIStatusError, APIConnectionError) as exc:
+        # Already retried MAX_RETRIES times by the SDK. One compact line, not a
+        # traceback: at import scale a stack trace per turn is not a log, it is a
+        # denial of service against whoever has to read it.
+        raise ExtractionUnavailable(f"{resolved}: {exc.__class__.__name__}") from exc
+    except ValidationError:
+        # The model answered and the answer did not fit the schema. That is a turn
+        # examined and discarded, which is a real result — precision over recall,
+        # and an import that finds nothing is recoverable where one that invents
+        # is not.
+        logger.debug("frontier extraction returned an unusable shape", exc_info=True)
         return None
     finally:
         await client.close()
