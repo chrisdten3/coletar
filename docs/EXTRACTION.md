@@ -196,9 +196,32 @@ matters says no. On current evidence: **Sonnet for backfill, and the heuristic s
 on the live path** — where it beats every model, on a benchmark that is admittedly
 its own spec.
 
-n=25, one run. The precision gap between 0.421 and 0.909 is far too large to be
-sampling noise; the gap between Sonnet and Haiku is smaller and would be worth
-re-running before anything expensive rests on it.
+### What these numbers do and do not support
+
+At n=25 the 95% interval on a precision estimate is about ±0.12. So:
+
+- **heuristic 0.421 vs Sonnet 0.909** — a 49-point gap. Supported.
+- **Haiku 0.643 vs Sonnet 0.909** — 27 points. Supported.
+- **Sonnet 0.909 vs Opus 0.944** — 4 points. *Not* supported, and would need n≈800
+  to resolve. It also changes no decision, so it is not worth measuring.
+
+The decisions taken from this table are therefore sound at this sample size. Adding
+turns to these fixtures buys very little.
+
+**Two weaknesses that more turns would not fix**, and they are the real limits:
+
+1. *The turns are hand-written*, modelled on a real export rather than sampled from
+   one. They may not reflect the true distribution.
+2. *One party wrote the fixtures, assigned every label, and built the extractor.*
+   That measures one party's consistency, not the systems'. Whether "I use the STAR
+   method" is durable is a judgement call, and it is currently a single unvalidated
+   one.
+
+`scripts/label_turns.py` fixes both: it samples real turns from an export, stratified
+by whether the heuristic fires (where each kind of error lives), and takes labels
+from the person whose graph it is. `BENCH_SET` accepts a path, so the result scores
+without entering the repo — committing a labelled set means committing private
+conversation text, which should be deliberate.
 
 ## Where this stops, and what comes next
 

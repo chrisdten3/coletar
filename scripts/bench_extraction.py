@@ -32,6 +32,10 @@ FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
 #: context it stores as standing preference.
 SETS = {"live": "extraction_set.json", "transient": "transient_set.json"}
 
+#: `BENCH_SET` also accepts a path, so a set labelled by the user with
+#: `scripts/label_turns.py` can be scored without being copied into the repo —
+#: committing one means committing private conversation text.
+
 
 async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[str]]:
     tp: list[str] = []
@@ -84,11 +88,15 @@ async def main() -> None:
     print("  this calls a paid API — 55 turns per model\n")
 
     which = os.environ.get("BENCH_SET", "live")
-    if which not in SETS:
-        sys.exit(f"BENCH_SET must be one of {sorted(SETS)}")
-    raw = json.loads((FIXTURES / SETS[which]).read_text())
+    if which in SETS:
+        source = FIXTURES / SETS[which]
+    elif Path(which).expanduser().exists():
+        source = Path(which).expanduser()
+    else:
+        sys.exit(f"BENCH_SET must be one of {sorted(SETS)}, or a path to a labelled set")
+    raw = json.loads(source.read_text())
     turns = raw if isinstance(raw, list) else raw.get("turns") or list(raw.values())[0]
-    print(f"  set: {which}")
+    print(f"  set: {source.name}")
 
     print(f"  {len(turns)} labelled turns; bars are precision >=0.85, kind exact\n")
     print(f"  {'model':22} {'prec':>6} {'recall':>7} {'kind✗':>6} {'n/a':>5} {'secs':>6}")

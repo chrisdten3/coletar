@@ -289,15 +289,14 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       `claude-haiku-4-5` reaches only 0.643 and is **not sufficient**. See
       `docs/EXTRACTION.md`. Practical consequence: use Sonnet for backfill, keep the
       heuristic on the live path, and do not use Haiku for this judgement
-- [ ] **Build a labelled set from export prose.** The only benchmark that exists is
-      55 live-proxy turns, and on it the heuristic beats every frontier model
-      outright (`docs/EXTRACTION.md`) — unsurprising, since it is the register the
-      patterns were tuned on. The model path is justified by the *other* register:
-      31.4% heuristic recall over export prose, and third-party PII on a real
-      corpus. Neither has a head-to-head. ~100 hand-labelled turns sampled from a
-      real export would settle model-vs-heuristic for backfill. It would have to be
-      synthesised or consented to before being committed — the source corpus is one
-      person's private history
+- [ ] **Get labels from the user, not from the extractor's author.** The tooling
+      exists (`scripts/label_turns.py`); what is missing is a session with it. Every
+      extraction number so far comes from fixtures written and labelled by the same
+      party that built the extractor, which measures that party's consistency rather
+      than the systems'. Sampling is stratified by whether the heuristic fires, since
+      that is where each kind of error lives. ~100 turns is enough — see the interval
+      arithmetic in `EXTRACTION.md`; the gaps that matter are already wide enough to
+      resolve, and the ones that are not do not change any decision
 - [ ] **Capture now, extract later** — designed 2026-09-03 in
       [`CAPTURE_AND_BATCH.md`](CAPTURE_AND_BATCH.md), not built. Splits capture from
       extraction: the live surfaces store the turn verbatim as an `EPISODE` and run
