@@ -267,6 +267,20 @@ class InMemoryStore:
             ),
         )
 
+    async def find_entity(self, tenant_id: TenantId, name: str) -> ContextObject | None:
+        wanted = name.strip().casefold()
+        if not wanted:
+            return None
+        for (tenant, _), obj in self._objects.items():
+            if (
+                tenant == tenant_id
+                and obj.type is ObjectType.ENTITY
+                and obj.is_active
+                and str(obj.payload.get("name", "")).strip().casefold() == wanted
+            ):
+                return obj
+        return None
+
     # -- edges --------------------------------------------------------------
     async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
         for endpoint in (edge.src_id, edge.dst_id):

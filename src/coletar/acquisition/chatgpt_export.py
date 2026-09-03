@@ -372,6 +372,16 @@ async def _store_graph(
         if obj.type is ObjectType.ENTITY:
             name = str(obj.payload.get("name", "")).strip().casefold()
             existing = known_entities.get(name)
+            if existing is None:
+                # Not seen in this import — ask the graph. Without this a second
+                # import of the same corpus creates a second Amanda, and continuous
+                # capture would make that permanent rather than per-file. The
+                # in-memory dict stays in front of it so a name recurring across
+                # thousands of turns costs one query, not thousands.
+                found = await store.find_entity(tenant_id, name)
+                if found is not None:
+                    existing = found.id
+                    known_entities[name] = found.id
             if existing is not None:
                 # Already have this person. Remember the mapping so this turn's
                 # edges point at the object that exists rather than the one we
