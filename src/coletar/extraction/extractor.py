@@ -179,6 +179,13 @@ _SIGN_OFF = re.compile(
 #: being somewhere in the empty middle.
 _PASTED_LEN = 1_000
 
+#: "I used to want to be a physical therapist" is a statement that something is no
+#: longer true, and the `i (?:use|run)` pattern reads it as present-tense habit —
+#: worse when the user writes the common misspelling "I use to", which matches the
+#: trigger exactly. Storing it inverts the meaning: the graph ends up asserting a
+#: career the user explicitly left. Seen 6 times in a 17,881-turn real export.
+_PAST_HABIT = re.compile(r"\bi\s+use[d]?\s+to\s+\w+", re.I)
+
 
 def _looks_pasted(text: str) -> str | None:
     """Why this turn is not the user speaking in their own voice, or None if it is.
@@ -227,6 +234,11 @@ def _sentence_rejected(sentence: str) -> bool:
         return True
     # Structure means this is quoted or pasted material, not something the user wrote.
     if _STRUCTURAL.search(sentence):
+        return True
+    # A dropped habit is not a current one, and the `i (?:use|run)` trigger reads
+    # "I used to X" as present tense. Sentence-scoped like every other guard: a
+    # turn may abandon one habit and state a live preference in the next breath.
+    if _PAST_HABIT.search(sentence):
         return True
     # A bracketed placeholder is a template, not a statement.
     return bool(_PLACEHOLDER.search(sentence))
