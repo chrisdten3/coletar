@@ -289,14 +289,16 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       `claude-haiku-4-5` reaches only 0.643 and is **not sufficient**. See
       `docs/EXTRACTION.md`. Practical consequence: use Sonnet for backfill, keep the
       heuristic on the live path, and do not use Haiku for this judgement
-- [ ] **Get labels from the user, not from the extractor's author.** The tooling
-      exists (`scripts/label_turns.py`); what is missing is a session with it. Every
-      extraction number so far comes from fixtures written and labelled by the same
-      party that built the extractor, which measures that party's consistency rather
-      than the systems'. Sampling is stratified by whether the heuristic fires, since
-      that is where each kind of error lives. ~100 turns is enough — see the interval
-      arithmetic in `EXTRACTION.md`; the gaps that matter are already wide enough to
-      resolve, and the ones that are not do not change any decision
+- [x] **Labels accepted as they stand** — decided 2026-09-03. The fixtures were
+      written and labelled by the same party that built the extractor, and the owner
+      reviewed the judgements and accepted them rather than re-labelling. Recorded
+      because it is a real property of the numbers, not a gap to be closed: the
+      conclusions in `EXTRACTION.md` are sound for the gaps they claim (49 and 27
+      points, against a ±12 interval at n=25), and their weakness is provenance
+      rather than sample size. `scripts/label_turns.py` samples real turns and takes
+      independent labels if that provenance ever needs to be demonstrable — to an
+      auditor, a customer asking how extraction quality was measured, or anyone
+      re-opening the model choice
 - [ ] **Capture now, extract later** — designed 2026-09-03 in
       [`CAPTURE_AND_BATCH.md`](CAPTURE_AND_BATCH.md), not built. Splits capture from
       extraction: the live surfaces store the turn verbatim as an `EPISODE` and run
