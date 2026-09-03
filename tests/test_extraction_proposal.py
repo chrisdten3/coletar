@@ -117,3 +117,56 @@ def test_locality_is_assigned_by_the_caller_not_the_proposal() -> None:
         extraction_method=EXPORT,
     )
     assert objects[0].locality.mode is LocalityMode.SYNCED
+
+
+# --- end to end: the entity reaches the store and the Inspector explains it -------
+
+
+@pytest.mark.asyncio
+async def test_an_entity_survives_to_the_inspector_with_its_reason(tmp_path) -> None:
+    """Constraint 4 in one test. An entity the Inspector cannot explain should not
+    exist, so the chain that matters is: extraction names a person, the store keeps
+    the edge, and the view can say why she is there — in the user's own words."""
+    from coletar.inspector.metrics import build_agentic_view
+    from coletar.schema.events import Actor, Event, EventType
+    from coletar.schema.objects import Provider
+    from coletar.store.memory import InMemoryStore
+    from conftest import TENANT
+
+    objects, edges = materialise(
+        Proposal(
+            entities=[
+                ProposedEntity(name="Amanda", content="Amanda, Walleye Business Development")
+            ],
+            facts=[
+                ProposedFact(
+                    content="Had a call with Amanda about a quant dev internship",
+                    about=["Amanda"],
+                )
+            ],
+        ),
+        extraction_method=EXPORT,
+    )
+
+    store = InMemoryStore()
+    for obj in objects:
+        await store.put_object(
+            TENANT,
+            obj,
+            event=Event(
+                type=EventType.CONNECTOR_WRITE,
+                object_id=obj.id,
+                actor=Actor.MIGRATION,
+                provider=Provider.CHATGPT,
+            ),
+        )
+    for edge in edges:
+        await store.add_edge(TENANT, edge)
+
+    view = await build_agentic_view(store, TENANT)
+    entity = next(o for o in objects if o.type is ObjectType.ENTITY)
+
+    explanation = view.mentioned_by.get(entity.id, [])
+    assert [f.content for f in explanation] == [
+        "Had a call with Amanda about a quant dev internship"
+    ], "an entity with no stated reason is one the user cannot judge"

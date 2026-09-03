@@ -43,6 +43,7 @@ from coletar.schema.objects import (
     GLOBAL_SCOPE,
     ContextObject,
     LocalityMode,
+    ObjectType,
     Scope,
     ScopeType,
 )
@@ -330,17 +331,39 @@ def _render_dashboard(board: Dashboard) -> str:
     )
 
 
+def _mentions(view: AgenticView, object_id: str) -> str:
+    """Why this entity is in the graph, in the user's own words.
+
+    Constraint 4: an object the Inspector cannot explain to a user should not
+    exist. A bare entity row fails that — "Amanda, Walleye Business Development" is
+    a name with no answer to "who is this and why do you know about her?". The facts
+    that mention her are the answer, and they are the user's own sentences.
+    """
+    facts = view.mentioned_by.get(object_id, [])
+    if not facts:
+        # Said plainly rather than left blank. An entity nothing mentions is a
+        # person we cannot justify holding, and the user should be able to see that
+        # and delete them.
+        return "<span class='meta'>nothing mentions this</span>"
+    return "<br>".join(_preview(fact.content) for fact in facts)
+
+
 def _render_agentic(view: AgenticView) -> str:
     sections = []
     for object_type, rows in view.by_type.items():
+        is_entity = object_type == str(ObjectType.ENTITY)
+        columns = ["id", "scope", "confidence", "content"]
+        if is_entity:
+            columns.append("mentioned by")
         listed = _table(
-            ["id", "scope", "confidence", "content"],
+            columns,
             [
                 [
                     f"<code>{escape(o.id)}</code>",
                     escape(str(o.scope)),
                     f"{o.confidence:.2f}",
                     _preview(o.content),
+                    *([_mentions(view, o.id)] if is_entity else []),
                 ]
                 for o in rows
             ],
