@@ -24,14 +24,17 @@ numbers are in `tests/test_extraction_quality.py` and docs/EXTRACTION.md.
 
 from __future__ import annotations
 
-import json
 import re
 from enum import StrEnum
 
 import httpx
+from pydantic import ValidationError
 
+from coletar.extraction.proposal import Proposal, materialise
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
+    ContextObject,
+    Edge,
     ExtractionMethod,
     Memory,
     MemoryKind,
@@ -381,94 +384,152 @@ async def extract_with_model(
     base_url: str | None = None,
     timeout: float = 120.0,
     keep_alive: str = "5m",
-) -> list[Memory]:
+) -> tuple[list[ContextObject], list[Edge]]:
     """Model-assisted extraction: the model proposes, the existing guards dispose.
 
     **M6.2**, not M2.2. The heuristic above clears M2.2's false-positive bar on the
-    labelled live-turn set, so a model on the live path would be speculative work. It
-    is where an export gets parsed that a model becomes necessary — M6.1 measured the
-    regex path at 31.4% recall over export prose, because an archive is years of a
-    register the patterns were never tuned for.
+    labelled live-turn set, so a model on the live path looked speculative. Two
+    measurements on real data changed that. Over export prose the regex path reaches
+    31.4% recall, because an archive is years of a register the patterns were never
+    tuned for. And run against a real 17,881-turn export it produced memories that
+    were not about the user at all — pasted introductions from recruiters, stored in
+    the first person. Telling those apart needs semantics.
 
-    The design decision that matters is that a model is only allowed to change *what
-    gets proposed*. Every candidate is then located in the transcript and put through
-    the same sentence guards the regex path uses, so recall is what improves and
-    precision is defended by machinery a prompt cannot talk its way past.
+    The design decision that matters is unchanged: a model may only change *what
+    gets proposed*. Every candidate is located in the transcript and put through the
+    same sentence guards the regex path uses, so recall is what improves and
+    precision stays defended by machinery a prompt cannot talk past. `proposal.py`
+    extends that to the schema itself — a model has nowhere to put a confidence, a
+    locality, or an object id.
 
-    Runs against the user's own local model. §11 names the cost risk directly: this
-    would run on every export at consumer scale, and inference on the local leg is
-    free.
+    Returns objects *and* edges because a third party is not a memory. "Amanda,
+    Walleye Business Development" is an entity; "had a call with Amanda about an
+    internship" is a fact linked to her; neither is a claim about the user. A
+    memory-only return type is what forced the bug this function now avoids.
     """
     from coletar.config import get_settings
 
     settings = get_settings()
-    model = model or settings.extraction_model
-    endpoint = (base_url or settings.upstream_base_url).rstrip("/").removesuffix("/v1")
+    if settings.extraction_provider == "anthropic":
+        from coletar.extraction.frontier import propose
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(
-            f"{endpoint}/api/chat",
-            json={
-                "model": model,
-                "format": "json",
-                "stream": False,
-                "options": {"temperature": 0.0},
-                # An import is thousands of turns in a row. Without this the
-                # server evicts the model between calls and every turn pays a
-                # cold load, which on a memory-tight machine is the difference
-                # between 0.3s and 90s per turn.
-                "keep_alive": keep_alive,
-                "messages": [
-                    {"role": "system", "content": _EXTRACTION_SYSTEM},
-                    # Fenced, so the boundary between instructions and data is a
-                    # structural feature of the prompt rather than a request.
-                    {"role": "user", "content": f"<transcript>\n{transcript}\n</transcript>"},
-                ],
-            },
+        proposal = await propose(transcript=transcript, model=model)
+    else:
+        proposal = await _propose_locally(
+            transcript=transcript,
+            model=model or settings.extraction_model,
+            base_url=base_url,
+            timeout=timeout,
+            keep_alive=keep_alive,
         )
-        response.raise_for_status()
-        payload = response.json()
+    if proposal is None:
+        return [], []
 
-    try:
-        parsed = json.loads(payload["message"]["content"])
-        candidates = parsed["memories"]
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
-        # Malformed output is not a partial result to salvage. Precision over recall:
-        # an import that finds nothing is recoverable, one that invents is not.
-        return []
-    if not isinstance(candidates, list):
-        return []
+    return materialise(
+        _grounded(proposal, transcript),
+        extraction_method=ExtractionMethod.DERIVED_SUMMARY,
+        provider=provider,
+        scope=scope,
+    )
 
+
+def _grounded(proposal: Proposal, transcript: str) -> Proposal:
+    """Drop anything the model could not have read in the transcript.
+
+    The anti-hallucination guard, applied to all three proposal types rather than
+    to memories alone. An invented preference costs the user a deletion; an invented
+    *person* puts a name in their graph that never existed, and the Context
+    Inspector would have nothing to show them about where it came from.
+
+    An entity is grounded by its name, not its description — the description is the
+    model's phrasing, while the name is the thing that must appear in the source.
+    """
     sentences = _sentences(transcript)
-    found: list[Memory] = []
+
+    def survives(text: str) -> bool:
+        source = _grounding(text, sentences)
+        return source is not None and not _sentence_rejected(source)
+
     seen: set[str] = set()
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        content = str(candidate.get("content", "")).strip()
-        if not content or len(content) > _MAX_LEN:
-            continue
-        try:
-            kind = MemoryKind(str(candidate.get("kind", "fact")).lower())
-        except ValueError:
-            continue
-        source = _grounding(content, sentences)
-        if source is None or _sentence_rejected(source):
-            continue
+    memories = []
+    for memory in proposal.memories:
+        content = memory.content.strip()
         key = content.lower()
-        if key in seen:
+        if not content or len(content) > _MAX_LEN or key in seen or not survives(content):
             continue
         seen.add(key)
-        found.append(
-            Memory.from_write(
-                content,
-                kind=kind,
-                scope=scope,
-                provider=provider,
-                # A model located this, rather than an unambiguous first-person form
-                # matching. §3.1's table prices that difference; the schema enforces it.
-                extraction_method=ExtractionMethod.DERIVED_SUMMARY,
-                origin_type=OriginType.USER,
+        memories.append(memory)
+
+    lowered = transcript.casefold()
+    entities = [
+        entity
+        for entity in proposal.entities
+        if entity.name.strip() and entity.name.strip().casefold() in lowered
+    ]
+    kept_names = {entity.name.strip().casefold() for entity in entities}
+
+    facts = [
+        fact
+        for fact in proposal.facts
+        if fact.content.strip()
+        and len(fact.content) <= _MAX_LEN
+        and survives(fact.content)
+        # A fact naming an entity the grounding pass just dropped would otherwise
+        # survive with its link silently removed, which reads as a fact about
+        # nobody rather than the hallucination it is.
+        and all(name.strip().casefold() in kept_names for name in fact.about)
+    ]
+
+    return Proposal(memories=memories, entities=entities, facts=facts)
+
+
+async def _propose_locally(
+    *,
+    transcript: str,
+    model: str,
+    base_url: str | None,
+    timeout: float,
+    keep_alive: str,
+) -> Proposal | None:
+    """The local leg. Kept because it costs nothing and needs no third party — the
+    right default for anyone who can run a model big enough, and the path a larger
+    open-weights model would slot into without touching the caller."""
+    from coletar.config import get_settings
+
+    endpoint = (base_url or get_settings().upstream_base_url).rstrip("/").removesuffix("/v1")
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        try:
+            response = await client.post(
+                f"{endpoint}/api/chat",
+                json={
+                    "model": model,
+                    "format": "json",
+                    "stream": False,
+                    "options": {"temperature": 0.0},
+                    # An import is thousands of turns in a row. Without this the
+                    # server evicts the model between calls and every turn pays a
+                    # cold load, which on a memory-tight machine is the difference
+                    # between 0.3s and 90s per turn.
+                    "keep_alive": keep_alive,
+                    "messages": [
+                        {"role": "system", "content": _EXTRACTION_SYSTEM},
+                        # Fenced, so the boundary between instructions and data is a
+                        # structural feature of the prompt rather than a request.
+                        {
+                            "role": "user",
+                            "content": f"<transcript>\n{transcript}\n</transcript>",
+                        },
+                    ],
+                },
             )
-        )
-    return found
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError):
+            return None
+
+    try:
+        return Proposal.model_validate_json(payload["message"]["content"])
+    except (KeyError, TypeError, ValidationError):
+        # Malformed output is not a partial result to salvage. Precision over recall:
+        # an import that finds nothing is recoverable, one that invents is not.
+        return None
