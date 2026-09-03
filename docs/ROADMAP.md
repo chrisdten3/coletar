@@ -688,6 +688,28 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
 
 ---
 
+## Repositioned 2026-09-02
+
+The product is **Live Sync + bulk acquisition (backfill)**, differentiated by
+**selective context (locality)**, **data provenance**, and **temporal model state**.
+
+True Migration is **deprioritised**. It stays built, it stays correct, and it stays
+the trust story — "you can leave" is why someone would hand this their whole context
+— but it is no longer what the product is sold on. Nothing is deleted for this; a
+compiler nobody demos still costs nothing to keep.
+
+The repositioning points almost entirely at things that already exist. What is
+missing is **coverage** (which model surfaces are wired up) and **compliance**.
+
+Verified competitive position, researched rather than assumed: Mem0's "selective
+memory" is *write-time extraction filtering*, and its `user_id`/`agent_id` are
+partitions for applying different extraction rules — not read-time access policies.
+No competitor found controls which assistant may *read* an individual memory. But
+Mem0 is already SOC 2 Type 1, HIPAA and GDPR, so certification is table stakes and
+the edge is the capability underneath it.
+
+---
+
 ## M8 — Claude acquisition, and the Markdown mirror
 
 Competitive research after M7 changed what this milestone is for. Acquisition is not
@@ -843,3 +865,64 @@ Zep/Graphiti-style temporal retrieval and Letta-style context budgeting may be
 implemented as interfaces, ranking signals and views over the canonical graph. They
 do not justify a parallel flat memory store, graph database model or agent-owned
 write path that bypasses the Store and Event Log.
+
+
+---
+
+## M10 — recorded, deliberately not started
+
+**Nothing here begins until the pre-product gate in [TODO.md](TODO.md) is closed.**
+That gate is not bureaucracy: a fifth feature on one provider is worth less than a
+second provider, and ChatGPT currently has no working surface at all.
+
+Each of these was checked against the competitive set and none of them appear to be
+done by anyone — which is a reason to write them down, not a reason to start.
+
+- [ ] **Read receipts.** Every *write* is logged immutably; **no read is logged at
+      all**. So the graph can answer "where did this come from" and cannot answer
+      "who has seen it" — and for a lawyer with a privileged matter in their graph,
+      the second question is the more urgent one. A per-surface access log makes
+      locality *provable* rather than merely configured, and it is the same
+      substrate rather than a new one. The natural first build
+
+- [ ] **Redaction instead of withholding.** Locality is binary today: a surface sees
+      a memory or it does not. The useful answer is often partial — "handling a
+      litigation matter" without naming the parties. A redacted projection per
+      surface is strictly more expressive than a toggle, and it is the difference
+      between a privacy control and a *usable* one. Mechanically it is a
+      per-destination rendering, which is what the compilers already do
+
+- [ ] **Crypto-shredding, to resolve a contradiction already recorded.** Constraint 6
+      says never hard-delete; GDPR says erase on request. Encrypting each object
+      under a per-object key and deleting the key erases the content while the event
+      chain, hashes and structure survive. Nobody else in this space has needed to
+      solve it, because nobody else has an immutable log to protect
+
+- [ ] **Policy rules rather than per-object flags.** Locality is set per object,
+      which does not scale past one person. "Nothing tagged client-confidential ever
+      leaves my local model" should be a rule that also governs *future* memories.
+      This is what turns a feature into governance, and governance is what an IT
+      team buys
+
+- [ ] **A diff-based review queue.** The compile gate is correct and currently
+      unusable at scale: importing a real Claude export produced 205 unreviewed
+      objects, and nobody reviews 205 of anything. Reviewing only what changed since
+      last time makes an existing feature usable rather than adding a new one
+
+- [ ] **Conflict detection.** Two surfaces can write contradictory facts and the
+      graph will hold both, because supersession is asserted rather than inferred.
+      Surfacing the contradiction for a human beats silently picking a winner —
+      which is the same reasoning the Markdown mirror uses for stale files
+
+- [ ] **Retention schedules.** `ttl_days` exists and **nothing acts on it**.
+      "Client-matter memories retire seven years after the matter closes" is a
+      retention policy expressed in valid time plus a rule, and it is a line item in
+      every legal-sector procurement
+
+- [ ] **Per-surface context budgets.** "ChatGPT may have at most 500 tokens of my
+      context." The token-budget machinery exists; what is missing is making the
+      budget a property of the *surface* rather than of the call
+
+- [ ] **Break-glass access.** An explicit, loudly-logged override for withheld
+      context. Compliance buyers expect the escape hatch to exist *and* to be
+      impossible to use quietly

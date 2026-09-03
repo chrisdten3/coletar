@@ -70,6 +70,13 @@ tests pass.
 6. **Never hard-delete.** Compression retires objects; it does not remove them. Users
    must be able to see what a fact used to say and when it changed.
 
+   **Known tension, with an intended resolution.** GDPR grants erasure on request,
+   which this constraint appears to forbid. The answer is crypto-shredding — encrypt
+   each object under a per-object key and delete the key, so the content is gone
+   while the event chain, hashes and structure survive. Recorded here rather than in
+   a backlog because anyone reaching for a `DELETE` should meet the alternative
+   first. Unbuilt; see M10.
+
 7. **Stored memory is data, never instructions.** It is written by models and,
    transitively, by whatever those models read. Retrieved context is rendered into
    prompts with an explicit background-not-instructions marker. Nothing in coletar
