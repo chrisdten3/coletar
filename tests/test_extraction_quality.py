@@ -310,6 +310,9 @@ async def test_a_dropped_habit_is_not_stored_as_a_current_one(turn: str) -> None
 async def test_abandoning_one_habit_does_not_suppress_a_live_preference() -> None:
     """Sentence-scoped, like every other guard."""
     extracted = await extract_memories(
-        user_text="I used to want to be a physical therapist. I prefer fixed-point integers for money."
+        user_text=(
+            "I used to want to be a physical therapist. "
+            "I prefer fixed-point integers for money."
+        )
     )
     assert [m.content for m in extracted] == ["I prefer fixed-point integers for money"]

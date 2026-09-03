@@ -364,11 +364,18 @@ async def test_an_unreachable_provider_is_not_a_turn_with_nothing_in_it(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_a_missing_credential_fails_on_the_first_turn_not_the_last() -> None:
+async def test_a_misconfiguration_fails_on_the_first_turn_not_the_last(monkeypatch) -> None:
     """Misconfiguration is a third class again: not a turn found empty, and not a
-    transient blip worth retrying 17,881 times. It should stop the import at once."""
+    transient blip worth retrying 17,881 times. It should stop the import at once.
+
+    Stubbed rather than asserted against the absence of a credential — an earlier
+    version of this test only passed on a machine that happened to have none, and
+    started failing the moment someone logged in."""
     from coletar.extraction import frontier
 
-    with pytest.raises(Exception) as caught:
+    def _no_credentials(**_: object) -> object:
+        raise TypeError("Could not resolve authentication method")
+
+    monkeypatch.setattr("anthropic.AsyncAnthropic", _no_credentials)
+    with pytest.raises(TypeError):
         await frontier.propose(transcript="x", model="claude-haiku-4-5")
-    assert not isinstance(caught.value, frontier.ExtractionUnavailable)
