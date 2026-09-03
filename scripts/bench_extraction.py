@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -69,9 +68,13 @@ async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[s
 
 
 async def main() -> None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        sys.exit("ANTHROPIC_API_KEY is not set — this script calls a paid API.")
+    # Deliberately no credential check here. The SDK resolves ANTHROPIC_API_KEY, an
+    # `ant auth login` profile, or workload identity — in that order — and an
+    # earlier version of this script gated on the env var alone, which rejected a
+    # perfectly good OAuth profile. Let the SDK decide; a missing credential fails
+    # loudly at client construction, which is where it belongs.
     models = sys.argv[1:] or ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"]
+    print("  this calls a paid API — 55 turns per model\n")
 
     raw = json.loads(FIXTURE.read_text())
     turns = raw if isinstance(raw, list) else raw.get("turns") or list(raw.values())[0]
