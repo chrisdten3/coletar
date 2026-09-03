@@ -274,6 +274,15 @@ class ImportReport:
     extracted: int = 0
     created: int = 0
     corroborated: int = 0
+    #: Third parties and the user's relationships to them, which only the
+    #: model-assisted path can produce — the pattern path can only ever emit
+    #: first-person memories.
+    entities: int = 0
+    facts: int = 0
+    #: Turns the provider never examined, kept apart from turns examined and found
+    #: empty. Folding the two together is how an import skips thousands and still
+    #: reports success.
+    unavailable: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -283,8 +292,104 @@ class ImportReport:
             "extracted": self.extracted,
             "created": self.created,
             "corroborated": self.corroborated,
+            "entities": self.entities,
+            "facts": self.facts,
+            "unavailable": self.unavailable,
             "skipped": dict(sorted(self.skipped.items())),
         }
+
+
+async def _store_graph(
+    store: Any,
+    tenant_id: Any,
+    objects: list[Any],
+    edges: list[Any],
+    *,
+    report: ImportReport,
+    archive: str,
+    conversation: str,
+    scope: Any,
+    source_ids: list[str],
+    known_entities: dict[str, str],
+) -> None:
+    """Persist one turn's objects and the edges between them.
+
+    Memories go through `remember`, which folds a repeat into the object it
+    corroborates. Entities and facts do not: entity identity is name matching, not
+    content similarity, and running a person through memory dedup would merge two
+    different people who happen to be described alike. They are written directly,
+    each with its own event — §5 admits no write without one.
+
+    Edges are added last. Both endpoints must exist first, and an edge asserted
+    against a half-written turn is a dangling reference the Inspector would have to
+    render as a fact about nobody.
+
+    `known_entities` carries name -> id across the whole import. Without it a person
+    mentioned in ten conversations becomes ten people: a real export names the same
+    recruiter, colleague and company repeatedly, and an entity per mention is not a
+    graph, it is a list with extra steps. Matching is on the casefolded name, which
+    is crude — two different Amandas merge — and is the conservative direction,
+    since a merged entity is visible and separable in the Inspector while a
+    thousand duplicates are neither.
+    """
+    from coletar.ingest import remember
+    from coletar.schema.events import Actor, Event, EventType
+    from coletar.schema.objects import ExtractionMethod, Memory, ObjectType, Provider
+
+    def _event(object_id: str) -> Event:
+        return Event(
+            type=EventType.CONNECTOR_WRITE,
+            object_id=object_id,
+            actor=Actor.MIGRATION,
+            provider=Provider.CHATGPT,
+            detail={
+                "surface": "chatgpt-export",
+                "archive": archive,
+                "conversation": conversation,
+                "scope": str(scope),
+            },
+        )
+
+    merged: dict[str, str] = {}
+    for obj in objects:
+        obj.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
+        obj.confidence = 0.60
+        obj.provenance.provider = Provider.CHATGPT
+        obj.provenance.confidence = 0.60
+        # Points back at the exact node, so the Inspector can show a user which line
+        # of their own export a person or a fact came from.
+        obj.provenance.source_object_ids = source_ids
+
+        if isinstance(obj, Memory):
+            report.extracted += 1
+            result = await remember(store, tenant_id, obj, event=_event(obj.id))
+            if result.created:
+                report.created += 1
+            else:
+                report.corroborated += 1
+            continue
+
+        if obj.type is ObjectType.ENTITY:
+            name = str(obj.payload.get("name", "")).strip().casefold()
+            existing = known_entities.get(name)
+            if existing is not None:
+                # Already have this person. Remember the mapping so this turn's
+                # edges point at the object that exists rather than the one we
+                # declined to create.
+                merged[obj.id] = existing
+                continue
+            known_entities[name] = obj.id
+            report.entities += 1
+        else:
+            report.facts += 1
+        await store.put_object(tenant_id, obj, event=_event(obj.id))
+
+    stored = {obj.id for obj in objects if obj.id not in merged}
+    for edge in edges:
+        dst = merged.get(edge.dst_id, edge.dst_id)
+        src = merged.get(edge.src_id, edge.src_id)
+        if src in stored and (dst in stored or dst in known_entities.values()):
+            await store.add_edge(tenant_id, edge.model_copy(update={"src_id": src, "dst_id": dst}))
 
 
 async def import_export(
@@ -310,13 +415,22 @@ async def import_export(
     without corroboration this would create a hundred copies of one fact — the exact
     redundancy M4.3 measured as absent from a curated corpus.
     """
-    from coletar.extraction import extract_memories
+    from coletar.config import get_settings
+    from coletar.extraction import extract_memories, extract_with_model
+    from coletar.extraction.frontier import ExtractionUnavailable
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
     from coletar.schema.objects import GLOBAL_SCOPE, ExtractionMethod, Provider
 
     scope = GLOBAL_SCOPE if scope is None else scope
     report = ImportReport()
+    # The pattern path can only emit first-person memories, so a third party has
+    # nowhere to go except the user's own profile — the failure that produced
+    # recruiters' introductions as facts about the account holder. Only the model
+    # path can name a person, so entities exist only when one is configured.
+    use_model = get_settings().extraction_provider != "ollama"
+    # name -> id for every entity written during this import; see _store_graph.
+    known_entities: dict[str, str] = {}
 
     for conversation in read_export(archive):
         report.conversations += 1
@@ -325,6 +439,34 @@ async def import_export(
 
         for message in conversation.messages:
             report.messages += 1
+            source_ids = [
+                part for part in (message.conversation_id, message.node_id) if part
+            ]
+
+            if use_model:
+                try:
+                    objects, edges = await extract_with_model(
+                        transcript=message.text, scope=scope, provider=Provider.CHATGPT
+                    )
+                except ExtractionUnavailable:
+                    # Never examined. Counted rather than silently folded into the
+                    # turns that genuinely held nothing.
+                    report.unavailable += 1
+                    continue
+                await _store_graph(
+                    store,
+                    tenant_id,
+                    objects,
+                    edges,
+                    report=report,
+                    archive=archive.name,
+                    conversation=conversation.title,
+                    scope=scope,
+                    source_ids=source_ids,
+                    known_entities=known_entities,
+                )
+                continue
+
             for memory in await extract_memories(user_text=message.text, scope=scope):
                 memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
                 memory.confidence = 0.60
@@ -332,9 +474,7 @@ async def import_export(
                 memory.provenance.confidence = 0.60
                 # Points back at the exact node, so the Context Inspector can show a
                 # user which line of their own export a memory came from.
-                memory.provenance.source_object_ids = [
-                    part for part in (message.conversation_id, message.node_id) if part
-                ]
+                memory.provenance.source_object_ids = source_ids
                 report.extracted += 1
                 result = await remember(
                     store,

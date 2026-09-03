@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from coletar.schema.events import Event, EventType
-from coletar.schema.objects import ContextObject, ObjectType
+from coletar.schema.objects import ContextObject, EdgeType, ObjectType
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -197,6 +197,11 @@ class AgenticView:
     #: episode-to-derived-object lineage to survive; losing it would make the view
     #: pretty and unfalsifiable.
     derived_from: dict[str, list[ContextObject]]
+    #: entity id -> the facts that mention it, via MENTIONS edges. Constraint 4 says
+    #: an object the Inspector cannot explain should not exist, and an entity alone
+    #: explains nothing: "Amanda, Walleye Business Development" is a name with no
+    #: answer to "why is she in my graph?". The facts mentioning her are the answer.
+    mentioned_by: dict[str, list[ContextObject]] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -216,4 +221,16 @@ async def build_agentic_view(store: Store, tenant_id: TenantId) -> AgenticView:
         for source in obj.provenance.source_object_ids:
             if source in episode_ids:
                 derived_from.setdefault(source, []).append(obj)
-    return AgenticView(by_type=by_type, derived_from=derived_from)
+    # Read the MENTIONS edges back out. Model-assisted extraction writes them and,
+    # until now, nothing ever read them again — an edge nothing renders is a link
+    # the user cannot see.
+    by_id = {o.id: o for o in objects}
+    mentioned_by: dict[str, list[ContextObject]] = {}
+    for fact in by_type[str(ObjectType.FACT)]:
+        for edge in await store.edges_from(tenant_id, fact.id):
+            if edge.type is EdgeType.MENTIONS and edge.dst_id in by_id:
+                mentioned_by.setdefault(edge.dst_id, []).append(fact)
+
+    return AgenticView(
+        by_type=by_type, derived_from=derived_from, mentioned_by=mentioned_by
+    )
