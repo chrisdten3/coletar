@@ -65,7 +65,9 @@ async def test_the_turn_is_kept_even_when_the_heuristic_finds_nothing() -> None:
 
     store = InMemoryStore()
     await capture_turn(store, TENANT, text, surface=Provider.CHATGPT)
-    kept = await store.list_objects(TENANT, type=ObjectType.EPISODE, caller_surface=Provider.CHATGPT)
+    kept = await store.list_objects(
+        TENANT, type=ObjectType.EPISODE, caller_surface=Provider.CHATGPT
+    )
     assert len(kept) == 1
 
 
