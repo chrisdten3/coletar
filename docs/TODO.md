@@ -277,36 +277,18 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       are gone. On the labelled set the whole recall cost is the identity policy
       (`p03`, `p18`, named in `DECLINED_BY_POLICY`); the paste gate itself costs no
       labelled recall. Precision 95.2%, recall 90.9%, bar 85%
-- [ ] 🔴 **The extractor cannot tell a standing preference from task context.**
-      Of the 129 memories surviving the paste guards, 89 come from one pattern —
-      `i (?:use|run)`, whose own comment already concedes it is the weakest — and
-      most are sentences about whatever task was open in one conversation: "I use
-      the cohere api in js", "I do not want to find the median of medians".
-      **Three lexical approaches were measured and rejected** (2026-09-02), and the
-      negative results are the useful part:
-      - *turn contains a question* — deletes real memories. "I run almost everyday
-        as a way to distress" and "I use the subway to get to work" are durable
-        facts stated in turns that happen to also ask something
-      - *deictic reference in the body* — 60 of 129, mostly junk but takes "I use
-        the STAR method, a MECE framework" with it
-      - *cross-conversation recurrence* — the idea being that a standing preference
-        recurs and task context appears once. It separates typo fragments ("I use
-        reatflow") from sustained work, but the **most**-recurring memory is "I do
-        not want ListIterator to modify frontPtr" across 8 conversations: a
-        semester-long assignment. Recurrence measures topic persistence, not
-        durability
-      What is actually missing is three judgements, none of them lexical: who said
-      the sentence, who it is about, and whether it outlives the conversation. That
-      is the M6.2 model path — but see the hardware entry below before planning it.
-      Shipped in the meantime: past-tense habits (`I used to` / the common
-      misspelling `I use to`) are no longer stored as current ones, which was
-      inverting the meaning of 6 statements in the export
-- [x] **The local-inference assumption does not hold on the target hardware** —
-      resolved 2026-09-03. Model-assisted extraction moved to a frontier provider
-      behind `extraction_provider`; the local leg stays the default and is the slot
-      a larger open-weights model drops into. AGENTS.md §1 amended in the same
-      commit — the user chooses the backend, only candidate turns are sent, and the
-      provider is a named subprocessor
+- [x] **The extractor cannot tell a standing preference from task context** —
+      diagnosed and answered 2026-09-03, though not by changing the heuristic.
+      Four lexical approaches were measured and rejected (question-bearing turns,
+      deictic bodies, cross-conversation recurrence, and deleting the weak
+      `i (?:use|run)` pattern — the last costs nothing on the labelled set but takes
+      genuinely durable life facts with it). The judgement is semantic.
+      `tests/fixtures/transient_set.json` now measures it directly: the heuristic
+      scores **0.421 precision** there against 0.952 on the live set, same extractor,
+      only the turns differ. `claude-sonnet-5` scores 0.909 with perfect recall;
+      `claude-haiku-4-5` reaches only 0.643 and is **not sufficient**. See
+      `docs/EXTRACTION.md`. Practical consequence: use Sonnet for backfill, keep the
+      heuristic on the live path, and do not use Haiku for this judgement
 - [ ] **Build a labelled set from export prose.** The only benchmark that exists is
       55 live-proxy turns, and on it the heuristic beats every frontier model
       outright (`docs/EXTRACTION.md`) — unsurprising, since it is the register the

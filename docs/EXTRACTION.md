@@ -167,6 +167,39 @@ import-path comparison is still unmeasured. Building one is the next honest step
 and until it exists "use a model for backfill" rests on the 31.4% figure and the
 Walleye failure rather than on a head-to-head.
 
+## The transient-preference failure, measured (2026-09-03)
+
+The live set flatters the heuristic because it *is* the heuristic's specification.
+`tests/fixtures/transient_set.json` is the opposite: 25 turns built from the shapes
+the heuristic actually gets wrong on a real export — task context stored as standing
+preference — with durable controls mixed in. Wording rewritten so no private content
+is committed; run it with `BENCH_SET=transient`.
+
+| | live set precision | **transient precision** | transient recall |
+|---|---|---|---|
+| heuristic | 0.952 | **0.421** | 0.800 |
+| `claude-haiku-4-5` | 0.929 | 0.643 | 0.900 |
+| `claude-sonnet-5` | 0.947 | **0.909** | **1.000** |
+
+**The heuristic writes 11 false positives out of 15.** Same extractor, 0.952 on one
+set and 0.421 on the other; the only difference is which turns you show it. That
+gap is the transient-preference problem stated as a number, and it is why the live
+set could never have found it.
+
+**Haiku is not sufficient here.** It looked fine on the live set and lands at 0.643
+on this one, well under the 0.85 bar — a spot check of 25 real failing turns had it
+correctly dropping 24, but with durable controls mixed in it starts firing on task
+context too. **Sonnet clears the bar with perfect recall**, at one false positive.
+
+So the answer to "is the cheap model good enough" is set-dependent, and the set that
+matters says no. On current evidence: **Sonnet for backfill, and the heuristic stays
+on the live path** — where it beats every model, on a benchmark that is admittedly
+its own spec.
+
+n=25, one run. The precision gap between 0.421 and 0.909 is far too large to be
+sampling noise; the gap between Sonnet and Haiku is smaller and would be worth
+re-running before anything expensive rests on it.
+
 ## Where this stops, and what comes next
 
 The heuristic clears M2.2's bar on live turns, so a model on the live path would be
