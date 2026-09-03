@@ -217,7 +217,12 @@ turns to these fixtures buys very little.
    method" is durable is a judgement call, and it is currently a single unvalidated
    one.
 
-`scripts/label_turns.py` fixes both: it samples real turns from an export, stratified
+The owner reviewed these labels and accepted them (2026-09-03) rather than
+re-labelling, so the numbers above stand as they are. That is a property of them
+worth stating plainly rather than a gap: they are sound for the gaps they claim, and
+they rest on one person's judgement.
+
+`scripts/label_turns.py` remains available and fixes both: it samples real turns from an export, stratified
 by whether the heuristic fires (where each kind of error lives), and takes labels
 from the person whose graph it is. `BENCH_SET` accepts a path, so the result scores
 without entering the repo — committing a labelled set means committing private
