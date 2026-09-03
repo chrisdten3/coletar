@@ -36,7 +36,9 @@ def test_a_third_party_becomes_an_entity_not_a_fact_about_the_user() -> None:
     and the user's relationship to them, and asserts neither of the user."""
     objects, edges = materialise(
         Proposal(
-            entities=[ProposedEntity(name="Amanda", content="Amanda, Walleye Business Development")],
+            entities=[
+                ProposedEntity(name="Amanda", content="Amanda, Walleye Business Development")
+            ],
             facts=[
                 ProposedFact(
                     content="Had a call with Amanda about a quant dev internship",
