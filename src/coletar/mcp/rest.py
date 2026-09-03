@@ -267,12 +267,36 @@ async def capture(request: Request) -> JSONResponse:
     if len(text) > MAX_CONTENT_CHARS:
         return JSONResponse({"error": "bad_request", "message": "text too long"}, 400)
 
+    from coletar.capture import capture_turn
+    from coletar.config import get_settings
     from coletar.extraction import extract_memories
 
     scope = _scope(body.project_id)
     store = build_store()
+
+    # Kept before anything judges it, and kept whether or not the heuristic finds
+    # something — a turn the heuristic missed is exactly what the batch pass is for.
+    # Off by default: storing verbatim turns is a larger commitment than storing
+    # extracted memories and should be a decision, not a discovery.
+    episode = None
+    if get_settings().capture_turns:
+        episode = await capture_turn(
+            store,
+            principal.tenant_id,
+            text,
+            surface=surface,
+            scope=scope,
+            principal_id=principal.id,
+            detail={"surface": body.surface},
+        )
+
     stored: list[dict[str, Any]] = []
     for memory in await extract_memories(user_text=text, scope=scope):
+        if episode is not None:
+            # Points at the turn in the graph, not at an external id. This is what
+            # lights up the Inspector's episode lineage: click a memory, see the
+            # sentence it came from, in the user's own words.
+            memory.provenance.source_object_ids = [episode.id]
         # The extractor does not know which page this came from; the Origin header
         # does. Without this, everything captured anywhere is attributed to the
         # extractor's default.

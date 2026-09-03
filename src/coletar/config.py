@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     # AGENTS.md §1 now covers explicitly.
     extraction_provider: str = "ollama"
 
+    # Capture-then-batch (docs/CAPTURE_AND_BATCH.md). Off by default: storing the
+    # turns a user typed, verbatim and before anything has judged them, is a
+    # materially larger commitment than storing extracted memories, and it should be
+    # a decision rather than a default someone discovers later.
+    capture_turns: bool = False
+
+    # How long a captured turn is kept. Retention is enforced by `coletar expire`,
+    # which retires rather than deletes — the turn stops being retrievable and stays
+    # readable for provenance. 30 days is a placeholder for a product decision, not a
+    # researched figure; it is short enough that the batch pass will have run.
+    capture_ttl_days: int = 30
+
     # The frontier model used when extraction_provider is `anthropic`. Credentials
     # are resolved by the SDK from ANTHROPIC_API_KEY rather than duplicated here —
     # one place for a secret to live is the whole point.
