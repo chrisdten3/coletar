@@ -169,6 +169,56 @@ code { background: var(--sunken); border-radius: 4px; padding: .08em .32em; }
 }
 .empty { color: var(--ink-faint); font-size: .9rem; padding: 1.5rem 0; }
 
+/* -- object detail: lineage above, reach below ---------------------------- */
+.mock.detail {
+  border: 1px solid var(--line-strong); border-radius: 10px;
+  background: var(--surface); overflow: hidden;
+}
+.detail-head {
+  padding: 1rem; border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: .4rem;
+}
+.detail-head .row-text { font-size: 1rem; }
+.half { padding: 1rem; display: flex; flex-direction: column; gap: .8rem; }
+.half + .half { border-top: 1px solid var(--line); }
+.half-label {
+  display: flex; align-items: baseline; gap: .5rem;
+  font-family: var(--mono); font-size: .72rem; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--ink-faint);
+}
+.half-label .dir { color: var(--accent); font-size: .9rem; }
+.lineage { display: flex; flex-direction: column; }
+.node { display: grid; grid-template-columns: 1.2rem 1fr; gap: .7rem; align-items: start; }
+.rail { display: flex; flex-direction: column; align-items: center; }
+.dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); margin-top: .4rem; flex: none;
+}
+.dot.hollow { background: var(--surface); border: 2px solid var(--line-strong); }
+.stem { width: 2px; flex: 1; min-height: 1.4rem; background: var(--line-strong); }
+.node-body { padding-bottom: .9rem; display: flex; flex-direction: column; gap: .15rem; }
+.node-title { font-size: .87rem; font-weight: 500; }
+.node-sub { font-family: var(--mono); font-size: .73rem; color: var(--ink-faint); }
+.reach-form { display: flex; flex-direction: column; gap: .8rem; }
+.reach { display: flex; flex-direction: column; gap: .45rem; }
+.reach-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: .5rem .65rem; border: 1px solid var(--line);
+  border-radius: 7px; background: var(--sunken); cursor: pointer;
+}
+.reach-row:focus-within { border-color: var(--accent); }
+.reach-name { font-family: var(--mono); font-size: .82rem; }
+.reach-controls { display: flex; align-items: center; gap: .7rem; }
+.toggle {
+  font-family: var(--mono); font-size: .72rem;
+  border-radius: 999px; padding: .12rem .6rem; border: 1px solid;
+}
+.toggle.on {
+  background: var(--accent-soft); color: var(--accent-ink); border-color: var(--accent);
+}
+.toggle.off { background: transparent; color: var(--withheld); border-color: var(--withheld); }
+.reach-actions { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
+
 /* -- legacy views (dashboard, agentic) ------------------------------------ */
 .card {
   border: 1px solid var(--line); border-radius: 8px;

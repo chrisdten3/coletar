@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from coletar.capture import is_pending
 from coletar.config import get_settings
+from coletar.inspector.detail import render_detail, surfaces_from_form
 from coletar.inspector.library import parse_surface, render_library
 from coletar.inspector.metrics import (
     AgenticView,
@@ -40,6 +41,7 @@ from coletar.inspector.review import (
     merge,
     rescope,
     review_status,
+    set_locality,
 )
 from coletar.inspector.theme import render_page
 from coletar.schema.events import Event
@@ -402,6 +404,53 @@ def _render_agentic(view: AgenticView) -> str:
         "survive; losing it would make the view pretty and unfalsifiable.</p>"
         f"{lineage}"
     )
+
+
+@app.get("/object/{object_id}", response_class=HTMLResponse)
+async def object_detail(object_id: str, error: str = "") -> HTMLResponse:
+    """One object: lineage above, reach below."""
+    tenant = _tenant()
+    try:
+        body = await render_detail(build_store(), tenant, object_id)
+    except InspectorError as exc:
+        return HTMLResponse(
+            _shell(
+                title="Not found — coletar",
+                current="/",
+                body='<p class="empty">That object is not in this tenant. '
+                '<a href="/">Back to the library</a>.</p>',
+                error=str(exc),
+            ),
+            status_code=404,
+        )
+    return HTMLResponse(
+        _shell(title="Object — coletar", current="/", body=body, error=error)
+    )
+
+
+@app.post("/locality")
+async def post_locality(
+    object_id: Annotated[str, Form()],
+    surfaces: Annotated[list[str], Form()] = [],  # noqa: B006 - FastAPI reads the default
+) -> RedirectResponse:
+    """Apply a whole reach decision at once.
+
+    An unchecked-everything post arrives here as an empty list, which
+    `set_locality` refuses: restricting a memory to nobody is retirement wearing
+    the wrong control, and it should say so rather than silently succeed.
+    """
+    try:
+        await set_locality(
+            build_store(),
+            _tenant(),
+            object_id,
+            surfaces=surfaces_from_form(surfaces),
+        )
+    except InspectorError as exc:
+        return RedirectResponse(
+            f"/object/{quote(object_id)}?error={quote(str(exc))}", status_code=303
+        )
+    return RedirectResponse(f"/object/{quote(object_id)}", status_code=303)
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

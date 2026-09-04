@@ -96,7 +96,8 @@ def _row(obj: ContextObject, *, viewing: Provider | None) -> str:
     scope = "global" if obj.scope.type is ScopeType.GLOBAL else str(obj.scope)
     return (
         f'<div class="{classes}">'
-        f'<div class="row-text">{escape(obj.content)}</div>'
+        f'<div class="row-text"><a href="/object/{escape(obj.id)}">'
+        f"{escape(obj.content)}</a></div>"
         '<div class="row-meta">'
         f'<span class="chip kind">{escape(str(kind))}</span>'
         f"{_locality_chip(obj)}"
