@@ -20,6 +20,14 @@ it as a tool — the sanctioned integration point each provider built for the pu
 | **Claude Desktop** | `claude_desktop_config.json` → **stdio**, no deployment |  ✅ | ✅ | The only connector path that needs no host, no TLS and no public URL. `coletar serve-mcp-stdio`. |
 | **Local models** | coletar's own proxy / bridge | ✅ | ✅ | Ollama has no native MCP client, so we are the bridge. No third-party dependency at all. |
 
+## Does the model actually call it?
+
+Capture-by-tool-call assumes the model chooses to call. Measured 2026-09-04 in
+[TOOL_CALLING.md](TOOL_CALLING.md): reading is called on essentially every turn —
+the problem is over-firing, not silence — while writing never happens as an
+opening move and only follows a search. Both numbers are proxies measured through
+the API, because the connectors themselves cannot be driven from a test.
+
 ## How propagation works
 
 There is no push-sync job, and there should not be one. A write lands in the graph the

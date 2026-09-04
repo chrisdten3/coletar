@@ -187,7 +187,18 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
       own docs warn their Gemini sync breaks when that UI changes; budget for the
       same rather than being surprised by it
 - [ ] Per-site toggles and a visible capture indicator
-- [ ] Reliability harness: how often does a model call the tool unprompted? **Never measured**
+- [x] **Reliability harness: measured 2026-09-04** — and the answer inverts the
+      worry. `gpt-5.6-terra` called `search_context` on 118 of 120 turns, including
+      "what's 17% of 240?"; the risk is not that models ignore the tool but that
+      they retrieve on every turn. `write_memory` never fires as an opening move —
+      every write came after a search returned, so a client that stops at one tool
+      round captures nothing. Removing the server instructions cuts `gpt-5.6-luna`'s
+      false-fire rate from 50% to 12.5%, which makes that prose the first thing to
+      tune. See [`TOOL_CALLING.md`](TOOL_CALLING.md); `scripts/bench_tool_calls.py`
+- [ ] **Re-run the harness against a Claude model.** No Anthropic key was available,
+      so the strongest live-sync leg is the one cell still unmeasured
+- [ ] **Tune the server instructions against the harness**, watching writes as well
+      as reads — reads and writes trade off, since writes only follow a search
 
 ### 7. Cloud sync
 - [ ] Sync protocol over the event log — cursor per device, pull since last event
