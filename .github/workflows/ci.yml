@@ -39,6 +39,11 @@ jobs:
     env:
       COLETAR_TEST_DATABASE_URL: postgresql://coletar:coletar@localhost:5432/coletar
       COLETAR_DATABASE_URL: postgresql://coletar:coletar@localhost:5432/coletar
+      # Shared runners throttle: work that takes ~21ms locally recorded 366ms here.
+      # The published 300ms bar stands on real hardware (docs/RETRIEVAL.md); CI
+      # raises the ceiling explicitly so it still catches a 10x regression rather
+      # than silently redefining the number.
+      COLETAR_PERF_CEILING_MS: "1500"
     steps:
       - uses: actions/checkout@v4
 

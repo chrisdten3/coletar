@@ -127,6 +127,16 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
       tests skip — the suite skips *silently* without a DSN, so a green run with
       no database would have proved nothing
 - [x] JS SDK tests (`node --test`, 12 tests) and an extension parse check
+- [x] **The export fixtures existed only on one machine.** `.gitignore` excludes
+      `*.zip` and `exports/` so nobody commits a real provider archive, and the
+      two synthetic test archives were caught by that rule. 17 importer tests
+      therefore passed only where someone had built them once and skipped being
+      run anywhere else — found by CI's first run. The unpacked JSON is now
+      tracked under `tests/fixtures/export_sources/` and `conftest.py` rebuilds
+      the archives at session start, so the ZIP rule stays absolute
+- [x] The latency assertion takes its ceiling from `COLETAR_PERF_CEILING_MS`.
+      Shared runners recorded 366ms for work that is ~21ms locally; the published
+      300ms bar stands on real hardware rather than being relaxed to match CI
 - [x] No paid provider calls: the gates stay `COLETAR_RUN_PAID_EXTRACTION_TESTS`,
       `OPENAI_API_KEY` and `COLETAR_TEST_OLLAMA_URL`, and CI never sets them. The
       3 remaining skips are exactly those paid extraction tests
