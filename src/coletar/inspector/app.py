@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from coletar.capture import is_pending
 from coletar.config import get_settings
+from coletar.inspector.capture_view import render_capture
 from coletar.inspector.detail import render_detail, surfaces_from_form
 from coletar.inspector.library import parse_surface, render_library
 from coletar.inspector.metrics import (
@@ -65,6 +66,7 @@ _PREVIEW_LEN = 120
 #: Which view is current, for the nav's `aria-current`.
 _VIEWS: tuple[tuple[str, str], ...] = (
     ("/", "library"),
+    ("/capture", "capture"),
     ("/review", "review"),
     ("/dashboard", "dashboard"),
     ("/agentic", "entity / fact / episode"),
@@ -453,6 +455,14 @@ async def post_locality(
     return RedirectResponse(f"/object/{quote(object_id)}", status_code=303)
 
 
+@app.get("/capture", response_class=HTMLResponse)
+async def capture(error: str = "") -> str:
+    """What has arrived, what has been judged, and whether the queue is moving."""
+    tenant = _tenant()
+    body = await render_capture(build_store(), tenant)
+    return _shell(title="Capture — coletar", current="/capture", body=body, error=error)
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(error: str = "") -> str:
     tenant = _tenant()
@@ -480,8 +490,8 @@ async def post_erase_episode(
     try:
         await erase_episode(build_store(), _tenant(), object_id)
     except InspectorError as exc:
-        return RedirectResponse(f"/agentic?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse("/agentic", status_code=303)
+        return RedirectResponse(f"/capture?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/capture", status_code=303)
 
 
 def run() -> None:

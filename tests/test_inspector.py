@@ -409,11 +409,14 @@ async def test_agentic_page_shows_and_can_erase_pending_raw_turn(live_store: Non
     assert "Pending extraction: 1" in page
     assert "erase raw turn" in page
 
+    # Erasing now returns to the capture queue, which is the page the button lives
+    # on; the agentic view still reflects the result.
     response = TestClient(app).post(
-        "/erase-episode", data={"object_id": episode.id}, follow_redirects=True
+        "/erase-episode", data={"object_id": episode.id}, follow_redirects=False
     )
-    assert response.status_code == 200
-    assert "Pending extraction: 0" in response.text
+    assert response.status_code == 303
+    assert response.headers["location"] == "/capture"
+    assert "Pending extraction: 0" in _get("/agentic")
     assert await store.list_objects(TENANT, type=ObjectType.EPISODE) == []
 
 

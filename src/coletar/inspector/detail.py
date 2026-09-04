@@ -22,10 +22,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from html import escape
 
+from coletar.capture import PENDING
+from coletar.episode_crypto import PREFIX, EpisodeKeyUnavailable, decrypt_episode
 from coletar.inspector.library import SURFACE_LABELS, SWITCHABLE
 from coletar.inspector.review import InspectorError
 from coletar.schema.events import Event, EventType
-from coletar.schema.objects import ContextObject, LocalityMode, Provider, ScopeType
+from coletar.schema.objects import (
+    ContextObject,
+    LocalityMode,
+    ObjectType,
+    Provider,
+    ScopeType,
+)
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -166,25 +174,40 @@ def _reach(obj: ContextObject) -> str:
     )
 
 
-def _body_text(obj: ContextObject) -> str:
-    """What the object says — unless saying it would print ciphertext.
+async def _display_content(store: Store, tenant: TenantId, obj: ContextObject) -> str:
+    """What the object says, decrypting a captured turn to say it.
 
-    A captured turn is stored encrypted under a key that TTL expiry destroys, so
-    its `content` is base64 and its plaintext is deliberately not reachable from a
-    read-only page. Showing the ciphertext would be noise; saying what it is, and
-    when its key dies, is the part that makes the retention promise legible.
+    The owner reviewing their own captured text *is* the consent mechanism: "here
+    is exactly what we kept, and here is the button that destroys it" is a stronger
+    privacy story than hiding the text and asking to be trusted. Encryption at rest
+    protects the turn from everyone who is not this user; it was never meant to
+    protect it from them.
+
+    A shredded key is reported rather than hidden. The object survives erasure by
+    design (constraint 6) and its history stays readable — saying so is the visible
+    proof that erasure did what it promised.
     """
-    if obj.payload.get("content_encryption"):
-        ttl = f"key destroyed after {obj.ttl_days} days" if obj.ttl_days else "no expiry set"
-        pending = " · awaiting extraction" if obj.payload.get("needs_model_extraction") else ""
-        return (
-            '<div class="row-text encrypted">Encrypted captured turn — content is not '
-            f"shown here.<br><span class=\"meta\">{escape(ttl)}{escape(pending)}</span></div>"
-        )
-    return f'<div class="row-text">{escape(obj.content)}</div>'
+    if obj.type is not ObjectType.EPISODE or not obj.content.startswith(PREFIX):
+        return obj.content
+    try:
+        return await decrypt_episode(store, tenant, obj)
+    except EpisodeKeyUnavailable:
+        return "[content erased — the key that could read this was destroyed]"
 
 
-def _head(obj: ContextObject) -> str:
+def _retention(obj: ContextObject) -> str:
+    """The promise attached to a captured turn, in the place it applies."""
+    if obj.type is not ObjectType.EPISODE:
+        return ""
+    parts = ["encrypted at rest"]
+    if obj.ttl_days:
+        parts.append(f"key destroyed after {obj.ttl_days} days")
+    if obj.payload.get(PENDING):
+        parts.append("awaiting extraction")
+    return f"<span>{escape(' · '.join(parts))}</span>"
+
+
+def _head(obj: ContextObject, content: str) -> str:
     kind = getattr(obj, "kind", obj.type)
     scope = "global" if obj.scope.type is ScopeType.GLOBAL else str(obj.scope)
     if obj.locality.mode is LocalityMode.SYNCED:
@@ -201,14 +224,14 @@ def _head(obj: ContextObject) -> str:
 
     return (
         '<div class="detail-head">'
-        f"{_body_text(obj)}"
+        f'<div class="row-text">{escape(content)}</div>'
         '<div class="row-meta">'
         f'<span class="chip kind">{escape(str(kind))}</span>{locality_chip}'
         f"<span>{escape(obj.id)} · v{obj.version} · confidence {obj.confidence:.2f}</span>"
         f"<span>{escape(scope)}</span>"
         f"<span>via {escape(str(obj.provenance.provider))}"
         f" · {escape(str(obj.extraction_method))}</span>"
-        f"{in_force}"
+        f"{in_force}{_retention(obj)}"
         "</div></div>"
     )
 
@@ -234,9 +257,10 @@ async def render_detail(store: Store, tenant: TenantId, object_id: str) -> str:
     if withheld_from:
         summary += f" · withheld from {', '.join(withheld_from)}"
 
+    content = await _display_content(store, tenant, obj)
     return (
         '<p class="meta"><a href="/">&larr; Library</a></p>'
-        f'<div class="mock detail">{_head(obj)}'
+        f'<div class="mock detail">{_head(obj, content)}'
         '<div class="half"><div class="half-label"><span class="dir">&larr;</span>'
         "Lineage · read-only</div>"
         f"{_lineage(obj, events)}</div>"

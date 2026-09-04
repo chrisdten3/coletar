@@ -122,7 +122,9 @@ async def test_captured_turns_are_real_objects_the_lineage_can_point_at(
             episode = await seeded.get_object(TENANT, source_id)
             assert episode is not None, f"{memory.id} points at a missing {source_id}"
             assert episode.type is ObjectType.EPISODE
-            assert is_pending(episode), "a captured turn should still be queued"
+            # A turn that yielded this memory has by definition been judged; the
+            # pending ones are the turns nothing derives from.
+            assert not is_pending(episode)
 
 
 async def test_every_seeded_memory_has_a_lineage_worth_reading(seeded: InMemoryStore):
@@ -140,3 +142,32 @@ async def test_every_seeded_memory_has_a_lineage_worth_reading(seeded: InMemoryS
             thin.append(obj.content[:40])
 
     assert not thin, f"objects with a single-node lineage: {thin}"
+
+
+async def test_no_captured_turn_claims_to_be_both_pending_and_extracted(
+    seeded: InMemoryStore,
+):
+    """A state the real pipeline cannot reach. `extract_pending` clears the flag
+    when it writes objects, so an episode that produced memories while still
+    flagged pending is data that could not exist — and a demo whose data is
+    impossible invites the one question you cannot answer."""
+    episodes = await seeded.list_objects(TENANT, type=ObjectType.EPISODE, limit=100)
+    everything = await seeded.list_objects(TENANT, limit=200)
+
+    produced: dict[str, int] = {}
+    for obj in everything:
+        for source in obj.provenance.source_object_ids:
+            produced[source] = produced.get(source, 0) + 1
+
+    for episode in episodes:
+        if produced.get(episode.id):
+            assert not is_pending(episode), f"{episode.id} yielded memories while pending"
+
+
+async def test_the_queue_shows_both_a_pending_and_a_finished_turn(seeded: InMemoryStore):
+    """One of each, so the capture page demonstrates the states rather than one."""
+    episodes = await seeded.list_objects(TENANT, type=ObjectType.EPISODE, limit=100)
+    pending = [e for e in episodes if is_pending(e)]
+
+    assert pending, "nothing is queued; the health strip has nothing to count"
+    assert len(pending) < len(episodes), "nothing has been extracted yet"

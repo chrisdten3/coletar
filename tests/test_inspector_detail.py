@@ -282,9 +282,14 @@ def test_an_unknown_object_renders_a_404(live):  # type: ignore[no-untyped-def]
 
 
 # -- captured turns are evidence, not library entries -------------------------
-async def test_an_encrypted_episode_never_renders_its_ciphertext(store: InMemoryStore):
-    """A read-only page cannot decrypt, and printing base64 at a viewer is noise.
-    Saying what it is and when its key dies is the part that carries the promise."""
+async def test_an_episode_shows_its_turn_rather_than_its_ciphertext(store: InMemoryStore):
+    """Reversed from the first version of this page, deliberately.
+
+    Masking the text made what was kept unverifiable by the only person entitled
+    to check it, and contradicted the agentic view, which had always decrypted.
+    Encryption at rest protects the turn from everyone who is not this user; the
+    retention promise is stated alongside rather than in place of the content.
+    """
     from coletar.capture import capture_turn
 
     episode = await capture_turn(
@@ -292,10 +297,24 @@ async def test_an_encrypted_episode_never_renders_its_ciphertext(store: InMemory
     )
     html = await render_detail(store, TENANT, episode.id)
 
-    assert "Encrypted captured turn" in html
+    assert "Something I typed." in html
+    assert "encrypted at rest" in html
     assert "key destroyed after" in html
     assert episode.content not in html, "the ciphertext reached the page"
-    assert "Something I typed." not in html
+
+
+async def test_an_erased_episode_reports_the_erasure(store: InMemoryStore):
+    """The object outlives its content by design, and saying so is the visible
+    proof that erasure did what it promised."""
+    from coletar.capture import capture_turn
+    from coletar.inspector.review import erase_episode
+
+    episode = await capture_turn(store, TENANT, "Private turn.", surface=Provider.CLAUDE)
+    await erase_episode(store, TENANT, episode.id)
+
+    html = await render_detail(store, TENANT, episode.id)
+    assert "Private turn." not in html
+    assert "the key that could read this was destroyed" in html
 
 
 async def test_lineage_links_to_the_turn_a_memory_came_from(store: InMemoryStore):

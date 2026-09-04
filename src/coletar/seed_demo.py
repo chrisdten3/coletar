@@ -29,7 +29,7 @@ screen is being recorded.
 
 from __future__ import annotations
 
-from coletar.capture import capture_turn
+from coletar.capture import PENDING, capture_turn
 from coletar.inspector.review import edit, mark_reviewed, set_locality
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
@@ -95,6 +95,35 @@ async def _write(
             actor=Actor.SYSTEM,
             provider=provider,
             detail={"demo_seed": True},
+        ),
+    )
+
+
+async def _mark_extracted(
+    store: Store, tenant_id: TenantId, episode: ContextObject, *, produced: int
+) -> None:
+    """Close a captured turn the way the batch pass closes one.
+
+    Without this the seed produced a state the pipeline cannot: an episode that had
+    demonstrably yielded memories while still flagged as awaiting extraction. The
+    capture queue rendered it faithfully, which is how it was caught — a demo whose
+    data is impossible is a demo that invites the one question you cannot answer.
+    """
+    episode.payload = {
+        **episode.payload,
+        PENDING: False,
+        "extraction_provider": "anthropic",
+        "extraction_model": "claude-sonnet-5",
+        "extracted_objects": produced,
+    }
+    await store.put_object(
+        tenant_id,
+        episode,
+        event=Event(
+            type=EventType.OBJECT_UPDATED,
+            object_id=episode.id,
+            actor=Actor.JOB,
+            detail={"model_extraction_complete": True},
         ),
     )
 
@@ -184,6 +213,7 @@ async def seed_demo(store: Store, tenant_id: TenantId) -> list[str]:
         scope=LEDGER,
         source_object_ids=[queue_turn.id],
     )
+    await _mark_extracted(store, tenant_id, queue_turn, produced=1)
     written.append(queue.id)
 
     # 5. The demo's centrepiece. Written like anything else, then restricted after
@@ -208,7 +238,19 @@ async def seed_demo(store: Store, tenant_id: TenantId) -> list[str]:
     await set_locality(
         store, tenant_id, northwind.id, surfaces=frozenset({Provider.CLAUDE})
     )
+    await _mark_extracted(store, tenant_id, northwind_turn, produced=1)
     written.append(northwind.id)
+
+    # A turn that has genuinely not been judged yet, so the queue shows both states
+    # and the health strip has something to count. Nothing derives from it: that is
+    # what pending means.
+    await capture_turn(
+        store,
+        tenant_id,
+        "Remind me to send the Q3 numbers to Priya before Friday.",
+        surface=Provider.CHATGPT,
+        detail={"demo_seed": True},
+    )
 
     # 6. Restricted at the moment of writing rather than afterwards, so the two
     #    routes to a withheld object are both on screen.

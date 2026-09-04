@@ -169,6 +169,22 @@ code { background: var(--sunken); border-radius: 4px; padding: .08em .32em; }
 }
 .empty { color: var(--ink-faint); font-size: .9rem; padding: 1.5rem 0; }
 
+/* -- capture queue -------------------------------------------------------- */
+.stats { display: flex; flex-wrap: wrap; gap: 1.5rem; margin: .2rem 0 .4rem; }
+.stats .stat { display: flex; flex-direction: column; margin: 0; }
+.stats .stat b {
+  font-size: 1.6rem; font-variant-numeric: tabular-nums;
+  line-height: 1.1; font-weight: 600;
+}
+.stats .stat { font-size: .78rem; color: var(--ink-faint); font-family: var(--mono); }
+.stats .mono-stat b { font-size: .95rem; font-family: var(--mono); word-break: break-all; }
+.alerts { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: .3rem; }
+.row.settled { background: var(--sunken); }
+.row.erased { background: var(--sunken); border-style: dashed; opacity: .8; }
+.chip.erased { background: transparent; color: var(--ink-faint); border-color: var(--line-strong); }
+.produced { font-size: .82rem; }
+.row form.inline { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+
 /* -- object detail: lineage above, reach below ---------------------------- */
 .mock.detail {
   border: 1px solid var(--line-strong); border-radius: 10px;
