@@ -104,11 +104,17 @@ More than expected, because §6 anticipated the shape:
   the user typed before anything has judged it. It belongs in the compliance scope
   from day one, not retrofitted.
 - **Silent queue growth.** If the batch job never runs, capture quietly accumulates
-  raw turns forever and the user gets no frontier extraction. It needs to be visible
-  in the Inspector and to fail loudly.
+  raw turns forever and the user gets no frontier extraction. **Addressed**: `coletar
+  worker` runs the pass on an interval, and `coletar queue-health` exits non-zero
+  when the oldest pending episode passes a threshold or extraction has been failing.
+  A stalled queue and a quiet user look identical from the outside; those two numbers
+  are the only place the difference shows.
 - **Concurrent extraction.** Stable IDs make retry after a crash idempotent, but two
-  workers can still duplicate corroboration events. Deploy one worker until a lease
-  or provider-batch state machine exists.
+  workers can still duplicate corroboration events. **Addressed**: a per-tenant lease
+  in the `Store` protocol, held for the length of a pass. A second worker finding it
+  taken reports who holds it and exits, which is the system working rather than an
+  error. The lease carries a TTL, because a worker killed between acquiring and
+  releasing would otherwise wedge the queue until a human noticed.
 - **Entity identity is still shallow.** Cross-batch lookup and the Postgres name
   index prevent the same case-insensitive name being recreated, but aliases and two
   different people with the same name still need a stronger resolution policy.
@@ -116,6 +122,19 @@ More than expected, because §6 anticipated the shape:
 ## Sequencing
 
 The safety ordering is now implemented: encryption and key destruction, expiry,
-queue visibility, and early erasure precede opt-in capture. Deployment scheduling
-and a worker lease come next; provider-native Batch transport is a cost optimisation
-after the ordinary bounded worker is operationally reliable.
+queue visibility, and early erasure precede opt-in capture. The worker lease and
+interval scheduling landed 2026-09-04; provider-native Batch transport is a cost
+optimisation after the ordinary bounded worker is operationally reliable, and there
+is still no volume that demands it.
+
+## Running it
+
+```bash
+uv run coletar worker                  # daemon, one pass every 5 minutes
+uv run coletar worker --once           # the cron form; the lease makes overlap safe
+uv run coletar queue-health            # exits 1 when the queue has stalled
+```
+
+The loop deliberately depends on no scheduler. Because the lease decides who works,
+cron, systemd, a container process and a supervised daemon are all correct, and none
+of them had to be chosen before a host was.

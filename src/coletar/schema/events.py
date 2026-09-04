@@ -51,6 +51,13 @@ class EventType(StrEnum):
     # The encrypted object and history remain; its separately held content key does
     # not. This is erasure without rewriting the append-only event chain.
     OBJECT_SHREDDED = "object.shredded"
+    # A batch pass looked at an episode and could not extract it — provider down,
+    # key already shredded. The episode stays pending and will be retried, so this
+    # is not a revision; it is the only trace that the attempt happened at all.
+    # Without it, "the provider has been failing for six hours" is indistinguishable
+    # from "nothing has been captured for six hours", and those need different
+    # responses.
+    EXTRACTION_UNAVAILABLE = "extraction.unavailable"
 
 
 #: Events that carry a full `after` snapshot and therefore participate in replay.

@@ -339,8 +339,17 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       lossless encrypted `EPISODE`; `extract-pending` applies the selected Ollama,
       Anthropic, or OpenAI model later and writes no preliminary regex memory. Retry,
       idempotent materialisation, lineage, queue UI, early erasure and TTL key
-      shredding are covered. Provider-native Batch transport and deployment
-      scheduling remain optimisations
+      shredding are covered
+- [x] **The batch pass is scheduled and single-worker** — done 2026-09-04.
+      `coletar worker` runs extraction then expiry on an interval under a per-tenant
+      lease, so cron, a daemon and a container process are all safe and none of them
+      had to be chosen before a host was. Two workers racing produce one winner on
+      both backends; the lease carries a TTL, because a worker killed mid-pass would
+      otherwise wedge the queue silently. `coletar queue-health` exits non-zero on a
+      stale queue or repeated provider failures, and a failed extraction now appends
+      an `extraction.unavailable` event — without one, a provider outage and a quiet
+      user are the same picture. Provider-native Batch transport stays an
+      optimisation until volume demands it
 - [x] **Enforce `ttl_days`** — done 2026-09-03. `coletar expire` uses the same
       deadline calculation shown by the Inspector, retires expired objects through
       the event-producing Store path, and destroys the key for encrypted episodes

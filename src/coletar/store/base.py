@@ -61,10 +61,33 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
+from pydantic import BaseModel, ConfigDict
+
 from coletar.retrieval.ranking import Scored
 from coletar.schema.events import Event
 from coletar.schema.objects import ContextObject, Edge, ObjectType, Provider, Scope
 from coletar.schema.tenancy import TenantId
+
+
+class Lease(BaseModel):
+    """One worker's exclusive claim on one named job, for a bounded time.
+
+    Not a graph object, and deliberately not in the event log. A lease records who
+    is *currently working*, which is operational state with a lifetime of minutes;
+    the log is the permanent provenance record, and filling it with acquire/release
+    pairs every interval would bury the writes it exists to explain. What the log
+    does get is the *outcome* of the work — that is the part still true tomorrow.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    owner: str
+    acquired_at: datetime
+    expires_at: datetime
+
+    def is_held_by(self, owner: str, *, now: datetime) -> bool:
+        return self.owner == owner and self.expires_at > now
 
 
 @runtime_checkable
@@ -162,6 +185,38 @@ class Store(Protocol):
     async def edges_from(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
 
     async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
+
+    async def acquire_lease(
+        self, tenant_id: TenantId, name: str, *, owner: str, ttl_seconds: float
+    ) -> Lease | None:
+        """Claim `name` for `owner`, or return None because someone else holds it.
+
+        Atomic take-or-fail: two workers racing on the same name must produce one
+        `Lease` and one `None`, never two leases. The extraction pass is idempotent
+        by stable id, but two passes over one episode still duplicate corroboration
+        events, and a corroboration count is evidence a user reads.
+
+        **The TTL is what makes this safe to run unattended.** A worker that is
+        killed between acquire and release cannot release, so a lease without an
+        expiry wedges the queue until a human notices — the failure mode is a queue
+        that silently stops draining, which is the one docs/CAPTURE_AND_BATCH.md
+        names as the risk. An expired lease is free for the taking; set the TTL
+        longer than a pass can reasonably run, and accept that a worker paused
+        beyond it may overlap with its successor.
+        """
+        ...
+
+    async def release_lease(self, tenant_id: TenantId, name: str, *, owner: str) -> bool:
+        """Give up a lease. False when it had already expired or been taken.
+
+        Only the owner may release: a worker whose lease expired mid-pass must not
+        be able to release the successor that has since taken it.
+        """
+        ...
+
+    async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
+        """The current lease, expired or not, for operational visibility."""
+        ...
 
     async def append_event(self, tenant_id: TenantId, event: Event) -> None: ...
 

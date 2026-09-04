@@ -298,3 +298,63 @@ async def test_postgres_candidate_recall_matches_exact_in_process_search(store):
     recall = retained / total if total else 1.0
     assert not leaks, f"superseded or cross-scope objects surfaced: {leaks[:5]}"
     assert recall >= 0.98, f"candidate recall@{CANDIDATE_DEPTH} was {recall:.1%}"
+
+
+# -- job leases ---------------------------------------------------------------
+# The in-process store excludes by cooperative scheduling; Postgres excludes by a
+# conditional upsert. Same contract, different mechanism, so the one that will
+# actually run in production has to be tested against a real database — a race
+# decided by SQL cannot be verified against a dict.
+async def test_two_workers_racing_for_a_lease_produce_one_winner(store: PostgresStore):
+    import asyncio
+
+    results = await asyncio.gather(
+        *(
+            store.acquire_lease(TENANT, "batch", owner=f"worker-{i}", ttl_seconds=60)
+            for i in range(8)
+        )
+    )
+    winners = [lease for lease in results if lease is not None]
+    assert len(winners) == 1, f"{len(winners)} workers believed they held the lease"
+
+    held = await store.read_lease(TENANT, "batch")
+    assert held is not None and held.owner == winners[0].owner
+
+
+async def test_an_expired_postgres_lease_is_taken_by_the_next_worker(store: PostgresStore):
+    """The wedged-queue case: a worker killed between acquire and release."""
+    import asyncio
+
+    assert await store.acquire_lease(TENANT, "batch", owner="dead", ttl_seconds=0.05) is not None
+    assert await store.acquire_lease(TENANT, "batch", owner="live", ttl_seconds=60) is None
+
+    await asyncio.sleep(0.2)
+    taken = await store.acquire_lease(TENANT, "batch", owner="live", ttl_seconds=60)
+    assert taken is not None and taken.owner == "live"
+
+
+async def test_only_the_lease_owner_may_release_it(store: PostgresStore):
+    await store.acquire_lease(TENANT, "batch", owner="a", ttl_seconds=60)
+
+    assert await store.release_lease(TENANT, "batch", owner="b") is False
+    assert await store.read_lease(TENANT, "batch") is not None
+    assert await store.release_lease(TENANT, "batch", owner="a") is True
+    assert await store.read_lease(TENANT, "batch") is None
+
+
+async def test_a_lease_does_not_cross_tenants(store: PostgresStore):
+    from coletar.schema.tenancy import tenant_id
+
+    other = tenant_id("tenant_other")
+    assert await store.acquire_lease(TENANT, "batch", owner="a", ttl_seconds=60) is not None
+    assert await store.acquire_lease(other, "batch", owner="b", ttl_seconds=60) is not None
+    assert await store.read_lease(other, "batch") is not None
+
+
+async def test_acquiring_a_lease_writes_no_event(store: PostgresStore):
+    """A lease is operational state, not provenance. Acquire/release pairs every
+    interval would bury the writes the log exists to explain."""
+    before = len(await store.list_events(TENANT, limit=1000))
+    await store.acquire_lease(TENANT, "batch", owner="a", ttl_seconds=60)
+    await store.release_lease(TENANT, "batch", owner="a")
+    assert len(await store.list_events(TENANT, limit=1000)) == before

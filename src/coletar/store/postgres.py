@@ -47,6 +47,7 @@ from coletar.schema.objects import (
     object_from_record,
 )
 from coletar.schema.tenancy import CrossTenantError, TenantId
+from coletar.store.base import Lease
 
 #: Always qualified, and every query below aliases `context_object` as `o`. The
 #: search query joins against a candidate CTE that also has an `id`, so an
@@ -464,6 +465,58 @@ class PostgresStore:
         return [Edge.model_validate(row) for row in rows]
 
     # -- event log ----------------------------------------------------------
+    async def acquire_lease(
+        self, tenant_id: TenantId, name: str, *, owner: str, ttl_seconds: float
+    ) -> Lease | None:
+        """One statement, so the race is decided by Postgres rather than by us.
+
+        The `WHERE` on the conflict path is the whole mechanism: the update only
+        applies when the existing lease has expired or is already ours, so two
+        workers arriving together produce exactly one row update and one empty
+        result. Doing this as SELECT-then-INSERT would leave a window between them
+        wide enough for both to win.
+        """
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO job_lease (tenant_id, name, owner, acquired_at, expires_at)
+                VALUES (%s, %s, %s, now(), now() + make_interval(secs => %s))
+                ON CONFLICT (tenant_id, name) DO UPDATE SET
+                    owner = EXCLUDED.owner,
+                    acquired_at = EXCLUDED.acquired_at,
+                    expires_at = EXCLUDED.expires_at
+                WHERE job_lease.expires_at <= now() OR job_lease.owner = EXCLUDED.owner
+                RETURNING name, owner, acquired_at, expires_at
+                """,
+                (tenant_id, name, owner, ttl_seconds),
+            )
+            row = await cur.fetchone()
+        return Lease(**row) if row is not None else None
+
+    async def release_lease(self, tenant_id: TenantId, name: str, *, owner: str) -> bool:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # `owner` in the predicate, not just the key: a worker whose lease
+            # expired mid-pass must not release the successor that has taken it.
+            await cur.execute(
+                "DELETE FROM job_lease WHERE tenant_id = %s AND name = %s AND owner = %s",
+                (tenant_id, name, owner),
+            )
+            deleted = cur.rowcount
+        return bool(deleted)
+
+    async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT name, owner, acquired_at, expires_at FROM job_lease "
+                "WHERE tenant_id = %s AND name = %s",
+                (tenant_id, name),
+            )
+            row = await cur.fetchone()
+        return Lease(**row) if row is not None else None
+
     async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:

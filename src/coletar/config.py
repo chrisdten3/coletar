@@ -104,6 +104,22 @@ class Settings(BaseSettings):
 
     extraction_batch_size: int = 100
 
+    # Scheduled batch worker. The interval is a latency choice, not a throughput
+    # one: it decides how long after typing a turn the user can expect to see a
+    # memory from it.
+    worker_interval_seconds: float = 300.0
+    # Longer than a pass can reasonably take, because the cost of a too-short TTL
+    # is two workers on one episode, while the cost of a too-long one is only queue
+    # latency after a crash. `extraction_batch_size` turns against a slow provider
+    # is the number to size this against.
+    worker_lease_ttl_seconds: float = 900.0
+
+    # Queue health thresholds. Both answer "is capture still reaching the graph",
+    # which is invisible from the outside: a stalled queue and a quiet user look
+    # identical until someone asks how old the oldest pending turn is.
+    queue_alert_pending_hours: float = 6.0
+    queue_alert_failures: int = 5
+
     # M7: per-principal rate limit on the hosted surfaces. Keyed by credential,
     # not by IP — an office NAT is not one caller and a rotating client is not
     # several.
