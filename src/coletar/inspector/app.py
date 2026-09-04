@@ -24,6 +24,8 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from coletar.capture import is_pending
 from coletar.config import get_settings
+from coletar.inspector.capture_view import render_capture
+from coletar.inspector.detail import render_detail, surfaces_from_form
 from coletar.inspector.library import parse_surface, render_library
 from coletar.inspector.metrics import (
     AgenticView,
@@ -40,6 +42,7 @@ from coletar.inspector.review import (
     merge,
     rescope,
     review_status,
+    set_locality,
 )
 from coletar.inspector.theme import render_page
 from coletar.schema.events import Event
@@ -63,6 +66,7 @@ _PREVIEW_LEN = 120
 #: Which view is current, for the nav's `aria-current`.
 _VIEWS: tuple[tuple[str, str], ...] = (
     ("/", "library"),
+    ("/capture", "capture"),
     ("/review", "review"),
     ("/dashboard", "dashboard"),
     ("/agentic", "entity / fact / episode"),
@@ -404,6 +408,61 @@ def _render_agentic(view: AgenticView) -> str:
     )
 
 
+@app.get("/object/{object_id}", response_class=HTMLResponse)
+async def object_detail(object_id: str, error: str = "") -> HTMLResponse:
+    """One object: lineage above, reach below."""
+    tenant = _tenant()
+    try:
+        body = await render_detail(build_store(), tenant, object_id)
+    except InspectorError as exc:
+        return HTMLResponse(
+            _shell(
+                title="Not found — coletar",
+                current="/",
+                body='<p class="empty">That object is not in this tenant. '
+                '<a href="/">Back to the library</a>.</p>',
+                error=str(exc),
+            ),
+            status_code=404,
+        )
+    return HTMLResponse(
+        _shell(title="Object — coletar", current="/", body=body, error=error)
+    )
+
+
+@app.post("/locality")
+async def post_locality(
+    object_id: Annotated[str, Form()],
+    surfaces: Annotated[list[str], Form()] = [],  # noqa: B006 - FastAPI reads the default
+) -> RedirectResponse:
+    """Apply a whole reach decision at once.
+
+    An unchecked-everything post arrives here as an empty list, which
+    `set_locality` refuses: restricting a memory to nobody is retirement wearing
+    the wrong control, and it should say so rather than silently succeed.
+    """
+    try:
+        await set_locality(
+            build_store(),
+            _tenant(),
+            object_id,
+            surfaces=surfaces_from_form(surfaces),
+        )
+    except InspectorError as exc:
+        return RedirectResponse(
+            f"/object/{quote(object_id)}?error={quote(str(exc))}", status_code=303
+        )
+    return RedirectResponse(f"/object/{quote(object_id)}", status_code=303)
+
+
+@app.get("/capture", response_class=HTMLResponse)
+async def capture(error: str = "") -> str:
+    """What has arrived, what has been judged, and whether the queue is moving."""
+    tenant = _tenant()
+    body = await render_capture(build_store(), tenant)
+    return _shell(title="Capture — coletar", current="/capture", body=body, error=error)
+
+
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(error: str = "") -> str:
     tenant = _tenant()
@@ -431,8 +490,8 @@ async def post_erase_episode(
     try:
         await erase_episode(build_store(), _tenant(), object_id)
     except InspectorError as exc:
-        return RedirectResponse(f"/agentic?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse("/agentic", status_code=303)
+        return RedirectResponse(f"/capture?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/capture", status_code=303)
 
 
 def run() -> None:
