@@ -19,6 +19,8 @@ from urllib.parse import urlparse, urlunparse
 
 import pytest
 
+from coletar.capture import capture_turn
+from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
 from coletar.retrieval.embedding import HashingEmbedder
 from coletar.schema.events import EventType
 from coletar.schema.objects import (
@@ -190,6 +192,26 @@ async def test_a_write_is_searchable_on_the_very_next_call(store: PostgresStore)
     memory = await store.put_object(TENANT, Memory.from_write("Ledger deploys to Fly.io."))
     found = {hit.obj.id for hit in await store.search(TENANT, "where does ledger deploy")}
     assert memory.id in found
+
+
+async def test_encrypted_episode_is_not_searchable_and_its_key_can_be_shredded(
+    store: PostgresStore,
+):
+    episode = await capture_turn(
+        store,
+        TENANT,
+        "private launch codename albatross",
+        surface=Provider.CHATGPT,
+    )
+    assert await decrypt_episode(store, TENANT, episode) == "private launch codename albatross"
+    hits = await store.search(TENANT, "private launch codename albatross", top_k=50)
+    assert episode.id not in {hit.obj.id for hit in hits}
+
+    assert await store.shred_object_key(TENANT, episode.id, reason="test")
+    with pytest.raises(EpisodeKeyUnavailable):
+        await decrypt_episode(store, TENANT, episode)
+    events = await store.list_events(TENANT, object_id=episode.id)
+    assert any(event.type is EventType.OBJECT_SHREDDED for event in events)
 
 
 async def test_project_scoped_search_sees_global_but_not_another_project(store: PostgresStore):

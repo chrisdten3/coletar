@@ -18,6 +18,8 @@ is faked so no inference happens; every other part is the real code path.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -70,7 +72,7 @@ def _query_for(content: str) -> str:
 
 
 @pytest.fixture
-def graph(monkeypatch) -> InMemoryStore:
+def graph(monkeypatch) -> Iterator[InMemoryStore]:
     """One canonical graph, which both surfaces are pointed at.
 
     M3.2 shortcut, closed in M4.2: the proxy used to reach the store directly and
@@ -80,9 +82,16 @@ def graph(monkeypatch) -> InMemoryStore:
     The client is still in-process here, because what this file measures is
     propagation through the graph, not transport.
     """
+    from coletar.config import get_settings
+
+    # This suite measures the established proxy-write propagation mechanism, so it
+    # opts into that compatibility mode rather than depending on a product default.
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "heuristic")
+    get_settings.cache_clear()
     store = InMemoryStore(embedder=HashingEmbedder(768))
     monkeypatch.setattr(mcp_server, "build_store", lambda: store)
-    return store
+    yield store
+    get_settings.cache_clear()
 
 
 def _install_proxy_client(monkeypatch, store: InMemoryStore, tenant: TenantId) -> None:

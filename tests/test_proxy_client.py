@@ -129,16 +129,20 @@ def live_mcp_server(monkeypatch):
     import uvicorn
 
     from coletar.config import get_settings
+    from coletar.mcp import rest as rest_bridge
     from coletar.mcp import server as mcp_server
     from coletar.store import reset_store
 
     store = InMemoryStore()
     monkeypatch.setattr(mcp_server, "build_store", lambda: store)
+    monkeypatch.setattr(rest_bridge, "build_store", lambda: store)
     monkeypatch.setenv(
         "COLETAR_MCP_API_KEYS",
         f'[{{"id": "proxy", "secret": "{KEY}", "tenant_id": "{TENANT}", '
         f'"surface": "local"}}]',
     )
+    monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "off")
     port = _free_port()
     # The SDK's DNS-rebinding guard matches the *whole* Host header, port included.
     # This is the M3.3 "421 Misdirected Request" in miniature, and only a non-default
@@ -205,6 +209,22 @@ async def test_a_remote_write_reaches_the_graph(live_mcp_server) -> None:
     )
     contents = [o.content for o in await store.list_objects(TENANT, limit=20)]
     assert "Chris deploys on Fridays." in contents
+
+
+@pytest.mark.asyncio
+async def test_a_remote_proxy_can_queue_an_encrypted_episode(live_mcp_server) -> None:
+    from coletar.episode_crypto import decrypt_episode
+    from coletar.schema.objects import ObjectType
+
+    url, store = live_mcp_server
+    client = RemoteContextClient(url, KEY)
+    episode_id = await asyncio.wait_for(
+        client.capture("I prefer spaces over tabs.", scope=GLOBAL_SCOPE), timeout=30
+    )
+
+    episode = await store.get_object(TENANT, episode_id)
+    assert episode is not None and episode.type is ObjectType.EPISODE
+    assert await decrypt_episode(store, TENANT, episode) == "I prefer spaces over tabs."
 
 
 @pytest.mark.asyncio

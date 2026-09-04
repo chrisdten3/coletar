@@ -231,18 +231,15 @@ async def remember_endpoint(request: Request) -> JSONResponse:
 
 
 async def capture(request: Request) -> JSONResponse:
-    """Offer a turn the user typed; the extractor decides whether anything durable is
-    in it.
+    """Offer a turn the user typed to the configured passive-capture policy.
 
     This is the difference between capture and `/v1/remember`. Remember stores what it
-    is given, because the user asked for it explicitly. Capture is passive, so it runs
-    the same precision-first extractor the local proxy uses — 4.3% false-positive rate
-    against the labelled set — and usually stores nothing at all. A capture path that
-    stored every turn would fill the graph with "thanks, that's helpful" and make
-    every later compile worse (§AGENTS: precision over recall).
+    is given because the user asked explicitly. Passive inference is off by default.
+    Collect-then-batch stores encrypted working material and makes no memory claim;
+    the legacy heuristic must be selected explicitly.
 
     Only the user's own words are ever offered here. The model's reply is not sent by
-    the bridge and would not be mined if it were.
+    the bridge and cannot be mined by this endpoint.
     """
     principal = _require(SCOPE_WRITE)
     if isinstance(principal, JSONResponse):
@@ -278,8 +275,9 @@ async def capture(request: Request) -> JSONResponse:
     # something — a turn the heuristic missed is exactly what the batch pass is for.
     # Off by default: storing verbatim turns is a larger commitment than storing
     # extracted memories and should be a decision, not a discovery.
+    settings = get_settings()
     episode = None
-    if get_settings().capture_turns:
+    if settings.capture_turns:
         episode = await capture_turn(
             store,
             principal.tenant_id,
@@ -288,6 +286,36 @@ async def capture(request: Request) -> JSONResponse:
             scope=scope,
             principal_id=principal.id,
             detail={"surface": body.surface},
+        )
+
+    # Safe default: passive composer observation makes no inferred graph write.
+    # Explicit `/v1/remember` and MCP `write_memory` continue to work. If capture was
+    # independently enabled, report the episode as queued for an out-of-band pass.
+    if settings.live_extraction_mode == "off":
+        response: dict[str, Any] = {
+            "extracted": [],
+            "count": 0,
+            "queued": episode is not None,
+        }
+        if episode is not None:
+            response["episode_id"] = episode.id
+        return JSONResponse(response)
+
+    # Collect-then-batch deliberately writes no regex memory. The live benchmark is
+    # a narrow regression set, not enough evidence to expose a preliminary guess to
+    # retrieval before the semantic pass. Capture must be explicitly enabled or the
+    # mode would acknowledge turns that were stored nowhere.
+    if settings.live_extraction_mode == "collect_then_batch":
+        if episode is None:
+            return JSONResponse(
+                {
+                    "error": "capture_not_enabled",
+                    "message": "collect_then_batch requires COLETAR_CAPTURE_TURNS=true",
+                },
+                status_code=503,
+            )
+        return JSONResponse(
+            {"extracted": [], "count": 0, "queued": True, "episode_id": episode.id}
         )
 
     stored: list[dict[str, Any]] = []

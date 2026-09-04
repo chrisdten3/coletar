@@ -1,111 +1,177 @@
-"""Score extraction models against the labelled set. Costs money — run deliberately.
+"""Compare extraction providers through the complete production guard path.
 
-Answers the only question that matters for model choice: is the cheap model good
-enough? Prints precision, recall, and kind-accuracy per model so the decision is
-made from a table rather than from an argument.
+This calls paid APIs when an Anthropic or OpenAI spec is selected. A spec is
+`provider:model`; examples:
 
-    ANTHROPIC_API_KEY=... uv run python scripts/bench_extraction.py \
-        claude-haiku-4-5 claude-sonnet-5 claude-opus-5
+    uv run python scripts/bench_extraction.py \
+      openai:gpt-5.6-luna openai:gpt-5.6-terra \
+      anthropic:claude-sonnet-5
 
-55 turns per model. At the largest model in that list this is a few cents.
+`BENCH_SET` is `live`, `transient`, or a path to a private labelled set. `BENCH_RUNS`
+defaults to 1; use 3 for a decision run. Output separates raw model judgement from
+the guarded result users would actually receive.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sys
 import time
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
-
-from coletar.extraction.frontier import ExtractionUnavailable, propose  # noqa: E402
-from coletar.extraction.proposal import Proposal  # noqa: E402
+from coletar.extraction.extractor import _grounded
+from coletar.extraction.prompt import EXTRACTION_SYSTEM
+from coletar.extraction.proposal import Proposal
+from coletar.extraction.providers import (
+    ExtractionProviderName,
+    ExtractionUnavailable,
+    propose,
+)
 
 FIXTURES = Path(__file__).resolve().parent.parent / "tests" / "fixtures"
-
-#: Which labelled set to score against. `live` is the original 55 turns, and is the
-#: heuristic's own specification written as test cases — it flatters the patterns and
-#: punishes anything else. `transient` is the set the heuristic actually fails: task
-#: context it stores as standing preference.
 SETS = {"live": "extraction_set.json", "transient": "transient_set.json"}
-
-#: `BENCH_SET` also accepts a path, so a set labelled by the user with
-#: `scripts/label_turns.py` can be scored without being copied into the repo —
-#: committing one means committing private conversation text.
+PROVIDERS = frozenset({"ollama", "anthropic", "openai"})
 
 
-async def score(model: str, turns: list[dict]) -> dict[str, float | int | list[str]]:
-    tp: list[str] = []
-    fp: list[str] = []
-    fn: list[str] = []
-    wrong_kind: list[str] = []
-    t0 = time.time()
+@dataclass
+class Score:
+    provider: str
+    model: str
+    run: int
+    stage: str
+    turns: int
+    writes: int
+    true_positives: int
+    false_positives: int
+    false_negatives: int
+    wrong_kind: int
+    unavailable: int
+    seconds: float
+    fixture_sha256: str
+    prompt_sha256: str
+    measured_at: str
 
-    unavailable = 0
-    for turn in turns:
-        try:
-            proposal: Proposal | None = await propose(transcript=str(turn["user"]), model=model)
-        except ExtractionUnavailable:
-            # Never examined. Counting these separately is the whole point — folding
-            # them into "found nothing" would quietly depress recall and make an
-            # overloaded provider look like a worse model.
-            unavailable += 1
-            continue
-        got = list(proposal.memories) if proposal else []
-        if turn.get("durable"):
-            if got:
-                tp.append(turn["id"])
-                want = turn.get("kind")
-                if want and got[0].kind.value != want:
-                    wrong_kind.append(f'{turn["id"]}:{want}->{got[0].kind.value}')
-            else:
-                fn.append(turn["id"])
-        elif got:
-            fp.append(turn["id"])
+    @property
+    def precision(self) -> float:
+        return self.true_positives / self.writes if self.writes else 0.0
 
-    writes = len(tp) + len(fp)
-    durable = len(tp) + len(fn)
-    return {
-        "seconds": round(time.time() - t0, 1),
-        "precision": round(len(tp) / writes, 3) if writes else 0.0,
-        "recall": round(len(tp) / durable, 3) if durable else 0.0,
-        "wrong_kind": len(wrong_kind),
-        "unavailable": unavailable,
-        "false_positives": fp,
+    @property
+    def recall(self) -> float:
+        total = self.true_positives + self.false_negatives
+        return self.true_positives / total if total else 0.0
+
+    def record(self) -> dict[str, object]:
+        return {
+            **asdict(self),
+            "precision": round(self.precision, 4),
+            "recall": round(self.recall, 4),
+        }
+
+
+def _memory_result(proposal: Proposal | None) -> tuple[bool, str | None]:
+    if proposal is None or not proposal.memories:
+        return False, None
+    return True, proposal.memories[0].kind.value
+
+
+def _add(score: Score, *, turn: dict[str, object], proposal: Proposal | None) -> None:
+    got, kind = _memory_result(proposal)
+    durable = bool(turn.get("durable"))
+    if got:
+        score.writes += 1
+    if durable and got:
+        score.true_positives += 1
+        expected = turn.get("kind")
+        if expected and kind != expected:
+            score.wrong_kind += 1
+    elif durable:
+        score.false_negatives += 1
+    elif got:
+        score.false_positives += 1
+
+
+async def score(
+    provider: ExtractionProviderName,
+    model: str,
+    turns: list[dict[str, object]],
+    *,
+    run: int,
+    fixture_hash: str,
+) -> tuple[Score, Score]:
+    common = {
+        "provider": provider,
+        "model": model,
+        "run": run,
+        "turns": len(turns),
+        "writes": 0,
+        "true_positives": 0,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "wrong_kind": 0,
+        "unavailable": 0,
+        "seconds": 0.0,
+        "fixture_sha256": fixture_hash,
+        "prompt_sha256": hashlib.sha256(EXTRACTION_SYSTEM.encode()).hexdigest(),
+        "measured_at": datetime.now(UTC).isoformat(),
     }
+    raw = Score(stage="proposal", **common)
+    guarded = Score(stage="guarded", **common)
+    started = time.perf_counter()
+    for turn in turns:
+        transcript = str(turn["user"])
+        try:
+            result = await propose(transcript=transcript, provider=provider, model=model)
+        except ExtractionUnavailable:
+            raw.unavailable += 1
+            guarded.unavailable += 1
+            continue
+        _add(raw, turn=turn, proposal=result)
+        _add(guarded, turn=turn, proposal=_grounded(result, transcript) if result else None)
+    elapsed = round(time.perf_counter() - started, 3)
+    raw.seconds = guarded.seconds = elapsed
+    return raw, guarded
+
+
+def _spec(value: str) -> tuple[ExtractionProviderName, str]:
+    provider, separator, model = value.partition(":")
+    if not separator or provider not in PROVIDERS or not model:
+        raise SystemExit(f"invalid {value!r}; expected provider:model for {sorted(PROVIDERS)}")
+    return provider, model  # type: ignore[return-value]
 
 
 async def main() -> None:
-    # Deliberately no credential check here. The SDK resolves ANTHROPIC_API_KEY, an
-    # `ant auth login` profile, or workload identity — in that order — and an
-    # earlier version of this script gated on the env var alone, which rejected a
-    # perfectly good OAuth profile. Let the SDK decide; a missing credential fails
-    # loudly at client construction, which is where it belongs.
-    models = sys.argv[1:] or ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5"]
-    print("  this calls a paid API — 55 turns per model\n")
-
+    specs = sys.argv[1:] or [
+        "openai:gpt-5.6-luna",
+        "openai:gpt-5.6-terra",
+        "openai:gpt-5.6-sol",
+        "anthropic:claude-haiku-4-5",
+        "anthropic:claude-sonnet-5",
+    ]
     which = os.environ.get("BENCH_SET", "live")
-    if which in SETS:
-        source = FIXTURES / SETS[which]
-    elif Path(which).expanduser().exists():
-        source = Path(which).expanduser()
-    else:
-        sys.exit(f"BENCH_SET must be one of {sorted(SETS)}, or a path to a labelled set")
-    raw = json.loads(source.read_text())
-    turns = raw if isinstance(raw, list) else raw.get("turns") or list(raw.values())[0]
-    print(f"  set: {source.name}")
+    source = FIXTURES / SETS[which] if which in SETS else Path(which).expanduser()
+    if not source.exists():
+        raise SystemExit(f"BENCH_SET is not a known set or file: {which}")
+    payload = source.read_bytes()
+    decoded = json.loads(payload)
+    turns = decoded if isinstance(decoded, list) else decoded["turns"]
+    runs = int(os.environ.get("BENCH_RUNS", "1"))
+    fixture_hash = hashlib.sha256(payload).hexdigest()
 
-    print(f"  {len(turns)} labelled turns; bars are precision >=0.85, kind exact\n")
-    print(f"  {'model':22} {'prec':>6} {'recall':>7} {'kind✗':>6} {'n/a':>5} {'secs':>6}")
-    for model in models:
-        card = await score(model, turns)
-        print(
-            f"  {model:22} {card['precision']:>6} {card['recall']:>7} "
-            f"{card['wrong_kind']:>6} {card['unavailable']:>5} {card['seconds']:>6}"
-        )
+    print(f"set={source} turns={len(turns)} runs={runs}")
+    for raw_spec in specs:
+        provider, model = _spec(raw_spec)
+        for run in range(1, runs + 1):
+            raw, guarded = await score(
+                provider, model, turns, run=run, fixture_hash=fixture_hash
+            )
+            for card in (raw, guarded):
+                print(json.dumps(card.record(), sort_keys=True))
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

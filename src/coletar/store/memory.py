@@ -18,6 +18,7 @@ file on every write and has no concurrency story at all.
 
 from __future__ import annotations
 
+import base64
 import json
 import warnings
 from datetime import UTC, datetime
@@ -53,6 +54,10 @@ class InMemoryStore:
         # a no-op rather than a duplicate row.
         self._edges: dict[_EdgeKey, Edge] = {}
         self._events: dict[TenantId, list[Event]] = {}
+        # Raw episode content is encrypted in the graph. Its disposable key lives
+        # outside object/event snapshots so shredding the key can erase content
+        # without rewriting either append-only history or graph identity.
+        self._object_keys: dict[tuple[TenantId, str], bytes] = {}
         self._embedder = embedder or build_embedder()
         # One index per tenant: another tenant's vectors are never candidates, rather
         # than being candidates that a later filter is trusted to remove.
@@ -119,6 +124,11 @@ class InMemoryStore:
             tenant = tenant_of(record)
             event = Event.model_validate({k: v for k, v in record.items() if k != "tenant_id"})
             self._events.setdefault(tenant, []).append(event)
+        for record in raw.get("object_keys", []):
+            tenant = tenant_of(record)
+            self._object_keys[(tenant, str(record["object_id"]))] = base64.b64decode(
+                str(record["key_b64"])
+            )
 
         if legacy:
             # A record in the log as well as a warning on the console: the graph's
@@ -157,6 +167,14 @@ class InMemoryStore:
                         {"tenant_id": tenant, **event.model_dump(mode="json")}
                         for tenant, events in self._events.items()
                         for event in events
+                    ],
+                    "object_keys": [
+                        {
+                            "tenant_id": tenant,
+                            "object_id": object_id,
+                            "key_b64": base64.b64encode(key).decode(),
+                        }
+                        for (tenant, object_id), key in self._object_keys.items()
                     ],
                 },
                 indent=2,
@@ -208,6 +226,33 @@ class InMemoryStore:
             base.model_copy(update={"before": before, "after": stored.model_dump(mode="json")}),
         )
         return stored.model_copy(deep=True)
+
+    async def put_object_key(
+        self, tenant_id: TenantId, object_id: str, key: bytes
+    ) -> None:
+        self._object_keys[(tenant_id, object_id)] = bytes(key)
+        self._save()
+
+    async def get_object_key(self, tenant_id: TenantId, object_id: str) -> bytes | None:
+        key = self._object_keys.get((tenant_id, object_id))
+        return bytes(key) if key is not None else None
+
+    async def shred_object_key(
+        self, tenant_id: TenantId, object_id: str, *, reason: str
+    ) -> bool:
+        key = self._object_keys.pop((tenant_id, object_id), None)
+        if key is None:
+            return False
+        await self.append_event(
+            tenant_id,
+            Event(
+                type=EventType.OBJECT_SHREDDED,
+                object_id=object_id,
+                actor=Actor.JOB,
+                detail={"reason": reason},
+            ),
+        )
+        return True
 
     async def get_object(
         self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
@@ -395,7 +440,7 @@ class InMemoryStore:
         # different stale ancestors is one hit at its best score, not three.
         best: dict[str, Scored] = {}
         for (tenant, object_id), obj in self._objects.items():
-            if tenant != tenant_id or not obj.is_active:
+            if tenant != tenant_id or not obj.is_active or obj.type is ObjectType.EPISODE:
                 continue
 
             # Stage 1, candidate generation (§5.1). A superseded object stays a
@@ -408,7 +453,11 @@ class InMemoryStore:
             # Every policy check applies to the object handed back, never to the one
             # that merely matched -- otherwise a stale ancestor's scope or locality
             # would decide who may read its replacement.
-            if returned is None or not returned.is_active:
+            if (
+                returned is None
+                or not returned.is_active
+                or returned.type is ObjectType.EPISODE
+            ):
                 continue
             if not _in_search_scope(returned.scope, scope):
                 continue

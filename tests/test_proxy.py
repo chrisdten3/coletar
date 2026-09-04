@@ -80,8 +80,13 @@ def store(monkeypatch):
     Tests install the in-process client explicitly, which is also the shape a
     deployment takes: whose graph the daemon writes into is decided once, at startup.
     """
+    from coletar.config import get_settings
     from coletar.mcp.auth import DEFAULT_SCOPES, Principal
 
+    # Most tests below pin the legacy M2 extraction contract deliberately. Product
+    # default is now explicit writes only; dedicated tests below cover that policy.
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "heuristic")
+    get_settings.cache_clear()
     s = InMemoryStore()
     client = LocalContextClient(
         s,
@@ -93,7 +98,8 @@ def store(monkeypatch):
         ),
     )
     monkeypatch.setattr(proxy_module, "context_client", lambda: client)
-    return s
+    yield s
+    get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -168,6 +174,46 @@ async def test_new_memory_is_extracted_from_the_users_turn(store, upstream):
     assert response.status_code == 200
     stored = await store.list_objects(PROXY_TENANT)
     assert any("uv instead of pip" in o.content for o in stored)
+
+
+async def test_default_live_policy_makes_no_inferred_write(store, upstream, monkeypatch):
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "off")
+    get_settings.cache_clear()
+    with TestClient(proxy_module.app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+
+    assert await store.list_objects(PROXY_TENANT) == []
+
+
+async def test_collect_then_batch_queues_encrypted_episode(store, upstream, monkeypatch):
+    from coletar.config import get_settings
+    from coletar.episode_crypto import decrypt_episode
+    from coletar.schema.objects import ObjectType
+
+    monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "collect_then_batch")
+    get_settings.cache_clear()
+    with TestClient(proxy_module.app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "llama3", "messages": [
+                {"role": "user", "content": "I prefer spaces over tabs."}
+            ]},
+        )
+
+    episodes = await store.list_objects(PROXY_TENANT, type=ObjectType.EPISODE)
+    assert len(episodes) == 1
+    assert await decrypt_episode(store, PROXY_TENANT, episodes[0]) == (
+        "I prefer spaces over tabs."
+    )
+    assert await store.list_objects(PROXY_TENANT, type=ObjectType.MEMORY) == []
 
 
 async def test_a_claude_only_memory_is_never_injected_into_the_local_model(store, upstream):

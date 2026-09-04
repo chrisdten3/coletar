@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from coletar.capture import capture_turn
+from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
 from coletar.jobs.expiry import REASON, expire, expires_at
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
@@ -101,6 +103,25 @@ async def test_the_retirement_reason_distinguishes_expiry_from_supersession() ->
 
     events = await store.list_events(TENANT, object_id=obj.id)
     assert any(REASON in str(e.detail) for e in events), "the event says why"
+
+
+@pytest.mark.asyncio
+async def test_expired_raw_episode_is_crypto_shredded() -> None:
+    store = InMemoryStore()
+    episode = await capture_turn(
+        store, TENANT, "erase this raw turn", surface=Provider.CHATGPT
+    )
+    episode.created_at = datetime.now(UTC) - timedelta(days=episode.ttl_days or 1, seconds=1)
+    await store.put_object(TENANT, episode)
+
+    await expire(store, TENANT)
+
+    encrypted = await store.get_object(TENANT, episode.id)
+    assert encrypted is not None, "the graph and provenance remain"
+    with pytest.raises(EpisodeKeyUnavailable):
+        await decrypt_episode(store, TENANT, encrypted)
+    events = await store.list_events(TENANT, object_id=episode.id)
+    assert any(event.type is EventType.OBJECT_SHREDDED for event in events)
 
 
 def _entity(name: str) -> ContextObject:

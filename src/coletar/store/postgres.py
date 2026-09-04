@@ -8,8 +8,9 @@ from taste:
     commit together. The event log is the provenance record -- a row that exists
     without its event is a data-integrity failure we cannot detect later, so it must
     not be possible to produce one, not merely discouraged.
-  * **No DELETE, ever.** `retire_object` sets `retired_at`. Nothing in this package
-    issues DELETE or UPDATE against `event_log` at all.
+  * **No graph DELETE, ever.** `retire_object` sets `retired_at`. The sole DELETE is
+    crypto-shredding a separately held episode key; graph rows and the event log are
+    never deleted or rewritten.
   * **Identical ranking to the in-process store.** Postgres narrows the candidate
     set (cosine top-k unioned with a trigram match, which is the part a database is
     genuinely better at); the final blend runs through
@@ -246,6 +247,59 @@ class PostgresStore:
             )
             # The `async with` commits: object, embedding and event land together.
         return obj
+
+    async def put_object_key(
+        self, tenant_id: TenantId, object_id: str, key: bytes
+    ) -> None:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                INSERT INTO object_content_key (tenant_id, object_id, key_bytes)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (tenant_id, object_id) DO UPDATE SET
+                    key_bytes = EXCLUDED.key_bytes,
+                    created_at = now()
+                """,
+                (tenant_id, object_id, key),
+            )
+
+    async def get_object_key(self, tenant_id: TenantId, object_id: str) -> bytes | None:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT key_bytes FROM object_content_key "
+                "WHERE tenant_id = %s AND object_id = %s",
+                (tenant_id, object_id),
+            )
+            row = await cur.fetchone()
+        return bytes(row["key_bytes"]) if row is not None else None
+
+    async def shred_object_key(
+        self, tenant_id: TenantId, object_id: str, *, reason: str
+    ) -> bool:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # This is the sole intentional DELETE in the store: the key is not a
+            # graph object, and destroying it is what makes crypto-erasure real.
+            await cur.execute(
+                "DELETE FROM object_content_key "
+                "WHERE tenant_id = %s AND object_id = %s RETURNING object_id",
+                (tenant_id, object_id),
+            )
+            if await cur.fetchone() is None:
+                return False
+            await _insert_event(
+                cur,
+                tenant_id,
+                Event(
+                    type=EventType.OBJECT_SHREDDED,
+                    object_id=object_id,
+                    actor=Actor.JOB,
+                    detail={"reason": reason},
+                ),
+            )
+        return True
 
     async def get_object(
         self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
@@ -493,6 +547,7 @@ class PostgresStore:
                 JOIN object_embedding e
                   ON e.tenant_id = o.tenant_id AND e.object_id = o.id
                 WHERE o.tenant_id = %s AND o.retired_at IS NULL
+                  AND o.type <> 'episode'
                 ORDER BY e.embedding <=> %s
                 LIMIT %s
             )
@@ -500,6 +555,7 @@ class PostgresStore:
             (
                 SELECT o.id FROM context_object o
                 WHERE o.tenant_id = %s AND o.retired_at IS NULL
+                  AND o.type <> 'episode'
                   AND o.content %% %s
                 LIMIT %s
             )
@@ -529,7 +585,7 @@ class PostgresStore:
           ON e.tenant_id = o.tenant_id AND e.object_id = o.id
         LEFT JOIN object_embedding me
           ON me.tenant_id = m.tenant_id AND me.object_id = m.id
-        WHERE o.retired_at IS NULL
+        WHERE o.retired_at IS NULL AND o.type <> 'episode'
           {scope_clause} {locality_clause} {sensitivity_clause}
         """
         params = [
@@ -658,4 +714,3 @@ def _event_from_row(row: dict[str, Any]) -> Event:
         after=after,
         detail=detail,
     )
-

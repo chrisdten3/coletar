@@ -21,7 +21,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from coletar.schema.objects import ContextObject
+from coletar.schema.objects import ContextObject, ObjectType
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -72,6 +72,8 @@ async def expire(
         due = expires_at(obj)
         if due is not None and due <= moment and obj.is_active:
             await store.retire_object(tenant_id, obj.id, reason=REASON)
+            if obj.type is ObjectType.EPISODE:
+                await store.shred_object_key(tenant_id, obj.id, reason=REASON)
             retired += 1
 
     return ExpiryReport(scanned=len(objects), retired=retired)

@@ -23,6 +23,12 @@ dependencies = [
     "pgvector>=0.3",
     "typer>=0.12",
     "anthropic>=1.3.0",
+    # Structured Outputs maps the same Proposal schema onto OpenAI without a
+    # provider-specific JSON parser. Provider comparison is a product requirement.
+    "openai>=2.0.0",
+    # Raw captured episodes must be crypto-shreddable while their event-chain
+    # ciphertext and provenance remain append-only.
+    "cryptography>=44.0.0",
 ]
 
 [project.optional-dependencies]

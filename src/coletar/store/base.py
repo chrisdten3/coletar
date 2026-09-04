@@ -93,6 +93,25 @@ class Store(Protocol):
         """
         ...
 
+    async def put_object_key(
+        self, tenant_id: TenantId, object_id: str, key: bytes
+    ) -> None:
+        """Store an opaque per-object content key outside the event-snapshotted graph.
+
+        Used only for encrypted raw episodes. The key may be hard-deleted even though
+        graph objects may not: destroying it is the GDPR erasure mechanism described
+        in AGENTS.md, and leaves ciphertext plus the event chain intact.
+        """
+        ...
+
+    async def get_object_key(self, tenant_id: TenantId, object_id: str) -> bytes | None: ...
+
+    async def shred_object_key(
+        self, tenant_id: TenantId, object_id: str, *, reason: str
+    ) -> bool:
+        """Destroy one content key and append an `object.shredded` audit event."""
+        ...
+
     async def get_object(
         self, tenant_id: TenantId, object_id: str, *, caller_surface: Provider | None = None
     ) -> ContextObject | None:

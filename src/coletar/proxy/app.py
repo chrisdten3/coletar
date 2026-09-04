@@ -1,9 +1,9 @@
 """Local Proxy Daemon (SCOPE §4, §10 step 1) — the wedge.
 
 Sits in front of any OpenAI-compatible endpoint (Ollama, LM Studio, vLLM,
-llama.cpp), injects retrieved memory into the system prompt on the way in, and
-extracts new memory on the way out. No export, no scraping, no ToS exposure: the
-whole loop is on the user's machine.
+llama.cpp), injects retrieved memory into the system prompt, and applies the chosen
+post-response capture policy. Passive writes are off by default. No export, no
+scraping, no ToS exposure: the whole loop is on the user's machine.
 
 It also doubles as the reference implementation of the connector pattern in §3.1 --
 Ollama has no native MCP client, so this *is* the bridge for the local leg. Its
@@ -136,12 +136,11 @@ async def _record(client: ContextClient, memory: Memory, scope: Scope) -> None:
 async def _extract_and_store(
     client: ContextClient, *, user_text: str, assistant_text: str, scope: Scope
 ) -> None:
-    """Runs *after* the response has been delivered — never in front of it.
+    """Apply the configured live policy after delivery — never in front of it.
 
-    Extraction is 0.1ms today because it is regular expressions, so blocking would be
-    invisible. It will not stay that way: model-assisted extraction (M6.2) puts an
-    inference call here, and a user should not wait on the proxy learning something
-    in order to receive the answer they asked for.
+    The compatibility heuristic is fast; encrypted collection is also only a local
+    write. Semantic extraction is deliberately a separate worker, and a user never
+    waits on the proxy learning something to receive the answer they asked for.
 
     Nothing raised here may reach the user, for the same reason: the reply already
     left. A proxy that fails a chat because it could not extract a memory is worse
@@ -150,6 +149,16 @@ async def _extract_and_store(
     if not user_text.strip():
         return
     try:
+        settings = get_settings()
+        if settings.live_extraction_mode == "off":
+            return
+        if settings.live_extraction_mode == "collect_then_batch":
+            if not settings.capture_turns:
+                raise RuntimeError(
+                    "collect_then_batch requires COLETAR_CAPTURE_TURNS=true"
+                )
+            await client.capture(user_text, scope=scope)
+            return
         for memory in await extract_memories(
             user_text=user_text, assistant_text=assistant_text, scope=scope
         ):

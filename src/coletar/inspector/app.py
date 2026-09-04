@@ -22,6 +22,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from coletar.capture import is_pending
 from coletar.config import get_settings
 from coletar.inspector.metrics import (
     AgenticView,
@@ -33,6 +34,7 @@ from coletar.inspector.review import (
     InspectorError,
     ReviewStatus,
     edit,
+    erase_episode,
     mark_reviewed,
     merge,
     rescope,
@@ -352,9 +354,12 @@ def _render_agentic(view: AgenticView) -> str:
     sections = []
     for object_type, rows in view.by_type.items():
         is_entity = object_type == str(ObjectType.ENTITY)
+        is_episode = object_type == str(ObjectType.EPISODE)
         columns = ["id", "scope", "confidence", "content"]
         if is_entity:
             columns.append("mentioned by")
+        if is_episode:
+            columns.extend(["extraction", "control"])
         listed = _table(
             columns,
             [
@@ -364,6 +369,16 @@ def _render_agentic(view: AgenticView) -> str:
                     f"{o.confidence:.2f}",
                     _preview(o.content),
                     *([_mentions(view, o.id)] if is_entity else []),
+                    *(["pending" if is_pending(o) else "complete"] if is_episode else []),
+                    *(
+                        [
+                            '<form action="/erase-episode" method="post">'
+                            f'<input type="hidden" name="object_id" value="{escape(o.id)}">'
+                            '<button type="submit">erase raw turn</button></form>'
+                        ]
+                        if is_episode
+                        else []
+                    ),
                 ]
                 for o in rows
             ],
@@ -385,7 +400,8 @@ def _render_agentic(view: AgenticView) -> str:
     )
     return (
         '<p class="meta">A filtered rendering of the same graph — entity, fact and '
-        "episode are three object types, not a second store.</p>"
+        "episode are three object types, not a second store. "
+        f"Pending extraction: {view.pending_episodes}.</p>"
         + "".join(sections)
         + "<h2>Episode lineage</h2>"
         '<p class="meta">Which objects an episode produced. §6 requires this to '
@@ -403,10 +419,22 @@ async def dashboard(error: str = "") -> str:
 
 
 @app.get("/agentic", response_class=HTMLResponse)
-async def agentic() -> str:
+async def agentic(error: str = "") -> str:
     tenant = _tenant()
     view = await build_agentic_view(build_store(), tenant)
-    return _PAGE.format(tenant=escape(tenant), flash="", body=_render_agentic(view))
+    flash = f'<p class="error">{escape(error)}</p>' if error else ""
+    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_agentic(view))
+
+
+@app.post("/erase-episode")
+async def post_erase_episode(
+    object_id: Annotated[str, Form()],
+) -> RedirectResponse:
+    try:
+        await erase_episode(build_store(), _tenant(), object_id)
+    except InspectorError as exc:
+        return RedirectResponse(f"/agentic?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/agentic", status_code=303)
 
 
 def run() -> None:

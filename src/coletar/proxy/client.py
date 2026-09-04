@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+import httpx
+
 from coletar.config import get_settings
 from coletar.ingest import remember
 from coletar.mcp.auth import SCOPE_READ, SCOPE_WRITE, Principal
@@ -59,6 +61,10 @@ class ContextClient(Protocol):
         ...
 
     async def write(self, memory: Memory, *, scope: Scope) -> None: ...
+
+    async def capture(self, text: str, *, scope: Scope) -> str:
+        """Queue one encrypted user turn and return its episode id."""
+        ...
 
     async def aclose(self) -> None: ...
 
@@ -121,6 +127,21 @@ class LocalContextClient:
             ),
             caller_surface=self._principal.surface,
         )
+
+    async def capture(self, text: str, *, scope: Scope) -> str:
+        self._require(SCOPE_WRITE)
+        from coletar.capture import capture_turn
+
+        episode = await capture_turn(
+            self._store,
+            self._principal.tenant_id,
+            text,
+            surface=self._principal.surface,
+            scope=scope,
+            principal_id=self._principal.id,
+            detail={"surface": "local-proxy"},
+        )
+        return episode.id
 
     async def aclose(self) -> None:
         return None
@@ -203,6 +224,29 @@ class RemoteContextClient:
                 **({"supersedes": memory.supersedes} if memory.supersedes else {}),
             },
         )
+
+    async def capture(self, text: str, *, scope: Scope) -> str:
+        # Capture is intentionally not an assistant-facing MCP tool. The proxy uses
+        # the authenticated bridge endpoint on the same host, just as the browser
+        # extension does.
+        root = self._base_url.removesuffix("/mcp")
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            response = await http.post(
+                f"{root}/v1/capture",
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={"text": text, "project_id": scope.id, "surface": "local-proxy"},
+            )
+        if response.status_code != 200:
+            raise ContextClientError(
+                f"capture failed ({response.status_code}): {response.text[:200]}"
+            )
+        payload = response.json()
+        episode_id = payload.get("episode_id")
+        if not payload.get("queued") or not isinstance(episode_id, str):
+            raise ContextClientError(
+                "capture is not enabled on the MCP server; enable encrypted capture there"
+            )
+        return episode_id
 
     async def aclose(self) -> None:
         return None

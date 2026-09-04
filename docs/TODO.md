@@ -54,7 +54,8 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 - [x] Token-budgeted context assembly with dedup and oversized-skip
 
 ### Capture and acquisition
-- [x] Local proxy for any OpenAI-compatible model — inject on the way in, extract on the way out
+- [x] Local proxy for any OpenAI-compatible model — inject on the way in; optional
+      encrypted capture after the response, with passive inference off by default
 - [x] Extraction with 7 guards; **4.3% false-positive rate** on a labelled set
 - [x] Model-assisted extraction with a grounding guard against fabrication
 - [x] ChatGPT export importer — tree-aware, active branch only
@@ -152,16 +153,15 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 | ChatGPT web | Developer Mode remote MCP | ❌ never wired or tested |
 | ChatGPT web | extension composer bridge | ✅ **built** — surface from `Origin` |
 | ChatGPT Desktop | anything | ❌ no path investigated |
-| Ollama / local | proxy inject + extract | ✅ verified live |
+| Ollama / local | proxy inject + optional encrypted capture | ✅ verified live |
 
 - [x] **stdio transport for the MCP server** — `coletar serve-mcp-stdio`. Identity
       comes from the OS rather than a token, because the client launches us as its
       own subprocess; stdout is kept clean because it *is* the protocol channel
 - [ ] ChatGPT connector via Developer Mode remote MCP (read path)
-- [ ] Client-side DOM capture for Claude and ChatGPT — **unblocked**; AGENTS.md was
-      amended 2026-08-31. Content script per provider, `MutationObserver` on the
-      transcript, emitting to the existing `/v1/capture` so extraction, guards,
-      dedup and provenance are unchanged — only the source is new
+- [x] Client-side composer capture for Claude and ChatGPT — explicit consent, user
+      submissions only, and no transcript or provider-output selector. Captured
+      turns enter the encrypted collect-then-batch path through `/v1/capture`
 - [ ] Per-provider DOM selectors are the ongoing maintenance cost. MemoryPlugin's
       own docs warn their Gemini sync breaks when that UI changes; budget for the
       same rather than being surprised by it
@@ -218,7 +218,9 @@ table stakes for enterprise, not an edge. The edge is the capability underneath 
 - [ ] Low-confidence clustering pass
 - [ ] ChatGPT compiler has **no human verification**
 - [ ] `kind` classification unreliable at 0.5b — needs a larger local model
-- [ ] Model extraction measured on only 30 of 100 turns (machine ran out of memory)
+- [ ] Extraction still lacks an independently labelled sample drawn from a real
+      export. The committed live and transient sets support the architecture and
+      provider choice, but their author also assigned their labels
 - [ ] Proxy rate limiting is in-process; two workers means two buckets
 - [ ] Webhook SSRF guard does not resolve hostnames (documented, deliberate)
 - [ ] **`/v1/remember` has no `local_only`** — the browser bridge can only write
@@ -287,8 +289,9 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       scores **0.421 precision** there against 0.952 on the live set, same extractor,
       only the turns differ. `claude-sonnet-5` scores 0.909 with perfect recall;
       `claude-haiku-4-5` reaches only 0.643 and is **not sufficient**. See
-      `docs/EXTRACTION.md`. Practical consequence: use Sonnet for backfill, keep the
-      heuristic on the live path, and do not use Haiku for this judgement
+      `docs/EXTRACTION.md`. Practical consequence: use semantic extraction for
+      backfill and captured turns; do not publish the heuristic as a preliminary
+      result merely because it is fast
 - [x] **Labels accepted as they stand** — decided 2026-09-03. The fixtures were
       written and labelled by the same party that built the extractor, and the owner
       reviewed the judgements and accepted them rather than re-labelling. Recorded
@@ -299,34 +302,29 @@ website, auth or deployment. Audited 2026-09-02 — this is the list.
       independent labels if that provenance ever needs to be demonstrable — to an
       auditor, a customer asking how extraction quality was measured, or anyone
       re-opening the model choice
-- [ ] **Capture now, extract later** — designed 2026-09-03 in
-      [`CAPTURE_AND_BATCH.md`](CAPTURE_AND_BATCH.md), not built. Splits capture from
-      extraction: the live surfaces store the turn verbatim as an `EPISODE` and run
-      the heuristic for instant availability, and a batch job re-extracts through a
-      frontier model at Batches-API prices. Collapses the two extraction paths into
-      one, which is what stops "it knows this from my export but not from
-      yesterday". Most of the schema already supports it — `EPISODE`, `supersedes`,
-      the Inspector's episode lineage, `jobs/`. **Retention enforcement comes
-      first:** `ttl_days` is declared on every object and enforced nowhere, and
-      capture without a working expiry means accumulating users' raw conversations
-      indefinitely
-- [x] **Enforce `ttl_days`** — done 2026-09-03. Declared on the schema, present in the Postgres
-      columns, read by the Inspector for display, and acted on by nothing. Blocks
-      the capture design above, and is a compliance answer the product currently
-      cannot give
-- [x] **Index entity names** — done 2026-09-03. Dedup is per-import and casefolded-name only, so a
-      second import of the same corpus creates a second Amanda. Continuous capture
-      makes that permanent rather than per-file; `payload->>'name'` needs an index on
-      both backends
-- [ ] **Live sync does not need a model, on current evidence.** Measured
-      2026-09-03: the heuristic beats Haiku, Sonnet and Opus on precision, recall,
-      `kind` and latency on live turns simultaneously, and at 1.5–5s per turn a
-      model is felt by a user waiting on the composer button. Revisit only if a
-      labelled *live* set shows the heuristic missing something real
-- [ ] **Do not pay for the Opus tier on extraction.** Sonnet 5 scored equal or
+- [x] **Capture now, extract later** — local workflow built 2026-09-03 in
+      [`CAPTURE_AND_BATCH.md`](CAPTURE_AND_BATCH.md). The live surface stores a
+      lossless encrypted `EPISODE`; `extract-pending` applies the selected Ollama,
+      Anthropic, or OpenAI model later and writes no preliminary regex memory. Retry,
+      idempotent materialisation, lineage, queue UI, early erasure and TTL key
+      shredding are covered. Provider-native Batch transport and deployment
+      scheduling remain optimisations
+- [x] **Enforce `ttl_days`** — done 2026-09-03. `coletar expire` uses the same
+      deadline calculation shown by the Inspector, retires expired objects through
+      the event-producing Store path, and destroys the key for encrypted episodes
+- [x] **Index entity names** — done 2026-09-03. Both stores implement the same
+      case-insensitive `find_entity` operation; Postgres migration 005 adds the
+      partial `tenant_id, lower(payload->>'name')` entity index
+- [x] **Keep models off the synchronous live request.** The live regression set made
+      regex look strongest; the transient set showed the same recogniser at 42.1%
+      precision. The answer is capture then semantic extraction, not an immediate
+      model and not a provisional heuristic write
+- [x] **Do not pay for the Opus tier on extraction.** Sonnet 5 scored equal or
       better than Opus 5 on the same set at 1.67× less input cost. Treat the
       precision ordering across models as noise at n=55 — Haiku's `kind` errors
-      moved 0→1 between two runs on identical input
+      moved 0→1 between two runs on identical input. For OpenAI, 720 requests over
+      both sets and three repeated runs select `gpt-5.6-terra`: 98.4% precision /
+      90.9% recall on live and 93.9% / 100% on transient after guards
 - [ ] **Third-party facts have nowhere to live.** Raised 2026-09-02. The paste guard
       drops a pasted email wholesale, which is right for privacy and wrong for
       context: "Amanda from Walleye BD reached out about a quant dev internship" is
@@ -351,15 +349,17 @@ Full reasoning in [ROADMAP.md](ROADMAP.md#m10--recorded-deliberately-not-started
       Makes locality *provable*. The natural first build
 - [ ] **Redaction instead of withholding** — "handling a litigation matter" beats a
       binary toggle; a per-destination rendering, which the compilers already do
-- [ ] **Crypto-shredding** — resolves never-hard-delete against GDPR erasure by
-      deleting a per-object key rather than the row
+- [~] **Crypto-shredding** — implemented for raw captured episodes: per-object AES-GCM
+      keys are destroyed on TTL expiry or user erasure. Generalising it to every
+      graph object remains M10
 - [ ] **Policy rules rather than per-object flags** — "nothing tagged
       client-confidential leaves my local model", governing future memories too.
       This is what an IT team buys
 - [ ] **Diff-based review queue** — a real import produced 205 unreviewed objects.
       Nobody reviews 205 of anything; review what changed
 - [ ] **Conflict detection** — surface contradictions instead of silently picking
-- [ ] **Retention schedules** — `ttl_days` exists and nothing acts on it
+- [~] **Retention schedules** — TTL expiry is enforced; policy-driven schedules such
+      as "seven years after matter close" remain M10
 - [ ] **Per-surface context budgets** — budget as a property of the surface
 - [ ] **Break-glass access** — an override that is loud and impossible to use quietly
 

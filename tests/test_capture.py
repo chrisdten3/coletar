@@ -5,19 +5,22 @@ from __future__ import annotations
 import pytest
 
 from coletar.capture import PENDING, capture_turn, is_pending
+from coletar.episode_crypto import PREFIX, decrypt_episode
 from coletar.schema.objects import LocalityMode, ObjectType, Provider
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
 
 @pytest.mark.asyncio
-async def test_a_captured_turn_is_stored_verbatim() -> None:
+async def test_a_captured_turn_is_stored_losslessly_but_not_in_plaintext() -> None:
     store = InMemoryStore()
     text = "I run npm test and it fails on the auth suite, any idea why?"
     episode = await capture_turn(store, TENANT, text, surface=Provider.CHATGPT)
 
     assert episode.type is ObjectType.EPISODE
-    assert episode.content == text, "verbatim — the batch pass re-reads this"
+    assert episode.content.startswith(PREFIX)
+    assert text not in episode.content
+    assert await decrypt_episode(store, TENANT, episode) == text
     assert is_pending(episode), "and is queued for the model pass"
 
 
@@ -52,6 +55,18 @@ async def test_capture_appends_an_event() -> None:
     episode = await capture_turn(store, TENANT, "anything", surface=Provider.CHATGPT)
     events = await store.list_events(TENANT, object_id=episode.id)
     assert events, "a write with no event is a silent data-integrity failure"
+    assert "anything" not in str([event.model_dump(mode="json") for event in events])
+
+
+@pytest.mark.asyncio
+async def test_a_raw_episode_never_appears_in_normal_retrieval() -> None:
+    store = InMemoryStore()
+    episode = await capture_turn(
+        store, TENANT, "private launch codename albatross", surface=Provider.CHATGPT
+    )
+
+    hits = await store.search(TENANT, "private launch codename albatross", top_k=50)
+    assert episode.id not in {hit.obj.id for hit in hits}
 
 
 @pytest.mark.asyncio
