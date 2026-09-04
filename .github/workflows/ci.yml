@@ -1,0 +1,119 @@
+# Quality gates. Every PR runs the same checks a release would.
+#
+# Nothing here may call a paid provider. The extraction suites that would are
+# already gated on COLETAR_RUN_PAID_EXTRACTION_TESTS, OPENAI_API_KEY and
+# COLETAR_TEST_OLLAMA_URL; this workflow simply never sets them, so the gate is
+# the absence of a secret rather than a flag someone can flip by accident.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python — ruff, mypy, pytest
+    runs-on: ubuntu-latest
+    services:
+      # The Postgres suite skips silently when no database is reachable, which
+      # would make a green run mean nothing. The service container plus the
+      # reachability preflight below is what turns those 42 tests from optional
+      # into enforced.
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: coletar
+          POSTGRES_PASSWORD: coletar
+          POSTGRES_DB: coletar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coletar -d coletar"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      COLETAR_TEST_DATABASE_URL: postgresql://coletar:coletar@localhost:5432/coletar
+      COLETAR_DATABASE_URL: postgresql://coletar:coletar@localhost:5432/coletar
+      # Shared runners throttle: work that takes ~21ms locally recorded 366ms here.
+      # The published 300ms bar stands on real hardware (docs/RETRIEVAL.md); CI
+      # raises the ceiling explicitly so it still catches a 10x regression rather
+      # than silently redefining the number.
+      COLETAR_PERF_CEILING_MS: "1500"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install Python 3.12 and dependencies
+        run: |
+          uv python install 3.12
+          uv sync --extra dev
+
+      - name: ruff
+        run: uv run --extra dev ruff check
+
+      - name: mypy
+        run: uv run --extra dev mypy
+
+      # Fails loudly if the service container never came up. Without this the
+      # Postgres tests skip and the job stays green while proving nothing.
+      - name: Postgres reachable and migrated
+        run: |
+          uv run --extra dev python - <<'PY'
+          import psycopg, os
+          with psycopg.connect(os.environ["COLETAR_TEST_DATABASE_URL"]) as conn:
+              conn.execute("SELECT 1")
+          print("postgres reachable")
+          PY
+          uv run --extra dev coletar migrate
+
+      - name: pytest
+        run: uv run --extra dev pytest
+
+      # The full run above already covers these. Re-running them alone asserts
+      # they were not silently skipped, which is the failure mode that matters.
+      - name: Postgres suite actually ran
+        run: |
+          uv run --extra dev pytest tests/test_postgres_store.py -q -rs \
+            | tee /tmp/pg.txt
+          if grep -q "skipped" /tmp/pg.txt; then
+            echo "::error::Postgres tests skipped — the service container is not being used."
+            exit 1
+          fi
+
+  javascript:
+    name: JavaScript SDK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: node --test
+        working-directory: sdk/js
+        run: node --test
+
+  extension:
+    name: Extension syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      # The extension has no build and no test runner. This is a parse check,
+      # not a test suite — it catches a syntax error shipped to a browser that
+      # would otherwise be found by a user, not by us.
+      - name: Parse content scripts and manifest
+        run: |
+          node --check extension/content.js
+          node --check extension/options.js
+          node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"

@@ -39,6 +39,39 @@ TENANT = tenant_id("tenant_test")
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
+#: The export fixtures are synthetic — generated conversations, `someone@example.com`,
+#: no one's real history — but they are still *zips*, and `.gitignore` refuses those
+#: wholesale so that nobody can commit a genuine export by reflex. The consequence
+#: was that 17 tests passed only on the machine that had built the archives once,
+#: and were invisible everywhere else; CI found them missing on its first run.
+#:
+#: So the tracked artefact is the unpacked JSON, and the archive is rebuilt from it
+#: at session start. The `*.zip` rule stays absolute, and the importer is still
+#: exercised against a real ZIP rather than a directory.
+# Not `exports/` — `.gitignore` excludes that name outright, which is the rule
+# keeping real provider archives out of the repository. This is fixture source.
+EXPORT_SOURCES = FIXTURES / "export_sources"
+
+
+def _build_export_archives() -> None:
+    import zipfile
+
+    for source in sorted(EXPORT_SOURCES.iterdir()):
+        if not source.is_dir():
+            continue
+        archive = FIXTURES / f"{source.name}_export.zip"
+        members = sorted(source.iterdir())
+        # Deterministic member order and timestamps: the watcher content-hashes the
+        # archive to recognise a re-import, so a rebuild must not look like new data.
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+            for member in members:
+                info = zipfile.ZipInfo(member.name, date_time=(2026, 8, 31, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zf.writestr(info, member.read_bytes())
+
+
+_build_export_archives()
+
 
 def scope_from(raw: str | None) -> Scope:
     return Scope(type=ScopeType.PROJECT, id=raw) if raw else GLOBAL_SCOPE

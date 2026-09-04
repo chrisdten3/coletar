@@ -29,3 +29,9 @@ conversations.json
 .DS_Store
 .idea/
 .vscode/
+
+# ...but the importer tests need a synthetic export to parse, and the rules above
+# would swallow it. These two are generated fixtures — "Conversation 0",
+# someone@example.com — not anyone's history. conftest.py zips them at session
+# start; the archive itself is still never committed.
+!tests/fixtures/export_sources/*/conversations.json

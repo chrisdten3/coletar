@@ -99,6 +99,12 @@ ingest paths should batch before that milestone.
 At 10,000 objects the in-process index answers in **~21ms p95** with the hashing
 backend, against a 300ms bar.
 
+That number is measured on real hardware, and the 300ms bar is what the test
+asserts there. Shared CI runners throttle badly enough to record 366ms for the
+same work, so CI raises the ceiling via `COLETAR_PERF_CEILING_MS` rather than
+weakening the published bar to match the noisiest machine that runs it. CI
+therefore catches an order-of-magnitude regression, not a 2x one.
+
 ## The evaluation suite
 
 The 20-query relevance set answers *is retrieval working*. It cannot answer *where is
