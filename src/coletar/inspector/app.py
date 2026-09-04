@@ -24,6 +24,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from coletar.capture import is_pending
 from coletar.config import get_settings
+from coletar.inspector.library import parse_surface, render_library
 from coletar.inspector.metrics import (
     AgenticView,
     Dashboard,
@@ -40,6 +41,7 @@ from coletar.inspector.review import (
     rescope,
     review_status,
 )
+from coletar.inspector.theme import render_page
 from coletar.schema.events import Event
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
@@ -58,41 +60,26 @@ app = FastAPI(title="coletar context inspector", version="0.2.0")
 
 _PREVIEW_LEN = 120
 
-_PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>coletar — context inspector</title>
-<style>
-body {{ font-family: ui-monospace, monospace; margin: 2rem auto; max-width: 64rem;
-       line-height: 1.45; }}
-h2 {{ margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
-.meta {{ color: #666; }}
-.error {{ color: #b00020; }}
-.gate {{ padding: .8rem 1rem; border-radius: 6px; margin: 1rem 0; }}
-.blocked {{ background: #fff4f4; border: 1px solid #e0b4b4; }}
-.open {{ background: #f2fbf2; border: 1px solid #b4e0b4; }}
-.card {{ border: 1px solid #ddd; border-radius: 6px; padding: .7rem 1rem; margin: .6rem 0; }}
-.unreviewed {{ border-left: 4px solid #d08a00; }}
-.local-only {{ color: #8a4a00; background: #fff6e8; padding: 0 .35rem;
-              border-radius: 3px; font-weight: 600; }}
-.reviewed {{ border-left: 4px solid #4a9a4a; }}
-input[type=text] {{ width: 28rem; font-family: inherit; }}
-form.inline {{ display: inline; }}
-code {{ background: #f5f5f5; padding: 0 .2rem; }}
-nav {{ margin: .4rem 0 1rem; }}
-nav a {{ margin-right: .4rem; }}
-table {{ border-collapse: collapse; width: 100%; margin: .6rem 0; }}
-th, td {{ text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #eee; }}
-th {{ color: #666; font-weight: normal; }}
-.stat {{ display: inline-block; margin: 0 1.6rem .6rem 0; }}
-.stat b {{ display: block; font-size: 1.5rem; }}
-.cold {{ color: #8a4a00; }}
-</style></head><body>
-<h1>coletar context inspector</h1>
-<nav><a href="/">graph</a> · <a href="/dashboard">dashboard</a>
- · <a href="/agentic">entity / fact / episode</a></nav>
-<p class="meta">tenant <code>{tenant}</code> — everything below is the live store.</p>
-{flash}
-{body}
-</body></html>"""
+#: Which view is current, for the nav's `aria-current`.
+_VIEWS: tuple[tuple[str, str], ...] = (
+    ("/", "library"),
+    ("/review", "review"),
+    ("/dashboard", "dashboard"),
+    ("/agentic", "entity / fact / episode"),
+)
+
+
+def _nav(current: str) -> str:
+    return "".join(
+        f'<a href="{href}"{' aria-current="page"' if href == current else ""}>'
+        f"{escape(label)}</a>"
+        for href, label in _VIEWS
+    )
+
+
+def _shell(*, title: str, current: str, body: str, error: str = "") -> str:
+    flash = f'<p class="error">{escape(error)}</p>' if error else ""
+    return render_page(title=title, nav=_nav(current), body=body, flash=flash)
 
 
 def _tenant() -> TenantId:
@@ -198,28 +185,35 @@ async def _render(store: Store, tenant: TenantId) -> str:
     )
 
 
-async def _page(error: str = "") -> str:
-    tenant = _tenant()
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(
-        tenant=escape(tenant), flash=flash, body=await _render(build_store(), tenant)
-    )
-
-
 @app.get("/", response_class=HTMLResponse)
-async def index(error: str = "") -> str:
-    return await _page(error)
+async def index(surface: str | None = None, error: str = "") -> str:
+    """The library, seen from one surface. `?surface=` drives the whole page."""
+    tenant = _tenant()
+    try:
+        chosen = parse_surface(surface)
+    except ValueError as exc:
+        chosen, error = None, str(exc)
+    body = await render_library(build_store(), tenant, surface=chosen)
+    return _shell(title="Library — coletar", current="/", body=body, error=error)
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review(error: str = "") -> str:
+    """The compile gate. Unchanged behaviour; it moved off `/` to make room."""
+    tenant = _tenant()
+    body = await _render(build_store(), tenant)
+    return _shell(title="Review — coletar", current="/review", body=body, error=error)
 
 
 async def _act(action: str, **kwargs: object) -> RedirectResponse:
-    """Every mutation redirects home, so a refresh cannot repeat it."""
+    """Every mutation redirects to the review view, so a refresh cannot repeat it."""
     store, tenant = build_store(), _tenant()
     operations = {"review": mark_reviewed, "edit": edit, "rescope": rescope, "merge": merge}
     try:
         await operations[action](store, tenant, **kwargs)  # type: ignore[operator]
     except InspectorError as exc:
-        return RedirectResponse(f"/?error={quote(str(exc))}", status_code=303)
-    return RedirectResponse("/", status_code=303)
+        return RedirectResponse(f"/review?error={quote(str(exc))}", status_code=303)
+    return RedirectResponse("/review", status_code=303)
 
 
 @app.post("/review")
@@ -414,16 +408,20 @@ def _render_agentic(view: AgenticView) -> str:
 async def dashboard(error: str = "") -> str:
     tenant = _tenant()
     board = await build_dashboard(build_store(), tenant)
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_dashboard(board))
+    return _shell(
+        title="Dashboard — coletar", current="/dashboard",
+        body=_render_dashboard(board), error=error,
+    )
 
 
 @app.get("/agentic", response_class=HTMLResponse)
 async def agentic(error: str = "") -> str:
     tenant = _tenant()
     view = await build_agentic_view(build_store(), tenant)
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_agentic(view))
+    return _shell(
+        title="Entity / fact / episode — coletar", current="/agentic",
+        body=_render_agentic(view), error=error,
+    )
 
 
 @app.post("/erase-episode")

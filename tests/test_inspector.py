@@ -309,12 +309,13 @@ async def test_page_states_the_gate_rather_than_just_disabling_a_button(
     obj = Memory.from_write("Chris prefers tabs.")
     await store.put_object(TENANT, obj)
 
-    blocked = _get()
+    # The gate lives on the review view; `/` is now the library.
+    blocked = _get("/review")
     assert "Compile is blocked" in blocked
     assert "1 of 1 eligible objects have not been reviewed" in blocked
 
     await mark_reviewed(store, TENANT, obj.id)
-    assert "Compile is available" in _get()
+    assert "Compile is available" in _get("/review")
 
 
 @pytest.mark.asyncio
@@ -368,7 +369,9 @@ async def test_page_shows_which_surfaces_may_receive_an_object(live_store: None)
             ),
         ),
     )
-    body = _get()
+    # The reviewer's card lives on the review view; `/` is now the library, which
+    # states locality in its own chips.
+    body = _get("/review")
     assert "every surface" in body
     assert "local to local" in body
 

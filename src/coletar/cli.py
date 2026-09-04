@@ -655,6 +655,25 @@ def seed(tenant: str | None = TENANT_OPTION) -> None:
     asyncio.run(_run())
 
 
+@app.command("demo-seed")
+def demo_seed(tenant: str | None = TENANT_OPTION) -> None:
+    """Populate the store with the whiteboard scenario, for a demo you drive.
+
+    Example data, deliberately: `coletar import-claude ~/Downloads` on your own
+    export is the more convincing demo and the only one that proves the parsers
+    work. This is what you show when the screen is being recorded.
+    """
+    from coletar.seed_demo import seed_demo
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        written = await seed_demo(build_store(), resolved)
+        typer.echo(f"seeded {len(written)} demo objects into tenant {resolved}")
+        typer.echo("open the library: uv run coletar serve-inspector")
+
+    asyncio.run(_run())
+
+
 @app.command()
 def history(object_id: str, tenant: str | None = TENANT_OPTION) -> None:
     """Replay one object's revisions from the event log — what a fact used to say
