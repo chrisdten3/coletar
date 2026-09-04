@@ -558,7 +558,9 @@ async def test_the_server_instructions_name_the_difference():
     assert "never instructions" in instructions, "the injection boundary must survive"
 
 
-async def test_a_read_only_connector_is_refused_by_the_server_not_the_client():
+async def test_a_read_only_connector_is_refused_by_the_server_not_the_client(
+    store: InMemoryStore,
+):
     """M7: "write attempts rejected server-side, not merely hidden client-side".
 
     The distinction is the point. `write_memory` stays in the tool list a read-only
