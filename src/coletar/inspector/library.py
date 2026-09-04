@@ -21,7 +21,13 @@ from __future__ import annotations
 
 from html import escape
 
-from coletar.schema.objects import ContextObject, LocalityMode, Provider, ScopeType
+from coletar.schema.objects import (
+    ContextObject,
+    LocalityMode,
+    ObjectType,
+    Provider,
+    ScopeType,
+)
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -109,15 +115,34 @@ def _row(obj: ContextObject, *, viewing: Provider | None) -> str:
     )
 
 
+def _library_entries(objects: list[ContextObject]) -> list[ContextObject]:
+    """Everything except raw captured turns.
+
+    An `EPISODE` is working material, not a library entry: it is a verbatim turn
+    the user typed, held encrypted until the batch pass judges it, and its
+    `content` is ciphertext. Listing them would put base64 in front of the reader
+    and count evidence as memory.
+
+    This is a presentation rule and is deliberately not the same kind of filtering
+    as locality, which stays in the store where the compiler's own predicate lives.
+    It is applied to *both* lists before the withheld count is taken, because an
+    episode is local to the surface that captured it — counting it on one side only
+    would inflate "withheld" with objects the user never thought of as memories.
+    """
+    return [obj for obj in objects if obj.type is not ObjectType.EPISODE]
+
+
 async def render_library(
     store: Store, tenant: TenantId, *, surface: Provider | None
 ) -> str:
     """The whole page body for one surface's view of the graph."""
-    owned = await store.list_objects(tenant, limit=LIST_LIMIT)
+    owned = _library_entries(await store.list_objects(tenant, limit=LIST_LIMIT))
     visible = (
         owned
         if surface is None
-        else await store.list_objects(tenant, caller_surface=surface, limit=LIST_LIMIT)
+        else _library_entries(
+            await store.list_objects(tenant, caller_surface=surface, limit=LIST_LIMIT)
+        )
     )
     withheld = len(owned) - len(visible)
 

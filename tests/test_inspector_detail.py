@@ -279,3 +279,58 @@ def test_an_unknown_object_renders_a_404(live):  # type: ignore[no-untyped-def]
 
     assert response.status_code == 404
     assert "not in this tenant" in response.text
+
+
+# -- captured turns are evidence, not library entries -------------------------
+async def test_an_encrypted_episode_never_renders_its_ciphertext(store: InMemoryStore):
+    """A read-only page cannot decrypt, and printing base64 at a viewer is noise.
+    Saying what it is and when its key dies is the part that carries the promise."""
+    from coletar.capture import capture_turn
+
+    episode = await capture_turn(
+        store, TENANT, "Something I typed.", surface=Provider.CLAUDE
+    )
+    html = await render_detail(store, TENANT, episode.id)
+
+    assert "Encrypted captured turn" in html
+    assert "key destroyed after" in html
+    assert episode.content not in html, "the ciphertext reached the page"
+    assert "Something I typed." not in html
+
+
+async def test_lineage_links_to_the_turn_a_memory_came_from(store: InMemoryStore):
+    from coletar.capture import capture_turn
+
+    episode = await capture_turn(store, TENANT, "A turn.", surface=Provider.CLAUDE)
+    memory = Memory.from_write("Derived.", source_object_ids=[episode.id])
+    await store.put_object(TENANT, memory)
+
+    html = await render_detail(store, TENANT, memory.id)
+    assert f'href="/object/{episode.id}"' in html
+
+
+async def test_episodes_are_not_listed_in_the_library(store: InMemoryStore):
+    """`EPISODE` content is ciphertext; listing them puts base64 in front of the
+    reader and counts evidence as memory."""
+    from coletar.capture import capture_turn
+
+    await store.put_object(TENANT, Memory.from_write("A real memory."))
+    episode = await capture_turn(store, TENANT, "A raw turn.", surface=Provider.CLAUDE)
+
+    html = await render_library(store, TENANT, surface=None)
+    assert "A real memory." in html
+    assert episode.id not in html
+    assert "1 memory" in html
+
+
+async def test_episodes_do_not_inflate_the_withheld_count(store: InMemoryStore):
+    """An episode is local to the surface that captured it, so counting it on one
+    side of the subtraction only would report withholding the user never chose."""
+    from coletar.capture import capture_turn
+
+    await store.put_object(TENANT, Memory.from_write("Shared with everyone."))
+    await capture_turn(store, TENANT, "A raw turn.", surface=Provider.CLAUDE)
+
+    html = await render_library(store, TENANT, surface=Provider.CHATGPT)
+    assert "0 withheld" in html
+    assert "withheld from" not in html

@@ -81,14 +81,19 @@ def _detail_line(event: Event) -> str:
     return " · ".join(parts)
 
 
-def _node(*, title: str, sub: str, last: bool, hollow: bool = False) -> str:
+def _node(
+    *, title: str, sub: str, last: bool, hollow: bool = False, href: str | None = None
+) -> str:
     dot = "dot hollow" if hollow else "dot"
     stem = "" if last else '<span class="stem"></span>'
+    body = escape(title)
+    if href is not None:
+        body = f'<a href="{escape(href)}">{body}</a>'
     sub_html = f'<span class="node-sub">{escape(sub)}</span>' if sub else ""
     return (
         '<div class="node">'
         f'<div class="rail"><span class="{dot}"></span>{stem}</div>'
-        f'<div class="node-body"><span class="node-title">{escape(title)}</span>'
+        f'<div class="node-body"><span class="node-title">{body}</span>'
         f"{sub_html}</div></div>"
     )
 
@@ -105,6 +110,7 @@ def _lineage(obj: ContextObject, events: list[Event]) -> str:
                 sub=f"{source_id} · raw evidence, kept encrypted",
                 last=False,
                 hollow=True,
+                href=f"/object/{source_id}",
             )
         )
     if obj.supersedes:
@@ -160,6 +166,24 @@ def _reach(obj: ContextObject) -> str:
     )
 
 
+def _body_text(obj: ContextObject) -> str:
+    """What the object says — unless saying it would print ciphertext.
+
+    A captured turn is stored encrypted under a key that TTL expiry destroys, so
+    its `content` is base64 and its plaintext is deliberately not reachable from a
+    read-only page. Showing the ciphertext would be noise; saying what it is, and
+    when its key dies, is the part that makes the retention promise legible.
+    """
+    if obj.payload.get("content_encryption"):
+        ttl = f"key destroyed after {obj.ttl_days} days" if obj.ttl_days else "no expiry set"
+        pending = " · awaiting extraction" if obj.payload.get("needs_model_extraction") else ""
+        return (
+            '<div class="row-text encrypted">Encrypted captured turn — content is not '
+            f"shown here.<br><span class=\"meta\">{escape(ttl)}{escape(pending)}</span></div>"
+        )
+    return f'<div class="row-text">{escape(obj.content)}</div>'
+
+
 def _head(obj: ContextObject) -> str:
     kind = getattr(obj, "kind", obj.type)
     scope = "global" if obj.scope.type is ScopeType.GLOBAL else str(obj.scope)
@@ -177,7 +201,7 @@ def _head(obj: ContextObject) -> str:
 
     return (
         '<div class="detail-head">'
-        f'<div class="row-text">{escape(obj.content)}</div>'
+        f"{_body_text(obj)}"
         '<div class="row-meta">'
         f'<span class="chip kind">{escape(str(kind))}</span>{locality_chip}'
         f"<span>{escape(obj.id)} · v{obj.version} · confidence {obj.confidence:.2f}</span>"
