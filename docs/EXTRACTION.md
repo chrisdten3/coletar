@@ -146,10 +146,10 @@ One run, 55 labelled live-proxy turns, via `scripts/bench_extraction.py`.
 
 Read this carefully, because it is easy to over-read.
 
-**On live turns the heuristic wins outright** — precision, recall, `kind`, and
-latency at once. M2.2's conclusion that a model on the live path would be
-speculative work survives contact with the evidence. Adding one would make the
-composer bridge slower *and* worse, and at 1.5–5s per turn the user is waiting.
+**On this live fixture the heuristic wins outright**, but this is the fixture its
+surface forms and guards specify. It supports keeping inference off the synchronous
+composer request; it does not support publishing regex results as authoritative
+before a background semantic pass.
 
 **Opus is not better than Sonnet here**, at 1.67x the input price. Nothing in this
 table justifies the Opus tier for extraction.
@@ -192,9 +192,9 @@ correctly dropping 24, but with durable controls mixed in it starts firing on ta
 context too. **Sonnet clears the bar with perfect recall**, at one false positive.
 
 So the answer to "is the cheap model good enough" is set-dependent, and the set that
-matters says no. On current evidence: **Sonnet for backfill, and the heuristic stays
-on the live path** — where it beats every model, on a benchmark that is admittedly
-its own spec.
+matters says no. On current evidence: **a semantic model for backfill and captured
+live turns**. The heuristic remains only as a no-retention compatibility path, not a
+preliminary write in collect-then-batch mode.
 
 ### What these numbers do and do not support
 
@@ -230,10 +230,59 @@ conversation text, which should be deliberate.
 
 ## Where this stops, and what comes next
 
-The heuristic clears M2.2's bar on live turns, so a model on the live path would be
-speculative work. It is at **M6.2** that a model becomes necessary, and M6.1 measured
-exactly why: 31.4% recall over export prose. `extract_with_model` is now implemented —
-see below.
+The heuristic clears M2.2's narrow regression bar, but the transient set demonstrates
+that it cannot make the semantic durability judgement reliably. Model inference runs
+after capture rather than in front of the response. `extract_with_model` supports
+Ollama, Anthropic and OpenAI through one proposal and guard path.
+
+OpenAI support uses the Responses API with Structured Outputs and `store=False`.
+The repeatable comparison runner defaults to `gpt-5.6-luna`, `gpt-5.6-terra`, and
+`gpt-5.6-sol`, alongside the Claude baselines.
+
+### OpenAI comparison (2026-09-03)
+
+Both committed labelled sets were sent to each model three times: 55 turns in the
+live set and 25 in the transient set, for 720 extraction requests. These are means
+over the three runs **after grounding and policy guards**; proposal-stage results
+are also emitted by the runner so model quality is not conflated with validation.
+
+| model | live precision | live recall | transient precision | transient recall |
+|---|---:|---:|---:|---:|
+| `gpt-5.6-luna` | 0.945 | 0.788 | 0.698 | 1.000 |
+| `gpt-5.6-terra` | **0.984** | **0.909** | **0.939** | **1.000** |
+| `gpt-5.6-sol` | 1.000 | 0.758 | 0.906 | 0.967 |
+
+| model | mean live seconds | mean transient seconds | unavailable calls |
+|---|---:|---:|---:|
+| `gpt-5.6-luna` | 75.9 | 33.0 | 0 |
+| `gpt-5.6-terra` | 78.9 | 28.6 | 0 |
+| `gpt-5.6-sol` | 105.1 | 36.9 | 0 |
+
+`gpt-5.6-terra` is the OpenAI default: it is the only tested OpenAI model that
+matched the heuristic's 0.909 recall on the narrow live set while retaining perfect
+recall and high precision on the semantic transient set. This does **not** make
+OpenAI the product default. `extraction_provider` remains `ollama`; choosing a
+third-party subprocessor remains explicit opt-in.
+
+The result also does not rehabilitate synchronous extraction. Even the fastest
+model/set mean took 28.6 seconds. Capture first and process a bounded batch later.
+The regex path remains an explicitly selected no-retention compatibility mode.
+
+Reproduce the comparison with:
+
+```bash
+BENCH_SET=live BENCH_RUNS=3 uv run python scripts/bench_extraction.py \
+  openai:gpt-5.6-luna openai:gpt-5.6-terra openai:gpt-5.6-sol
+BENCH_SET=transient BENCH_RUNS=3 uv run python scripts/bench_extraction.py \
+  openai:gpt-5.6-luna openai:gpt-5.6-terra openai:gpt-5.6-sol
+```
+
+Fixture hashes were
+`95bcd44518b475ad9327639212bd6b09bb825fa479c23a71e60a279d85059c16`
+(live) and
+`d656a29df33a2f360e47c2cdb839461266bfabb3cd931488c2c4cf28f43b9e26`
+(transient); the shared prompt hash was
+`7d609a90bfb7344e0d69ab1b63832a17fff622ff937e59d57e86af69da9f9b9d`.
 
 Two known limitations, neither of which the labelled set can fix on its own:
 

@@ -108,7 +108,7 @@ COLETAR_STORE_BACKEND=postgres uv run coletar migrate
 ### The local-model wedge
 
 Point the proxy at any OpenAI-compatible endpoint. It injects retrieved memory into
-the system prompt on the way in and extracts new memory on the way out:
+the system prompt; inferred writes are off by default:
 
 ```bash
 uv run coletar serve-proxy
@@ -124,12 +124,16 @@ daemon becomes an MCP client of the hosted server instead, holding an API key ra
 than database credentials and passing through the same auth, tenancy and scope checks
 as any other connector.
 
-Both the buffered and the streaming paths inject and extract. Streamed chunks are
-forwarded before they are parsed, so reassembly never sits between the model and your
-screen — measured overhead is ~2.4ms p95 at 1,000 stored objects.
+Both buffered and streaming paths inject. If collect-then-batch is explicitly
+enabled, each queues an encrypted user turn only after the response has left; stream
+reassembly never sits between the model and your screen. Measured proxy overhead is
+~2.4ms p95 at 1,000 stored objects.
 
-Extraction is precision-first: 4.3% false-positive write rate against a 50-turn
-labelled set, measured in [docs/EXTRACTION.md](docs/EXTRACTION.md).
+Extraction is precision-first. The deterministic recogniser scores 4.3% false
+positives on its narrow regression set but only 42.1% precision on a transient-task
+set, so it is not an authoritative preliminary extractor. Opt-in live capture stores
+an encrypted `EPISODE` immediately and `coletar extract-pending` applies the selected
+Ollama, Anthropic, or OpenAI model later.
 
 ### The MCP server
 
@@ -160,7 +164,7 @@ Open `http://localhost:8789`. Bound to the live store: review, edit, merge and
 re-scope objects, with the Event/Revision Log beside them. Two more views on the same
 server — `/dashboard` for TTL, object size, last access, token use, latency and an
 explanation of the last search, and `/agentic` for the entity / fact / episode
-rendering with episode lineage.
+rendering with episode lineage, pending extraction state, and raw-turn erasure.
 
 Both are **views**: every number is derived from objects and events that already
 exist, and opening a page writes nothing.

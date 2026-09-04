@@ -20,7 +20,7 @@ from datetime import datetime
 
 from coletar.compiler.emit import compile_eligible
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import ContextObject, Scope
+from coletar.schema.objects import ContextObject, ObjectType, Scope
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -89,6 +89,17 @@ async def mark_reviewed(store: Store, tenant_id: TenantId, object_id: str) -> No
     await store.append_event(
         tenant_id,
         Event(type=EventType.OBJECT_REVIEWED, object_id=object_id, actor=Actor.USER),
+    )
+
+
+async def erase_episode(store: Store, tenant_id: TenantId, object_id: str) -> None:
+    """Retire a captured raw turn and destroy the only key that can read it."""
+    obj = await _load(store, tenant_id, object_id)
+    if obj.type is not ObjectType.EPISODE:
+        raise InspectorError("only a raw episode can be erased from the episode queue")
+    await store.retire_object(tenant_id, object_id, reason="user_erased_raw_episode")
+    await store.shred_object_key(
+        tenant_id, object_id, reason="user_erased_raw_episode"
     )
 
 

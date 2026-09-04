@@ -71,24 +71,38 @@ class Settings(BaseSettings):
     retrieval_token_budget: int = 1500
     retrieval_top_k: int = 12
 
-    # M6.2: which local model does model-assisted extraction. Runs against the
-    # user's own server, where inference is free — §11 names the cost of doing it
-    # any other way at consumer scale.
-    extraction_model: str = "llama3.1"
+    # Whether imports use the deterministic pattern recogniser or model-assisted
+    # extraction. This must be separate from provider selection: the old code made
+    # `ollama` mean "heuristic", even though Ollama is itself a model provider.
+    extraction_mode: Literal["heuristic", "model"] = "heuristic"
 
-    # Which backend does model-assisted extraction. `ollama` keeps inference on the
-    # user's own machine and costs nothing; `anthropic` buys the semantic judgement
-    # the local leg could not deliver — measured 2026-09-02, a 0.5b model scored
-    # 59.5% precision against a 15% false-positive bar, and llama3.1 does not fit an
-    # 8GB machine at all. Selecting a backend is a data-handling decision as much as
-    # a quality one: `anthropic` sends candidate turns to a third party, which
-    # AGENTS.md §1 now covers explicitly.
-    extraction_provider: str = "ollama"
+    # Selecting a provider is a data-handling decision. The local default keeps user
+    # turns on their machine; third-party providers remain explicit opt-ins.
+    extraction_provider: Literal["ollama", "anthropic", "openai"] = "ollama"
 
-    # The frontier model used when extraction_provider is `anthropic`. Credentials
-    # are resolved by the SDK from ANTHROPIC_API_KEY rather than duplicated here —
-    # one place for a secret to live is the whole point.
-    frontier_extraction_model: str = "claude-opus-5"
+    # Provider-specific defaults are intentionally visible rather than one ambiguous
+    # `extraction_model` whose meaning changes with another setting.
+    ollama_extraction_model: str = "llama3.1"
+    anthropic_extraction_model: str = "claude-sonnet-5"
+    openai_extraction_model: str = "gpt-5.6-terra"
+
+    # Capture-then-batch (docs/CAPTURE_AND_BATCH.md). Off by default: retaining the
+    # turns a user typed before anything has judged them is a materially larger
+    # commitment than storing extracted memories. Encryption and effective expiry
+    # reduce the consequence; they do not replace informed opt-in.
+    capture_turns: bool = False
+
+    # `off` means explicit `write_memory` calls only. The heuristic remains an
+    # explicit compatibility mode for installations that decline raw-turn retention;
+    # collect-then-batch queues the encrypted turn and writes no regex memory.
+    live_extraction_mode: Literal["off", "heuristic", "collect_then_batch"] = "off"
+
+    # How long a captured turn is kept. `coletar expire` retires its graph object and
+    # destroys its per-object key, leaving only unreadable ciphertext and provenance.
+    # 30 days is a placeholder for a product decision, not a researched figure.
+    capture_ttl_days: int = 30
+
+    extraction_batch_size: int = 100
 
     # M7: per-principal rate limit on the hosted surfaces. Keyed by credential,
     # not by IP — an office NAT is not one caller and a rotating client is not

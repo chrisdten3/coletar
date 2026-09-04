@@ -145,27 +145,41 @@ and no approval prompt. See §4's revised acquisition table for the consequence.
 
 This is the part v0.1 and the first pass of v0.2 left as a one-line MCP bullet, and it needs to be load-bearing, since it's the mechanism behind the actual requirement: **no chat interface of your own — the user stays on claude.ai, chatgpt.com, or their local model exactly as today, and a memory update on one surface is available to every other surface's next conversation.**
 
-The mechanism is not capture-by-observation (reading what happens in a conversation from the outside). Per the ToS review, passively reading page content is exactly what's prohibited. The mechanism is **capture-by-tool-call**: the canonical store is exposed as a single hosted, remote MCP server, and each provider's own model calls it as a tool — the same way this conversation calls its own memory tools. Nothing about that is scraping; it's the sanctioned integration point each provider built for exactly this purpose.
+There are two permitted mechanisms. **Capture-by-tool-call** exposes the canonical
+store as a hosted remote MCP server and lets the provider's model call it through an
+official integration point. **Consent-based client capture** runs in the user's own
+browser session and can read the composer text the user is actively submitting. It
+must not read provider output, other conversations, archives, or pages in the
+background, and it must never forward or replay a session credential. This is the
+same boundary as a password manager or spelling extension: the user is browsing;
+coletar is not impersonating them from a server.
 
 **Per-provider connector reality, as of today:**
 
 | Provider | Connector mechanism | Read | Write | Notes |
 |---|---|---|---|---|
-| **Claude** (claude.ai / Desktop) | User adds your server as a Custom Connector | Yes | Yes | Fully sanctioned on individual accounts today. Your strongest live-sync leg. |
-| **ChatGPT** | User adds your server as a remote MCP connector via Developer Mode (Plus/Pro and up) | Yes | Currently gated | OpenAI has shipped full read/write MCP support, but individual/consumer-tier custom connectors are, as of mid-2026, largely read (search/fetch); full write-capable custom connectors are restricted to Business/Enterprise/Edu workspace admins. ChatGPT also only accepts *remote HTTPS* MCP servers, never local/stdio, so your server has to be hosted regardless of tier. |
+| **Claude** (claude.ai / Desktop) | Custom Connector; optional consent-based composer extension | Yes | Yes | MCP writes are model-discretionary; the extension gives deterministic capture of user-submitted composer text without reading model output. |
+| **ChatGPT** | Remote MCP connector; optional consent-based composer extension | Yes | Connector writes currently gated | The extension supplies deterministic user-turn capture without relying on write-capable MCP. ChatGPT accepts remote HTTPS MCP servers, never local/stdio. |
 | **Gemini** (consumer app) | Unconfirmed | ? | ? | No verified third-party MCP-equivalent connector path for the consumer app as of this writing. Treat as unvalidated — don't commit engineering time until you've confirmed a real hook exists. |
 | **Local models** | Ollama has no native MCP client (open GitHub issue) — needs a bridge (MCPHost, ollama-mcp-bridge, or similar); llama.cpp's own server recently picked up native MCP client support | Yes | Yes | This is exactly the Local Proxy Daemon already scoped in §4/§10 — you're building that bridge yourself, so there's no third-party dependency here at all. |
 
 **How propagation actually works, given the above:**
 
-There's no push-sync job. A write lands in the Canonical Context Graph the moment any provider's model calls `write_memory` — automatically via Claude's connector, or via ChatGPT when the user explicitly says "remember this" (which triggers ChatGPT's standard write-confirmation flow — a fine outcome, since it also means every ChatGPT-sourced write is naturally tagged `extraction_method: explicit_statement`, the highest-confidence tier). The *next* `search_context` call from any other connected surface sees it immediately. Propagation latency is bounded by "when does the person next open another model," not by anything you run on a schedule.
+An explicit connector write lands in the Canonical Context Graph immediately. An
+opted-in composer capture instead stores an encrypted, surface-local `EPISODE`; a
+bounded asynchronous worker applies the selected semantic extractor and then writes
+the derived object to the graph. There is no provisional regex write. The next
+`search_context` after materialisation can see it from another permitted surface.
 
 **Two things worth shipping alongside the connector itself, or it won't be reliable:**
 
 1. **Default instruction snippets** — a short paste-in block for Claude's Project instructions and ChatGPT's Custom Instructions, telling the model when to check memory (start of conversation, topic shift) and when to write to it (explicit facts, preferences, decisions). Without this, tool use is inconsistent — model behavior follows the system prompt, not the tool's mere existence.
 2. **A confidence distinction between connector writes and migration writes** — already supported by the `extraction_method` field in §2 (`mcp_live_write` vs. `account_export_parse`). Connector writes are structured and explicit at the source (a tool call with typed arguments), so they generally warrant *higher* default confidence than anything pulled out of a raw export.
 
-This layer is largely independent of the True Migration pipeline — it doesn't need the ChatGPT export parser or the extraction/normalization layer at all, since the object arrives already typed. That has a real sequencing consequence — see §10.
+Connector tool writes are independent of the True Migration extraction pipeline
+because they arrive typed. Consent-based raw-turn capture deliberately reuses the
+same semantic proposal, grounding, and policy path as backfill so live and imported
+text do not acquire different meanings.
 
 ---
 
@@ -173,7 +187,10 @@ This layer is largely independent of the True Migration pipeline — it doesn't 
 
 Be honest with yourself about what's actually available per provider — this table is the real engineering plan, not the pitch deck version.
 
-This table covers **Migration-mode acquisition** — the one-time or periodic export-and-compile path. For live, ongoing sync, see the connector table in §3.1; that path has no ToS exposure because nothing is extracted from outside an official integration point.
+This table covers **Migration-mode acquisition** — the one-time or periodic
+export-and-compile path. For live sync, see §3.1. Official connectors and narrowly
+scoped, user-consented composer capture are permitted; server-side session replay,
+headless UI driving, transcript scraping, and background reading are not.
 
 | Provider | Migration-mode acquisition path | Compile target | Notes |
 |---|---|---|---|
@@ -194,13 +211,13 @@ on **whether we own the loop**:
 | **Claude Code** | Yes | **Guaranteed** | Hooks + the session `.jsonl` and project files it writes to disk |
 | A developer's own app | Yes | **Guaranteed** | SDK, the Mem0 pattern (§9) |
 | ChatGPT export | — | Guaranteed, delayed | User-initiated archive (§10 step 4) |
-| claude.ai / Claude Desktop | No | **Discretionary** | MCP; the model decides |
-| ChatGPT web | No | **Discretionary** | MCP read + confirmed writes |
+| claude.ai / Claude Desktop | No | **Guaranteed for submitted user turns when opted in; otherwise discretionary** | Consent-based composer extension; MCP tool calls |
+| ChatGPT web | No | **Guaranteed for submitted user turns when opted in; otherwise discretionary** | Consent-based composer extension; MCP read + confirmed writes |
 
-Mem0's "automatic" capture is the first row of this table, not a mechanism this
-product lacks. Their docs are explicit: the *application* calls `add` and `search`. It
-is the same position the local proxy occupies, and it reaches claude.ai exactly as
-well as ours does, which is to say through MCP, at the model's discretion.
+Mem0's application-side `add` and `search` pattern is the first row. The browser
+extension adds a second client-side position for hosted chat surfaces, but only for
+the active composer and only after explicit consent; it is not general access to an
+account or transcript.
 
 **The strategic consequence: maximise the rows where we own the loop.** Guaranteed
 capture on a surface the user works in daily is worth more than tuning the odds on a
@@ -208,10 +225,11 @@ surface where we are a guest. Claude Code is the largest unclaimed such surface,
 it is where a great deal of real work now happens.
 
 **Reading local files is not the prohibited thing, and the line matters.** §8.1 and
-§11 prohibit automating a click on a provider's site or reading an authenticated page.
-Files an app writes to the user's own disk, at the user's instruction, are the user's
-— reading them is closer to reading your own shell history than to scraping. OpenAI's
-Import feature (§3) is exactly this, which is a useful validation of the approach.
+§11 prohibit automating a provider UI and reading authenticated account content,
+apart from the narrow, consented active-composer boundary above. Files an app writes
+to the user's own disk, at the user's instruction, are the user's—reading them is
+closer to reading your own shell history than to scraping. OpenAI's Import feature
+(§3) is exactly this, which is a useful validation of the approach.
 
 That said, not all local data is one category, and the boundary should be drawn
 deliberately:
@@ -355,7 +373,7 @@ Publish the weighting. If it's a black-box percentage, it's not a differentiator
 
 Concretely, this means:
 
-1. **Connect** — for Migration mode: OAuth-style flow where the provider supports it (Claude's memory export/import), a deep-link-then-desktop-folder-watcher flow for ChatGPT (point the user to the export button, they click it once, everything after that — detecting, validating, parsing the ZIP — is automated), one-click for local models if a supported runtime (Ollama, LM Studio) is detected on the machine. For Live Sync mode: a connector setup flow per §3.1 (add-connector link for Claude, Developer Mode instructions for ChatGPT). The one thing that should never appear anywhere in this flow: automating a click on a provider's own site, or reading an authenticated page. That's the acquisition boundary, not a temporary MVP shortcut.
+1. **Connect** — for Migration mode: OAuth-style flow where the provider supports it (Claude's memory export/import), a deep-link-then-desktop-folder-watcher flow for ChatGPT (point the user to the export button, they click it once, everything after that — detecting, validating, parsing the ZIP — is automated), one-click for local models if a supported runtime (Ollama, LM Studio) is detected on the machine. For Live Sync mode: a connector setup flow per §3.1 and an explicit consent control for the composer extension. The flow must never automate a provider UI, replay a session credential, read model output or other conversations, or read any page in the background. Reading the active user's submitted composer text locally is the narrow permitted exception, not permission to inspect the account.
 2. **Context Inspector** — review extracted objects before anything is compiled anywhere. Edit, merge, retire, adjust scope. Retirement removes an object from retrieval and compilation without erasing its history. This is the trust-building screen; skip it and you're just another "give us your ChatGPT history" product.
 3. **Compile** — pick a destination, get a Migration Manifest + Continuity Score, get a real native artifact (a Claude Project link, a ChatGPT Custom GPT config, a local model's profile file) — not a zip of markdown.
 4. **Dashboard** — the Mem0-style observability/compression view, but framed as "your memory," not "your API usage."
@@ -404,6 +422,11 @@ Concretely, this means:
   being the differentiator-in-waiting and becomes the reason to exist. It should be
   built earlier than §10 currently sequences it.
 - **Extraction cost at consumer scale.** LLM-assisted typed extraction on every export is real inference spend — model this before pricing the consumer tier.
+- **Extraction is a separate data transfer from acquisition.** The user chooses the
+  backend, with local Ollama as the default. A third-party extractor receives only
+  the candidate turn being mined—never the graph or accepted memories—and must be
+  named as a subprocessor. Model output remains untrusted until it is grounded in
+  that turn and passes the same policy guards as every other write.
 - **Retrieval telemetry can become a second copy of the user's private history.** Do
   not persist raw queries or returned content by default, and do not turn SDK
   instrumentation into undisclosed outbound analytics. Redacted traces must still be

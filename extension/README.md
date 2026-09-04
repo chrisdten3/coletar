@@ -33,11 +33,13 @@ into the box *above* what you typed. You read it and send it yourself. Nothing i
 added to a message you did not see, which is the difference between assistance and
 someone quietly editing your words.
 
-**Capture** — when you send, what you typed is offered to `/v1/capture`, where the same
-precision-first extractor the local proxy uses decides whether anything durable was in
-it. Most turns contain nothing and store nothing: 4.3% false-positive rate against the
-labelled set. Only your own words are ever sent; the reply is not, and would not be
-mined if it were.
+**Capture** — when you send, what you typed is offered to `/v1/capture`. Passive
+extraction is off by default. If encrypted collect-then-batch is enabled, the turn is
+queued for semantic extraction without a provisional regex write. The legacy
+heuristic is an explicit no-retention compatibility mode, not the default. Only your
+own words are ever sent; the reply is not and cannot be mined by this extension. The
+extension's Capture checkbox is also off until the user explicitly saves it enabled;
+an old default-true setting is not treated as consent.
 
 ## Install
 

@@ -169,6 +169,39 @@ def expire(tenant: str | None = TENANT_OPTION) -> None:
     asyncio.run(_run())
 
 
+@app.command("extract-pending")
+def extract_pending_turns(
+    provider: str | None = typer.Option(
+        None, help="ollama, anthropic, or openai; defaults to configured provider."
+    ),
+    model: str | None = typer.Option(None, help="Provider model override."),
+    limit: int | None = typer.Option(None, min=1, help="Maximum pending episodes this pass."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Model-extract captured turns; unavailable turns remain queued."""
+    from typing import cast
+
+    from coletar.extraction.providers import ExtractionProviderName
+    from coletar.jobs import extract_pending
+
+    allowed = {"ollama", "anthropic", "openai"}
+    if provider is not None and provider not in allowed:
+        raise typer.BadParameter(f"unknown provider {provider!r}; have {sorted(allowed)}")
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        report = await extract_pending(
+            build_store(),
+            resolved,
+            provider=cast(ExtractionProviderName | None, provider),
+            model=model,
+            limit=limit,
+        )
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
 @app.command()
 def compile(
     destination: str = typer.Option("local", help="Which provider compiler to run."),

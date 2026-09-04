@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from coletar.capture import is_pending
+from coletar.episode_crypto import PREFIX, EpisodeKeyUnavailable, decrypt_episode
 from coletar.schema.events import Event, EventType
 from coletar.schema.objects import ContextObject, EdgeType, ObjectType
 from coletar.schema.tenancy import TenantId
@@ -207,13 +209,26 @@ class AgenticView:
     def total(self) -> int:
         return sum(len(rows) for rows in self.by_type.values())
 
+    @property
+    def pending_episodes(self) -> int:
+        return sum(
+            1 for episode in self.by_type[str(ObjectType.EPISODE)] if is_pending(episode)
+        )
+
 
 async def build_agentic_view(store: Store, tenant_id: TenantId) -> AgenticView:
     objects = await store.list_objects(tenant_id, limit=OBJECT_WINDOW)
     by_type: dict[str, list[ContextObject]] = {str(t): [] for t in AGENTIC_TYPES}
     for obj in objects:
         if obj.type in AGENTIC_TYPES:
-            by_type[str(obj.type)].append(obj)
+            visible = obj
+            if obj.type is ObjectType.EPISODE and obj.content.startswith(PREFIX):
+                visible = obj.model_copy(deep=True)
+                try:
+                    visible.content = await decrypt_episode(store, tenant_id, obj)
+                except EpisodeKeyUnavailable:
+                    visible.content = "[episode content unavailable: key shredded]"
+            by_type[str(obj.type)].append(visible)
 
     episode_ids = {o.id for o in by_type[str(ObjectType.EPISODE)]}
     derived_from: dict[str, list[ContextObject]] = {}

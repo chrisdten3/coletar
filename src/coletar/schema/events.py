@@ -48,6 +48,9 @@ class EventType(StrEnum):
     OBJECT_REVIEWED = "object.reviewed"
     OBJECT_RESCOPED = "object.rescoped"
     OBJECT_MERGED = "object.merged"
+    # The encrypted object and history remain; its separately held content key does
+    # not. This is erasure without rewriting the append-only event chain.
+    OBJECT_SHREDDED = "object.shredded"
 
 
 #: Events that carry a full `after` snapshot and therefore participate in replay.

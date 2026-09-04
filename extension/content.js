@@ -15,8 +15,8 @@
 //
 // It does two things, both from your own text:
 //   RECALL   pull relevant memory into the box, visibly, so you see it before sending
-//   CAPTURE  offer what you typed to coletar, whose extractor decides if anything
-//            durable is in it (it usually says no)
+//   CAPTURE  when explicitly enabled, offer what you typed to the configured
+//            capture policy; passive inference is otherwise off
 
 const COMPOSERS = [
   'div[contenteditable="true"]',
@@ -29,7 +29,8 @@ const settings = {
   endpoint: "",
   apiKey: "",
   recall: true,
-  capture: true,
+  capture: false,
+  captureConsent: false,
   // Chrome owns a lot of Cmd+Shift combinations on macOS — Cmd+Shift+M is the
   // profile switcher, N is incognito, T reopens a tab. So the shortcut is
   // configurable and defaults to one Chrome does not claim. The button below is the
@@ -133,12 +134,13 @@ async function recall() {
   toast(`coletar: added ${data.results.length} memor${data.results.length === 1 ? "y" : "ies"}`);
 }
 
-// CAPTURE. Passive, and filtered server-side: the same precision-first extractor the
-// local proxy uses decides whether the turn contained anything durable. Most turns
-// contain nothing and store nothing.
+// CAPTURE. The server policy is off by default. In collect-then-batch mode this
+// queues encrypted working material; it does not make a preliminary memory claim.
 let lastCaptured = "";
 async function capture() {
-  if (!settings.capture) return;
+  // The separate marker prevents an old stored `capture: true` default from being
+  // treated as consent after this safer default ships.
+  if (!settings.capture || !settings.captureConsent) return;
   const el = composer();
   if (!el) return;
   let text = readComposer(el);
@@ -149,6 +151,7 @@ async function capture() {
   lastCaptured = text;
   const data = await call("/v1/capture", { text });
   if (data && data.count) toast(`coletar: remembered ${data.count}`);
+  else if (data && data.queued) toast("coletar: queued for extraction");
 }
 
 function matchesShortcut(event) {

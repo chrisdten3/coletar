@@ -27,6 +27,7 @@ from coletar.schema.objects import (
     Memory,
     MemoryKind,
     ObjectType,
+    Provider,
     Scope,
     ScopeType,
 )
@@ -334,3 +335,24 @@ async def test_a_current_snapshot_round_trips_without_warning(tmp_path):
     # Bob's does not appear, not that nothing does.
     hits = {hit.obj.id for hit in await second.search(ALICE, "Bob's fact", top_k=50)}
     assert bob.id not in hits
+
+
+async def test_episode_key_round_trips_with_a_snapshot_and_can_be_shredded(tmp_path):
+    from coletar.capture import capture_turn
+    from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
+
+    path = tmp_path / "graph.json"
+    first = InMemoryStore(path, embedder=HashingEmbedder(768))
+    episode = await capture_turn(first, ALICE, "private turn", surface=Provider.CHATGPT)
+
+    second = InMemoryStore(path, embedder=HashingEmbedder(768))
+    restored = await second.get_object(ALICE, episode.id)
+    assert restored is not None
+    assert await decrypt_episode(second, ALICE, restored) == "private turn"
+
+    await second.shred_object_key(ALICE, episode.id, reason="test")
+    third = InMemoryStore(path, embedder=HashingEmbedder(768))
+    restored = await third.get_object(ALICE, episode.id)
+    assert restored is not None
+    with pytest.raises(EpisodeKeyUnavailable):
+        await decrypt_episode(third, ALICE, restored)

@@ -354,8 +354,10 @@ This removes that requirement.
 - [x] Recall is explicit and visible — memory is written into the box above the
       user's text, so they read it and send it themselves. Nothing is added to a
       message they did not see
-- [x] Capture runs the precision-first extractor server-side rather than storing
-      turns, so most turns store nothing (4.3% false positives on the labelled set)
+- [x] Passive inference defaults off. With explicit capture consent, the extension
+      stores the submitted user turn as an encrypted, surface-local `EPISODE` and
+      the asynchronous semantic worker materialises grounded objects later. It never
+      reads provider output and collect-then-batch writes no provisional regex memory
 - [x] **Verified end to end on claude.ai, 29 Aug 2026, with no Project and no
       snippet.** Read: the button retrieved the stored preference and injected it
       visibly (`surface=claude.ai`, 27ms). Write: typing *"I never use an ORM; every
@@ -476,11 +478,10 @@ SCOPE §6. Views over the substrate M1–M3 already built, not a second data mod
       correct, which would discard the correction and leave the stale fact standing.
       Lives at the ingest boundary rather than in `Store`, so a compiler or replay
       can still write exact objects
-- [x] **Extraction off the response path.** The proxy queues extraction as a
-      background task; the streaming path already had this property. 0.1ms today
-      with the regex extractor, seconds once M6.2's model does the extracting — and
-      a failing extractor can no longer break a chat, since the reply has already
-      left
+- [x] **Extraction off the response path.** Passive inference is now off by default.
+      Opt-in collect-then-batch queues encrypted episodes after delivery and the
+      semantic worker runs separately; the compatibility heuristic is explicit.
+      A capture failure cannot break a chat because the reply has already left
 - [x] **Sensitivity policy filter.** `context.py` and `ranking.py` both documented
       one; neither backend had it, so a `restricted` memory was returned by
       `retrieve()` and rendered into the injected block — reaching local system
@@ -642,10 +643,12 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
       the anti-fabrication guard and it is structural — a model that invents
       cannot point at a sentence containing its claim.
 
-      **The backend is a frontier provider as of 2026-09-03**, selected by
-      `extraction_provider`, with the local leg kept as the default and as the slot
-      a larger open-weights model drops into. Two measurements, and they disagree
-      because they are different sets — read both or neither:
+      **The backend is selected explicitly as of 2026-09-03**, with local Ollama
+      remaining the privacy-preserving provider default and Anthropic/OpenAI opt-in
+      subprocessors. The provider receives only the candidate turn, never the graph.
+      The deterministic mode remains available for compatibility, but is not the
+      collect-then-batch preliminary path. Measurements disagree by domain — read
+      them together:
 
       - *M6.1 export set, 30 of 100 turns* (the machine ran out of memory):
         `qwen2.5:0.5b` at 100% precision, 96.7% recall, against the regex path's
@@ -653,11 +656,19 @@ SCOPE §10 step 4. Highest demand, hardest leg. Ship only once the compiler is p
       - *55-turn labelled live set*: the same model at **59.5% precision** against
         a 15% false-positive bar, with `kind` wrong on 13 of 22. Unusable.
 
-      The second is not a contradiction of the first; it is a different register.
-      The live set is the one the regex patterns were tuned on, so it flatters
-      them and punishes anything else — see `EXTRACTION.md`. Neither set answers
-      the question that decides the import path, because no labelled set drawn
-      from export prose exists yet.
+      - *25-turn transient-context set*: regex falls to 42.1% precision because it
+        stores task-local wording as standing preference. `claude-sonnet-5` scored
+        90.9% precision / 100% recall.
+      - *OpenAI, both committed sets, three runs each (720 requests)*:
+        `gpt-5.6-terra` averaged 98.4% precision / 90.9% recall on live and 93.9% /
+        100% on transient, outperforming Luna and giving a better recall balance
+        than Sol. It is the OpenAI model default, not the provider default.
+
+      These are not contradictions; they are different registers. The narrow live
+      set is effectively the regex recogniser's regression specification. The
+      transient set tests the semantic durability judgement it cannot make. Neither
+      is an independently labelled sample from a real export, which remains the
+      evidence limit—not a reason to treat regex as authoritative.
       Grounding does **not** stop injection, only fabrication; that boundary is
       pinned by a test and held by user-turns-only upstream and M5.3's gate
       downstream
@@ -905,11 +916,11 @@ done by anyone — which is a reason to write them down, not a reason to start.
       between a privacy control and a *usable* one. Mechanically it is a
       per-destination rendering, which is what the compilers already do
 
-- [ ] **Crypto-shredding, to resolve a contradiction already recorded.** Constraint 6
-      says never hard-delete; GDPR says erase on request. Encrypting each object
-      under a per-object key and deleting the key erases the content while the event
-      chain, hashes and structure survive. Nobody else in this space has needed to
-      solve it, because nobody else has an immutable log to protect
+- [~] **Crypto-shredding, to resolve a contradiction already recorded.** Raw captured
+      episodes now use per-object AES-GCM keys that expiry or an Inspector action
+      destroys. Generalising the same mechanism to every object remains. Constraint 6
+      says never hard-delete; GDPR says erase on request; deleting the content key
+      preserves the event chain, hashes and structure
 
 - [ ] **Policy rules rather than per-object flags.** Locality is set per object,
       which does not scale past one person. "Nothing tagged client-confidential ever
@@ -927,8 +938,9 @@ done by anyone — which is a reason to write them down, not a reason to start.
       Surfacing the contradiction for a human beats silently picking a winner —
       which is the same reasoning the Markdown mirror uses for stale files
 
-- [ ] **Retention schedules.** `ttl_days` exists and **nothing acts on it**.
-      "Client-matter memories retire seven years after the matter closes" is a
+- [~] **Retention schedules.** `ttl_days` is enforced by `coletar expire`; richer
+      event-relative policies remain. "Client-matter memories retire seven years
+      after the matter closes" is a
       retention policy expressed in valid time plus a rule, and it is a line item in
       every legal-sector procurement
 

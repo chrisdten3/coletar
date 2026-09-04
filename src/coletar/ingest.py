@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from coletar.retrieval.context import NEAR_DUPLICATE_THRESHOLD
 from coletar.retrieval.embedding import tokenize
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import ContextObject, Memory, Provider, Scope
+from coletar.schema.objects import ContextObject, Memory, ObjectType, Provider, Scope
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -83,7 +83,12 @@ async def find_duplicate(
     for hit in await store.search(
         tenant_id, content, scope=scope, caller_surface=caller_surface, top_k=_CANDIDATES
     ):
-        if is_near_duplicate(content, hit.obj.content):
+        # A captured EPISODE may contain exactly the same sentence as the MEMORY
+        # derived from it. They are evidence and claim, not duplicates. Folding the
+        # memory into the episode leaves the graph with no memory at all.
+        if hit.obj.type is not ObjectType.EPISODE and is_near_duplicate(
+            content, hit.obj.content
+        ):
             return hit.obj
     return None
 

@@ -12,6 +12,7 @@ import pytest
 from coletar.inspector.review import (
     InspectorError,
     edit,
+    erase_episode,
     mark_reviewed,
     merge,
     rescope,
@@ -76,6 +77,25 @@ async def test_review_does_not_survive_a_change_to_what_was_reviewed() -> None:
     assert not status.can_compile
     assert [o.id for o in status.unreviewed] == [obj.id]
 
+
+@pytest.mark.asyncio
+async def test_erasing_a_raw_episode_retires_it_and_shreds_its_key() -> None:
+    from coletar.capture import capture_turn
+    from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
+    from coletar.schema.objects import Provider
+
+    store = InMemoryStore()
+    episode = await capture_turn(store, TENANT, "private turn", surface=Provider.CHATGPT)
+
+    await erase_episode(store, TENANT, episode.id)
+
+    assert await store.list_objects(TENANT, type=episode.type) == []
+    retained = await store.get_object(TENANT, episode.id)
+    assert retained is not None and retained.retired_at is not None
+    with pytest.raises(EpisodeKeyUnavailable):
+        await decrypt_episode(store, TENANT, retained)
+    events = await store.list_events(TENANT, object_id=episode.id)
+    assert any(event.type is EventType.OBJECT_SHREDDED for event in events)
 
 @pytest.mark.asyncio
 async def test_gate_watches_exactly_the_set_the_compiler_would_move() -> None:
@@ -369,6 +389,29 @@ async def test_the_dashboard_page_renders_the_live_store(live_store: None) -> No
     assert "Retrieval by surface" in body
     assert "Why the last search returned what it did" in body
     assert "mcp" in body
+
+
+@pytest.mark.asyncio
+async def test_agentic_page_shows_and_can_erase_pending_raw_turn(live_store: None) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.capture import capture_turn
+    from coletar.inspector.app import app
+    from coletar.schema.objects import ObjectType, Provider
+    from coletar.store import build_store
+
+    store = build_store()
+    episode = await capture_turn(store, TENANT, "private turn", surface=Provider.CHATGPT)
+    page = _get("/agentic")
+    assert "Pending extraction: 1" in page
+    assert "erase raw turn" in page
+
+    response = TestClient(app).post(
+        "/erase-episode", data={"object_id": episode.id}, follow_redirects=True
+    )
+    assert response.status_code == 200
+    assert "Pending extraction: 0" in response.text
+    assert await store.list_objects(TENANT, type=ObjectType.EPISODE) == []
 
 
 @pytest.mark.asyncio

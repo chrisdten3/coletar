@@ -427,7 +427,7 @@ async def import_export(
     """
     from coletar.config import get_settings
     from coletar.extraction import extract_memories, extract_with_model
-    from coletar.extraction.frontier import ExtractionUnavailable
+    from coletar.extraction.providers import ExtractionUnavailable
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
     from coletar.schema.objects import GLOBAL_SCOPE, ExtractionMethod, Provider
@@ -438,7 +438,7 @@ async def import_export(
     # nowhere to go except the user's own profile — the failure that produced
     # recruiters' introductions as facts about the account holder. Only the model
     # path can name a person, so entities exist only when one is configured.
-    use_model = get_settings().extraction_provider != "ollama"
+    use_model = get_settings().extraction_mode == "model"
     # name -> id for every entity written during this import; see _store_graph.
     known_entities: dict[str, str] = {}
 

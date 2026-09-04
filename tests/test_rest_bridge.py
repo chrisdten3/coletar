@@ -18,7 +18,7 @@ from coletar.mcp import server as mcp_server
 from coletar.mcp.auth import ApiKeyAuthenticator, AuthMiddleware
 from coletar.retrieval.embedding import HashingEmbedder
 from coletar.schema.events import EventType
-from coletar.schema.objects import Memory, MemoryKind
+from coletar.schema.objects import Memory, MemoryKind, ObjectType
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
@@ -262,19 +262,28 @@ async def test_malformed_requests_are_rejected_cleanly(client, store, path, body
 
 
 # -- capture is passive, and therefore filtered --------------------------------
-async def test_capture_stores_only_what_is_durable(client, store):
+async def test_legacy_heuristic_capture_stores_only_what_is_durable(
+    client, store, monkeypatch
+):
     """The difference between capture and remember. A capture path that stored every
     turn would fill the graph with "thanks, that's helpful" and make every later
     compile worse."""
-    async with client as c:
-        durable = await c.post(
-            "/v1/capture",
-            json={"text": "From now on, always use uv instead of pip.", "surface": "claude.ai"},
-            headers=AUTH,
-        )
-        chatter = await c.post(
-            "/v1/capture", json={"text": "thanks, that's helpful!"}, headers=AUTH
-        )
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "heuristic")
+    get_settings.cache_clear()
+    try:
+        async with client as c:
+            durable = await c.post(
+                "/v1/capture",
+                json={"text": "From now on, always use uv instead of pip.", "surface": "claude.ai"},
+                headers=AUTH,
+            )
+            chatter = await c.post(
+                "/v1/capture", json={"text": "thanks, that's helpful!"}, headers=AUTH
+            )
+    finally:
+        get_settings.cache_clear()
 
     assert durable.json()["count"] == 1
     assert durable.json()["extracted"][0]["content"] == "always use uv instead of pip"
@@ -282,12 +291,75 @@ async def test_capture_stores_only_what_is_durable(client, store):
     assert len(await store.list_objects(TENANT)) == 1
 
 
-async def test_capture_is_deduplicated_across_conversations(client, store):
+async def test_default_passive_capture_makes_no_inferred_write(client, store):
     async with client as c:
-        for _ in range(3):
-            await c.post("/v1/capture",
-                         json={"text": "I prefer fixed-point integers for money."},
-                         headers=AUTH)
+        response = await c.post(
+            "/v1/capture", json={"text": "I prefer tabs."}, headers=AUTH
+        )
+    assert response.json() == {"extracted": [], "count": 0, "queued": False}
+    assert await store.list_objects(TENANT) == []
+
+
+async def test_collect_then_batch_queues_without_a_regex_memory(
+    client, store, monkeypatch
+):
+    """The heuristic's narrow regression win does not justify a provisional write."""
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "collect_then_batch")
+    get_settings.cache_clear()
+    try:
+        async with client as c:
+            response = await c.post(
+                "/v1/capture",
+                json={"text": "I use React here to fix this form."},
+                headers=AUTH,
+            )
+        assert response.status_code == 200
+        assert response.json()["queued"] is True
+        assert response.json()["count"] == 0
+        objects = await store.list_objects(TENANT)
+        assert [obj.type for obj in objects] == [ObjectType.EPISODE]
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_collect_then_batch_refuses_to_drop_an_uncaptured_turn(
+    client, store, monkeypatch
+):
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "false")
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "collect_then_batch")
+    get_settings.cache_clear()
+    try:
+        async with client as c:
+            response = await c.post(
+                "/v1/capture", json={"text": "I prefer tabs."}, headers=AUTH
+            )
+        assert response.status_code == 503
+        assert response.json()["error"] == "capture_not_enabled"
+        assert await store.list_objects(TENANT) == []
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_heuristic_capture_is_deduplicated_across_conversations(
+    client, store, monkeypatch
+):
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "heuristic")
+    get_settings.cache_clear()
+    try:
+        async with client as c:
+            for _ in range(3):
+                await c.post("/v1/capture",
+                             json={"text": "I prefer fixed-point integers for money."},
+                             headers=AUTH)
+    finally:
+        get_settings.cache_clear()
     assert len(await store.list_objects(TENANT)) == 1
 
 
@@ -335,21 +407,30 @@ async def test_capture_strips_an_injected_block_server_side(client, store):
     assert await store.list_objects(TENANT) == []
 
 
-async def test_an_unstripped_block_still_cannot_grow_the_graph(client, store):
+async def test_an_unstripped_block_still_cannot_grow_the_graph(
+    client, store, monkeypatch
+):
     """Belt and braces: even if both the client and the server strip nothing, the
     memory being echoed back is a near-duplicate of the object it came from, so
     ingestion folds it rather than storing a copy."""
-    async with client as c:
-        first = await c.post(
-            "/v1/capture",
-            json={"text": "I never use an ORM; every query in my projects is plain SQL."},
-            headers=AUTH,
-        )
-        echoed = await c.post(
-            "/v1/capture",
-            json={"text": "I never use an ORM; every query in my projects is plain SQL"},
-            headers=AUTH,
-        )
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "heuristic")
+    get_settings.cache_clear()
+    try:
+        async with client as c:
+            first = await c.post(
+                "/v1/capture",
+                json={"text": "I never use an ORM; every query in my projects is plain SQL."},
+                headers=AUTH,
+            )
+            echoed = await c.post(
+                "/v1/capture",
+                json={"text": "I never use an ORM; every query in my projects is plain SQL"},
+                headers=AUTH,
+            )
+    finally:
+        get_settings.cache_clear()
 
     assert first.json()["count"] == 1
     assert echoed.json()["extracted"][0]["created"] is False

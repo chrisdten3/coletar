@@ -59,7 +59,7 @@ class FakeOllama:
 def fake_model(monkeypatch):
     def install(memories: object, *, raw: str | None = None) -> None:
         monkeypatch.setattr(
-            "coletar.extraction.extractor.httpx.AsyncClient",
+            "coletar.extraction.ollama.httpx.AsyncClient",
             lambda **_: FakeOllama(memories, raw=raw),
         )
 
@@ -262,7 +262,7 @@ async def test_an_invented_person_never_becomes_an_entity(monkeypatch) -> None:
     async def _stub(**_: object) -> Proposal:
         return Proposal(entities=[ProposedEntity(name="Dana Whitfield", content="a recruiter")])
 
-    monkeypatch.setattr(extractor, "_propose_locally", _stub)
+    monkeypatch.setattr("coletar.extraction.ollama.propose", _stub)
     objects, edges = await extractor.extract_with_model(
         transcript="I prefer fixed-point integers for money."
     )
@@ -294,7 +294,7 @@ async def test_a_fact_survives_only_with_the_entity_it_names(monkeypatch) -> Non
             ],
         )
 
-    monkeypatch.setattr(extractor, "_propose_locally", _stub)
+    monkeypatch.setattr("coletar.extraction.ollama.propose", _stub)
     objects, edges = await extractor.extract_with_model(transcript=transcript)
 
     from coletar.schema.objects import ObjectType
@@ -322,7 +322,7 @@ async def test_the_provider_setting_chooses_the_backend(monkeypatch) -> None:
         return Proposal()
 
     monkeypatch.setattr("coletar.extraction.frontier.propose", _frontier)
-    monkeypatch.setattr(extractor, "_propose_locally", _local)
+    monkeypatch.setattr("coletar.extraction.ollama.propose", _local)
 
     await extractor.extract_with_model(transcript="anything")
     assert called == ["ollama"], "the local leg is the default"
@@ -364,6 +364,21 @@ async def test_an_unreachable_provider_is_not_a_turn_with_nothing_in_it(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_an_unreachable_ollama_is_also_retryable(monkeypatch) -> None:
+    from coletar.extraction.providers import ExtractionUnavailable
+
+    class _OfflineOllama(FakeOllama):
+        async def post(self, url: str, **kwargs: object) -> httpx.Response:
+            raise httpx.ConnectError("offline", request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(
+        "coletar.extraction.ollama.httpx.AsyncClient", lambda **_: _OfflineOllama([])
+    )
+    with pytest.raises(ExtractionUnavailable):
+        await extract_with_model(transcript="x")
+
+
+@pytest.mark.asyncio
 async def test_a_misconfiguration_fails_on_the_first_turn_not_the_last(monkeypatch) -> None:
     """Misconfiguration is a third class again: not a turn found empty, and not a
     transient blip worth retrying 17,881 times. It should stop the import at once.
@@ -377,5 +392,5 @@ async def test_a_misconfiguration_fails_on_the_first_turn_not_the_last(monkeypat
         raise TypeError("Could not resolve authentication method")
 
     monkeypatch.setattr("anthropic.AsyncAnthropic", _no_credentials)
-    with pytest.raises(TypeError):
+    with pytest.raises(frontier.ExtractionConfigurationError):
         await frontier.propose(transcript="x", model="claude-haiku-4-5")
