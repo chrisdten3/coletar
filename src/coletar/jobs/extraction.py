@@ -91,8 +91,25 @@ async def extract_pending(
                 extraction_provider=chosen_provider,
                 model=chosen_model,
             )
-        except (EpisodeKeyUnavailable, ExtractionUnavailable):
+        except (EpisodeKeyUnavailable, ExtractionUnavailable) as exc:
             report.unavailable += 1
+            # The episode stays pending, so nothing is lost — but a retry that
+            # leaves no trace makes a provider outage look exactly like an empty
+            # queue. `coletar queue-health` reads these back.
+            await store.append_event(
+                tenant_id,
+                Event(
+                    type=EventType.EXTRACTION_UNAVAILABLE,
+                    object_id=episode.id,
+                    actor=Actor.JOB,
+                    provider=episode.provenance.provider,
+                    detail={
+                        "reason": exc.__class__.__name__,
+                        "extraction_provider": chosen_provider,
+                        "extraction_model": chosen_model,
+                    },
+                ),
+            )
             continue
 
         proposed_to_stored: dict[str, str] = {}

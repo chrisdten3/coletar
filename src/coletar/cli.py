@@ -203,6 +203,72 @@ def extract_pending_turns(
 
 
 @app.command()
+def worker(
+    interval: float | None = typer.Option(
+        None, min=1.0, help="Seconds between passes; defaults to configured interval."
+    ),
+    once: bool = typer.Option(False, "--once", help="Run a single pass and exit."),
+    lease_ttl: float | None = typer.Option(
+        None, min=1.0, help="Lease lifetime in seconds; defaults to configured TTL."
+    ),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Run the scheduled batch pass: extract pending captures, then expire.
+
+    Safe to run more than once concurrently and safe to run from cron — a lease
+    decides which process does the work, and the loser exits reporting who holds it
+    rather than failing. `--once` is the cron form; without it this is a daemon.
+    """
+    from coletar.jobs import run_forever, run_pass, worker_identity
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        store = build_store()
+        owner = worker_identity()
+        if once:
+            result = await run_pass(store, resolved, owner=owner, lease_ttl_seconds=lease_ttl)
+            typer.echo(json.dumps(result.as_dict(), indent=2))
+            return
+        typer.echo(f"worker {owner} on tenant {resolved}; ctrl-c to stop", err=True)
+        try:
+            await run_forever(store, resolved, interval_seconds=interval, owner=owner)
+        except (KeyboardInterrupt, asyncio.CancelledError):  # pragma: no cover - signal path
+            typer.echo("stopped", err=True)
+
+    asyncio.run(_run())
+
+
+@app.command("queue-health")
+def queue_health_command(
+    pending_hours: float | None = typer.Option(
+        None, min=0.0, help="Alert above this pending age; defaults to configured threshold."
+    ),
+    failures: int | None = typer.Option(
+        None, min=1, help="Alert at this many recent failures; defaults to configured threshold."
+    ),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Report queue age and recent extraction failures. Exits 1 when alerting.
+
+    The non-zero exit is the point: this is meant to be a cron line or a container
+    healthcheck, so "the queue stopped draining" has somewhere to be noticed before
+    a user reports that their memories stopped appearing.
+    """
+    from coletar.jobs import queue_health
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        health = await queue_health(
+            build_store(), resolved, pending_hours=pending_hours, failure_threshold=failures
+        )
+        typer.echo(json.dumps(health.as_dict(), indent=2))
+        if not health.ok:
+            raise typer.Exit(code=1)
+
+    asyncio.run(_run())
+
+
+@app.command()
 def compile(
     destination: str = typer.Option("local", help="Which provider compiler to run."),
     out: str = typer.Option("build/compile", help="Directory to write artifacts into."),

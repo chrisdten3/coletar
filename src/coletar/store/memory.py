@@ -21,7 +21,7 @@ from __future__ import annotations
 import base64
 import json
 import warnings
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from coletar.retrieval.embedding import Embedder, build_embedder, tokenize
@@ -40,6 +40,7 @@ from coletar.schema.objects import (
     object_from_record,
 )
 from coletar.schema.tenancy import LEGACY_TENANT, CrossTenantError, TenantId
+from coletar.store.base import Lease
 
 #: Bumped when tenancy landed. A version-1 snapshot has no tenant on any record.
 SNAPSHOT_FORMAT_VERSION = 2
@@ -58,6 +59,10 @@ class InMemoryStore:
         # outside object/event snapshots so shredding the key can erase content
         # without rewriting either append-only history or graph identity.
         self._object_keys: dict[tuple[TenantId, str], bytes] = {}
+        # Job leases. Not snapshotted: a lease is a claim by a *running process*,
+        # and restoring one from a file would hand a dead worker's claim to a fresh
+        # one that has no idea it is holding anything.
+        self._leases: dict[tuple[TenantId, str], Lease] = {}
         self._embedder = embedder or build_embedder()
         # One index per tenant: another tenant's vectors are never candidates, rather
         # than being candidates that a later filter is trusted to remove.
@@ -353,6 +358,35 @@ class InMemoryStore:
         return [e for (t, _, d, _), e in self._edges.items() if t == tenant_id and d == object_id]
 
     # -- event log ----------------------------------------------------------
+    async def acquire_lease(
+        self, tenant_id: TenantId, name: str, *, owner: str, ttl_seconds: float
+    ) -> Lease | None:
+        # Single-threaded and cooperatively scheduled, so no await may appear between
+        # the read and the write below: this whole method is the critical section
+        # exactly because it does not yield.
+        now = datetime.now(UTC)
+        held = self._leases.get((tenant_id, name))
+        if held is not None and held.expires_at > now and held.owner != owner:
+            return None
+        lease = Lease(
+            name=name,
+            owner=owner,
+            acquired_at=now,
+            expires_at=now + timedelta(seconds=ttl_seconds),
+        )
+        self._leases[(tenant_id, name)] = lease
+        return lease
+
+    async def release_lease(self, tenant_id: TenantId, name: str, *, owner: str) -> bool:
+        held = self._leases.get((tenant_id, name))
+        if held is None or held.owner != owner:
+            return False
+        del self._leases[(tenant_id, name)]
+        return True
+
+    async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
+        return self._leases.get((tenant_id, name))
+
     async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         self._events.setdefault(tenant_id, []).append(event)
         # Every mutation funnels through here, so this is the one place a snapshot
