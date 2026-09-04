@@ -1,7 +1,7 @@
 # TODO — from engine to product
 
-**Where this actually is.** The substrate is real and unusually well tested: 595
-tests, a typed versioned graph with provenance and an immutable event log, hybrid
+**Where this actually is.** The substrate is real and unusually well tested: 715
+tests (3 skipped, all paid-provider), a typed versioned graph with provenance and an immutable event log, hybrid
 retrieval measured against a labelled suite, three working compilers, importers for
 ChatGPT and Claude verified against a real export, and audit queries across two
 temporal axes. Nothing in the competitive set has the audit half.
@@ -10,7 +10,7 @@ temporal axes. Nothing in the competitive set has the audit half.
 keys are hand-edited into an environment variable. There is no signup, no billing, no
 hosted deployment, no onboarding, and no designed interface. The only UI is a
 loopback developer tool with no authentication. The browser extension has never been
-packaged. CI does not run the tests.
+packaged. CI now runs the tests, but nothing above this line does.
 
 A demo is close. A product someone else can use is not.
 
@@ -108,7 +108,9 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 - [ ] Tenant provisioning on signup (the tenancy model is ready; nothing creates one)
 
 ### 2. Hosting and infrastructure
-- [ ] Decide the host — **Fly trial has ended and deploys are failing**
+- [ ] Decide the host — **Fly trial has ended and deploys are failing**. `fly-deploy.yml`
+      is `workflow_dispatch`-only until then, so a dead deploy cannot keep `main`
+      permanently red next to the new required checks
 - [ ] Managed Postgres with backups and a tested restore
 - [ ] Secrets management; database credentials out of `.env`
 - [ ] Migration strategy for production (runner exists; no zero-downtime story)
@@ -117,11 +119,20 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 - [ ] Custom domain and TLS
 
 ### 3. CI and quality gates
-- [ ] **CI does not run the tests.** Only `fly-deploy.yml` exists, and it fails
-- [ ] Run pytest, ruff and mypy on every PR
-- [ ] Run the Postgres suite in CI (42 tests skip locally without a DSN)
-- [ ] Run the JS SDK tests
-- [ ] Branch protection: no merge on red
+- [x] **CI runs the tests** — `.github/workflows/ci.yml`, on every PR and on `main`
+- [x] pytest, ruff and mypy on every PR (both were already clean when CI landed,
+      so the gate went green on its first run rather than importing a backlog)
+- [x] The Postgres suite runs against a `pgvector/pgvector:pg17` service container.
+      A reachability preflight and a second dedicated run fail the job if those
+      tests skip — the suite skips *silently* without a DSN, so a green run with
+      no database would have proved nothing
+- [x] JS SDK tests (`node --test`, 12 tests) and an extension parse check
+- [x] No paid provider calls: the gates stay `COLETAR_RUN_PAID_EXTRACTION_TESTS`,
+      `OPENAI_API_KEY` and `COLETAR_TEST_OLLAMA_URL`, and CI never sets them. The
+      3 remaining skips are exactly those paid extraction tests
+- [ ] Branch protection: no merge on red. **A repository setting, not a file** —
+      it cannot land in the PR that adds the workflow, and is not in force until
+      someone sets it
 - [ ] Dependency scanning and update automation
 
 ### 4. The web product — no designed UI exists

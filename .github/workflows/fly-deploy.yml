@@ -1,11 +1,12 @@
 # See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
-
+#
+# Manual-only. The Fly trial ended and this workflow has failed on every push to
+# main since (#38 through #41), which makes "main is green" meaningless and would
+# make branch protection unreadable. Restore the `push` trigger once a host is
+# chosen — docs/TODO.md §2.
 name: Fly Deploy
 on:
-  push:
-    branches:
-      - main
-      - master
+  workflow_dispatch:
 jobs:
   deploy:
     name: Deploy app
