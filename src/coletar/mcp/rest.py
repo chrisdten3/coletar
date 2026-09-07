@@ -28,8 +28,11 @@ from coletar.retrieval import retrieve
 from coletar.retrieval.context import INJECTION_MARKER
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
+    GLOBAL_LOCALITY,
     GLOBAL_SCOPE,
     ExtractionMethod,
+    Locality,
+    LocalityMode,
     Memory,
     MemoryKind,
     OriginType,
@@ -66,6 +69,12 @@ class RememberRequest(BaseModel):
     kind: MemoryKind = MemoryKind.FACT
     project_id: str | None = None
     surface: str = "bridge"
+    #: Keep this memory on the surface it was typed into. The MCP path has had this
+    #: since it existed; the bridge did not, which meant a user sitting in claude.ai
+    #: — the one place they are actually writing from — could not express the
+    #: product's differentiating control at all. Locality binds to the *trusted*
+    #: surface below, never to `surface` above, which the page can set to anything.
+    local_only: bool = False
 
 
 #: Which provider an origin *is*. Set by the browser on every cross-origin request
@@ -198,11 +207,32 @@ async def remember_endpoint(request: Request) -> JSONResponse:
     if len(cleaned) > MAX_CONTENT_CHARS:
         return JSONResponse({"error": "bad_request", "message": "content too long"}, 400)
 
+    if body.local_only and surface is Provider.COLETAR:
+        # Naming no surface would write an object nothing can ever read back. The
+        # MCP path refuses this for the same reason; a bridge request without a
+        # recognised origin is a script, and a script has no surface to keep it on.
+        return JSONResponse(
+            {
+                "error": "bad_request",
+                "message": (
+                    "local_only needs a surface to keep this on. Send it from a "
+                    "recognised bridge origin, or give this key a declared surface."
+                ),
+            },
+            status_code=400,
+        )
+    locality = (
+        Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({surface}))
+        if body.local_only
+        else GLOBAL_LOCALITY
+    )
+
     scope = _scope(body.project_id)
     memory = Memory.from_write(
         content=cleaned,
         kind=body.kind,
         scope=scope,
+        locality=locality,
         # The surface they actually typed into, so "where did this come from" answers
         # with the tool rather than with us. `Provider.COLETAR` was right when there
         # was one bridge; with two it would erase the distinction the graph exists to

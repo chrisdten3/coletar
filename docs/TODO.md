@@ -255,12 +255,14 @@ table stakes for enterprise, not an edge. The edge is the capability underneath 
       provider choice, but their author also assigned their labels
 - [ ] Proxy rate limiting is in-process; two workers means two buckets
 - [ ] Webhook SSRF guard does not resolve hostnames (documented, deliberate)
-- [ ] **`/v1/remember` has no `local_only`** — the browser bridge can only write
-      global memories, so a user on claude.ai cannot mark anything Claude-only from
-      the UI. The capability exists on the MCP path (`server.py`, where locality
-      binds to the calling principal's surface) but not on the REST bridge. Locality
-      is the differentiation; a write path that cannot express it is a product hole,
-      not a rough edge
+- [x] **`/v1/remember` has `local_only`** — done 2026-09-07. Locality binds to the
+      `Origin`-derived surface, never to the page-supplied `surface` field: a page
+      that could name its own surface would be choosing whose locality rules apply
+      to its own writes. A `local_only` write with no recognised origin is refused
+      rather than defaulted — that caller is a script, and a script has no surface
+      to keep a memory on, so the object would be unreadable by anything forever.
+      Both SDKs carry it. The extension is unaffected: it writes through
+      `/v1/capture`, whose locality already defaults to the calling surface
 - [ ] **The in-process store is a silent footgun for local testing.** With
       `COLETAR_STORE_BACKEND=memory` the graph lives inside the server process, so
       `coletar remember` writes into a short-lived process and vanishes — no error,

@@ -18,7 +18,13 @@ from coletar.mcp import server as mcp_server
 from coletar.mcp.auth import ApiKeyAuthenticator, AuthMiddleware
 from coletar.retrieval.embedding import HashingEmbedder
 from coletar.schema.events import EventType
-from coletar.schema.objects import Memory, MemoryKind, ObjectType
+from coletar.schema.objects import (
+    LocalityMode,
+    Memory,
+    MemoryKind,
+    ObjectType,
+    Provider,
+)
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
@@ -629,3 +635,100 @@ async def test_a_non_browser_caller_falls_back_to_its_key(monkeypatch):
             headers={"authorization": "Bearer sk-bridge"},
         )
     assert response.status_code == 200
+
+
+# -- locality on the bridge ----------------------------------------------------
+# TODO.md §11 called this "a product hole, not a rough edge": locality is the
+# differentiator, and the one surface a user actually writes from could not express
+# it. The tests that matter are about *which* surface a memory gets bound to —
+# binding to the page-supplied `surface` instead of the Origin would let a page
+# claim any surface it liked and quietly widen or narrow who can read a memory.
+async def test_a_bridge_write_can_be_kept_on_the_surface_it_was_typed_into(client, store):
+    async with client as c:
+        response = await c.post(
+            "/v1/remember",
+            json={"content": "Handling the Northwind matter.", "local_only": True},
+            headers=AUTH,
+        )
+    assert response.status_code == 200
+
+    stored = (await store.list_objects(TENANT))[0]
+    assert stored.locality.mode is LocalityMode.LOCAL_ONLY
+    assert stored.locality.surfaces == frozenset({Provider.CLAUDE})
+    assert stored.locality.visible_to(Provider.CLAUDE)
+    assert not stored.locality.visible_to(Provider.CHATGPT)
+
+
+async def test_locality_binds_to_the_origin_not_to_what_the_page_claims(client, store):
+    """`Origin` is set by the browser and unforgeable by the page; `surface` in the
+    body is not. Trusting the body would let a page write a memory restricted to a
+    surface it is not, which is the same class of bug as the hardcoded
+    `Provider.CLAUDE` this endpoint already had once."""
+    async with client as c:
+        await c.post(
+            "/v1/remember",
+            json={"content": "Typed in Claude.", "local_only": True, "surface": "chatgpt"},
+            headers=AUTH,
+        )
+
+    stored = (await store.list_objects(TENANT))[0]
+    assert stored.locality.surfaces == frozenset({Provider.CLAUDE})
+
+
+async def test_a_write_from_chatgpt_is_kept_on_chatgpt(client, store):
+    async with client as c:
+        await c.post(
+            "/v1/remember",
+            json={"content": "Typed in ChatGPT.", "local_only": True},
+            headers={"X-API-Key": "sk-bridge", "Origin": "https://chatgpt.com"},
+        )
+
+    stored = (await store.list_objects(TENANT))[0]
+    assert stored.locality.surfaces == frozenset({Provider.CHATGPT})
+
+
+async def test_writes_stay_portable_unless_asked_otherwise(client, store):
+    """The default is the product's premise. A cautious default would quietly turn
+    a portable graph into per-surface silos."""
+    async with client as c:
+        await c.post("/v1/remember", json={"content": "I prefer tabs."}, headers=AUTH)
+
+    stored = (await store.list_objects(TENANT))[0]
+    assert stored.locality.mode is LocalityMode.SYNCED
+
+
+async def test_a_local_only_write_with_no_surface_is_refused(client, store):
+    """Without an origin the caller is a script, and a script has no surface to keep
+    a memory on — the object would be unreadable by anything, forever."""
+    async with client as c:
+        response = await c.post(
+            "/v1/remember",
+            json={"content": "Nowhere to keep this.", "local_only": True},
+            headers={"X-API-Key": "sk-bridge"},
+        )
+
+    assert response.status_code == 400
+    assert "needs a surface" in response.json()["message"]
+    assert await store.list_objects(TENANT) == []
+
+
+async def test_a_restricted_bridge_write_is_invisible_to_the_other_surface(client, store):
+    """End to end, through the endpoint the extension actually calls: written from
+    Claude, then searched for as ChatGPT."""
+    async with client as c:
+        await c.post(
+            "/v1/remember",
+            json={"content": "The Northwind filings are due 14 November.", "local_only": True},
+            headers=AUTH,
+        )
+        seen = await c.post(
+            "/v1/search",
+            json={"query": "Northwind filings"},
+            headers={"X-API-Key": "sk-bridge", "Origin": "https://chatgpt.com"},
+        )
+        mine = await c.post("/v1/search", json={"query": "Northwind filings"}, headers=AUTH)
+
+    assert seen.json()["results"] == []
+    assert [r["content"] for r in mine.json()["results"]] == [
+        "The Northwind filings are due 14 November."
+    ]
