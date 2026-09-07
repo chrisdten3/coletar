@@ -19,10 +19,23 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from coletar.compiler.emit import compile_eligible
+from coletar.inspector.library import SWITCHABLE
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import ContextObject, ObjectType, Scope
+from coletar.schema.objects import (
+    GLOBAL_LOCALITY,
+    ContextObject,
+    Locality,
+    LocalityMode,
+    ObjectType,
+    Provider,
+    Scope,
+)
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
+
+#: The surfaces a user can actually choose between. Imported from the library so
+#: the switcher and the reach editor cannot disagree about what exists.
+SWITCHABLE_SURFACES = SWITCHABLE
 
 #: The log is read in one pass and can be long; this bounds it without bounding the
 #: graph, which is the thing the gate actually reasons about.
@@ -153,6 +166,57 @@ async def rescope(
             detail={"from": before, "to": str(scope)},
         ),
     )
+    await mark_reviewed(store, tenant_id, object_id)
+    return stored
+
+
+async def set_locality(
+    store: Store, tenant_id: TenantId, object_id: str, *, surfaces: frozenset[Provider]
+) -> ContextObject:
+    """Choose which surfaces may read this object back.
+
+    `surfaces` is the whole intended set, not a delta, so the caller cannot express
+    a half-applied change: a form that posts three checkboxes is one decision, and
+    applying it as three separate writes would leave the graph briefly in a state
+    the user never asked for and the log holding three events for one act.
+
+    An empty set is refused rather than stored. `Locality` already rejects
+    `LOCAL_ONLY` with no surfaces, but the message it raises is about the model;
+    this one is about what the user just tried to do — restrict a memory to nobody,
+    which is retirement wearing the wrong control.
+
+    Every surface selected means the object is `SYNCED` again, not `LOCAL_ONLY`
+    naming all of them. Those two are indistinguishable to a reader today and would
+    diverge the moment a fifth surface exists: the first says "wherever I go", the
+    second freezes a list that was accurate when it was written.
+    """
+    if not surfaces:
+        raise InspectorError(
+            "an object restricted to no surface is unreachable; retire it instead"
+        )
+    obj = await _load(store, tenant_id, object_id)
+    intended = (
+        GLOBAL_LOCALITY
+        if surfaces >= frozenset(SWITCHABLE_SURFACES)
+        else Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=surfaces)
+    )
+    if intended == obj.locality:
+        return obj
+
+    before = str(obj.locality)
+    obj.locality = intended
+    stored = await store.put_object(
+        tenant_id,
+        obj,
+        event=Event(
+            type=EventType.OBJECT_LOCALITY_CHANGED,
+            object_id=object_id,
+            actor=Actor.USER,
+            detail={"from": before, "to": str(intended)},
+        ),
+    )
+    # Same convention as rescope and edit: you cannot decide where a fact may go
+    # without having read it.
     await mark_reviewed(store, tenant_id, object_id)
     return stored
 

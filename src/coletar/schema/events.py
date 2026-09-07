@@ -58,6 +58,11 @@ class EventType(StrEnum):
     # from "nothing has been captured for six hours", and those need different
     # responses.
     EXTRACTION_UNAVAILABLE = "extraction.unavailable"
+    # Which surfaces may read an object, changed. Distinct from `object.rescoped`
+    # on purpose: moving a fact into a project and withholding it from ChatGPT are
+    # different acts, and only one of them is a privacy decision the user will want
+    # to find again in an audit.
+    OBJECT_LOCALITY_CHANGED = "object.locality_changed"
 
 
 #: Events that carry a full `after` snapshot and therefore participate in replay.
@@ -71,6 +76,7 @@ REVISION_EVENTS: frozenset[EventType] = frozenset(
         EventType.CONNECTOR_WRITE,
         EventType.OBJECT_RESCOPED,
         EventType.OBJECT_MERGED,
+        EventType.OBJECT_LOCALITY_CHANGED,
         # object.reviewed is deliberately absent, for the same reason as
         # object.accessed: looking at a fact does not change it.
     }

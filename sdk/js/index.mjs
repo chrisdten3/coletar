@@ -139,8 +139,13 @@ export class Coletar {
    * held corroborates it rather than creating a duplicate, and the response reports
    * what was stored rather than what was asked for.
    */
-  async remember(content, { kind = "fact", projectId = null } = {}) {
-    return this._call("POST", "/v1/remember", { content, kind, project_id: projectId });
+  async remember(content, { kind = "fact", projectId = null, localOnly = false } = {}) {
+    return this._call("POST", "/v1/remember", {
+      content,
+      kind,
+      project_id: projectId,
+      local_only: localOnly,
+    });
   }
 
   /**

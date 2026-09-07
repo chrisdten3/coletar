@@ -138,18 +138,33 @@ class Coletar:
     # --- write --------------------------------------------------------------------
 
     async def remember(
-        self, content: str, *, kind: str = "fact", project_id: str | None = None
+        self,
+        content: str,
+        *,
+        kind: str = "fact",
+        project_id: str | None = None,
+        local_only: bool = False,
     ) -> dict[str, Any]:
         """Write a memory through the ingest boundary.
 
         A restatement of something already held corroborates it rather than creating
         a duplicate, and the response reports what was *stored* rather than what was
         asked for — those differ exactly when a corroboration folds.
+
+        `local_only` keeps the memory on the surface this call is attributed to. The
+        server decides which surface that is; a client cannot name one, because a
+        client that could would be choosing whose locality rules apply to its own
+        writes.
         """
         return await self._call(
             "POST",
             "/v1/remember",
-            json={"content": content, "kind": kind, "project_id": project_id},
+            json={
+                "content": content,
+                "kind": kind,
+                "project_id": project_id,
+                "local_only": local_only,
+            },
         )
 
     async def supersede(
