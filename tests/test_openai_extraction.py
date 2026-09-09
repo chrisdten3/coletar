@@ -125,8 +125,12 @@ async def test_an_unfunded_account_stops_the_import_instead_of_being_counted(tmp
             await claude_export.import_bundle(
                 InMemoryStore(), tenant_id("tenant_quota_test"), tmp_path
             )
-        # It stopped on the first turn rather than trying all 25.
-        assert calls == 1
+        # Bounded by one concurrency window, not by the size of the archive. Calls
+        # already in flight when the first failure lands cannot be recalled, so the
+        # guarantee is that the run stops after that window rather than repeating a
+        # doomed call for all 25 turns — and for a real archive, all 17,881.
+        assert calls <= get_settings().extraction_concurrency
+        assert calls < 25
     finally:
         monkey.undo()
         get_settings.cache_clear()

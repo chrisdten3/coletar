@@ -202,9 +202,7 @@ def read_export(archive: Path) -> Iterator[ExportedConversation]:
     if archive.is_dir():
         names = sorted(child.name for child in archive.iterdir() if child.is_file())
         for name in _conversation_entries(names, source=archive.name):
-            yield from _conversations_in(
-                (archive / name).read_bytes(), name, archive.name
-            )
+            yield from _conversations_in((archive / name).read_bytes(), name, archive.name)
         return
 
     try:
@@ -221,9 +219,7 @@ def read_export(archive: Path) -> Iterator[ExportedConversation]:
         raise ChatGPTExportError(f"{archive.name} is not a readable ZIP: {exc}") from exc
 
 
-def _conversations_in(
-    payload: bytes, name: str, source: str
-) -> Iterator[ExportedConversation]:
+def _conversations_in(payload: bytes, name: str, source: str) -> Iterator[ExportedConversation]:
     """Parse one conversations file, whichever of the two layouts it came from."""
     try:
         parsed = json.loads(payload)
@@ -426,7 +422,8 @@ async def import_export(
     redundancy M4.3 measured as absent from a curated corpus.
     """
     from coletar.config import get_settings
-    from coletar.extraction import extract_memories, extract_with_model
+    from coletar.extraction import extract_memories
+    from coletar.extraction.batch import extract_in_order
     from coletar.extraction.providers import ExtractionUnavailable
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
@@ -447,22 +444,26 @@ async def import_export(
         for reason, count in conversation.skipped.items():
             report.skipped[reason] = report.skipped.get(reason, 0) + count
 
-        for message in conversation.messages:
-            report.messages += 1
-            source_ids = [
-                part for part in (message.conversation_id, message.node_id) if part
-            ]
-
-            if use_model:
-                try:
-                    objects, edges = await extract_with_model(
-                        transcript=message.text, scope=scope, provider=Provider.CHATGPT
-                    )
-                except ExtractionUnavailable:
-                    # Never examined. Counted rather than silently folded into the
-                    # turns that genuinely held nothing.
-                    report.unavailable += 1
-                    continue
+        if use_model:
+            # Calls fan out; writes below stay in order, because corroboration and
+            # entity linking both depend on what is already in the graph.
+            messages = list(conversation.messages)
+            report.messages += len(messages)
+            async for index, extracted in extract_in_order(
+                [m.text for m in messages],
+                provider=Provider.CHATGPT,
+                scope=scope,
+                concurrency=get_settings().extraction_concurrency,
+            ):
+                message = messages[index]
+                if isinstance(extracted, BaseException):
+                    if isinstance(extracted, ExtractionUnavailable):
+                        # Never examined. Counted rather than silently folded into
+                        # the turns that genuinely held nothing.
+                        report.unavailable += 1
+                        continue
+                    raise extracted
+                objects, edges = extracted
                 await _store_graph(
                     store,
                     tenant_id,
@@ -472,10 +473,16 @@ async def import_export(
                     archive=archive.name,
                     conversation=conversation.title,
                     scope=scope,
-                    source_ids=source_ids,
+                    source_ids=[
+                        part for part in (message.conversation_id, message.node_id) if part
+                    ],
                     known_entities=known_entities,
                 )
-                continue
+            continue
+
+        for message in conversation.messages:
+            report.messages += 1
+            source_ids = [part for part in (message.conversation_id, message.node_id) if part]
 
             for memory in await extract_memories(user_text=message.text, scope=scope):
                 memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE

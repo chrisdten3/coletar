@@ -166,9 +166,10 @@ def load_conversations(archive: Path) -> list[Any]:
     if not archive.exists():
         raise ClaudeExportError(f"{archive} does not exist")
     try:
-        with zipfile.ZipFile(archive) as bundle, bundle.open(
-            _conversations_entry(bundle)
-        ) as handle:
+        with (
+            zipfile.ZipFile(archive) as bundle,
+            bundle.open(_conversations_entry(bundle)) as handle,
+        ):
             payload = json.load(handle)
     except zipfile.BadZipFile as exc:
         raise ClaudeExportError(f"{archive.name} is not a readable ZIP: {exc}") from exc
@@ -260,9 +261,7 @@ async def import_export(
                 memory.provenance.provider = Provider.CLAUDE
                 memory.provenance.confidence = 0.60
                 memory.provenance.source_object_ids = [
-                    part
-                    for part in (message.conversation_id, message.message_id)
-                    if part
+                    part for part in (message.conversation_id, message.message_id) if part
                 ]
                 report.extracted += 1
                 result = await remember(
@@ -287,7 +286,6 @@ async def import_export(
                 else:
                     report.corroborated += 1
     return report
-
 
 
 @dataclass(frozen=True)
@@ -725,7 +723,8 @@ async def import_bundle(
     conversations = root / CONVERSATIONS
     if include_conversations and conversations.exists():
         from coletar.config import get_settings
-        from coletar.extraction import extract_memories, extract_with_model
+        from coletar.extraction import extract_memories
+        from coletar.extraction.batch import extract_in_order
         from coletar.extraction.providers import ExtractionUnavailable
 
         # The regex path recovers about a third of durable statements from export
@@ -741,26 +740,32 @@ async def import_bundle(
             if conversation is None or not conversation.messages:
                 continue
             report.conversations += 1
+            if use_model:
+                turns = list(conversation.messages)
+                report.conversation_turns += len(turns)
+                async for index, extracted in extract_in_order(
+                    [m.text for m in turns],
+                    provider=Provider.CLAUDE,
+                    concurrency=get_settings().extraction_concurrency,
+                ):
+                    turn = turns[index]
+                    if isinstance(extracted, BaseException):
+                        if isinstance(extracted, ExtractionUnavailable):
+                            # Counted apart from the turns that genuinely held
+                            # nothing, so an outage cannot read as a quiet zero.
+                            report.unavailable += 1
+                            continue
+                        raise extracted
+                    for obj in extracted[0]:
+                        obj.provenance.source_object_ids = [
+                            p for p in (turn.conversation_id, turn.message_id) if p
+                        ]
+                        await _write(obj, "conversations", obj.scope)
+                continue
+
             for message in conversation.messages:
                 report.conversation_turns += 1
-                source_ids = [
-                    p for p in (message.conversation_id, message.message_id) if p
-                ]
-                if use_model:
-                    try:
-                        objects, _edges = await extract_with_model(
-                            transcript=message.text, provider=Provider.CLAUDE
-                        )
-                    except ExtractionUnavailable:
-                        # Never examined. Counted apart from the turns that genuinely
-                        # held nothing, so a provider outage cannot read as a quiet
-                        # extraction of zero.
-                        report.unavailable += 1
-                        continue
-                    for obj in objects:
-                        obj.provenance.source_object_ids = source_ids
-                        await _write(obj, "conversations", obj.scope)
-                    continue
+                source_ids = [p for p in (message.conversation_id, message.message_id) if p]
 
                 for memory in await extract_memories(user_text=message.text):
                     memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE

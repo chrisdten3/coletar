@@ -78,6 +78,12 @@ class ExtractionMethod(StrEnum):
     #: `ACCOUNT_EXPORT_PARSE` left the Context Inspector unable to tell a user which
     #: kind they were looking at, which is the one thing it exists to do.
     PROVIDER_CURATED = "provider_curated"
+    #: Proposed by a model reading the turn, then grounded and guarded exactly as
+    #: the pattern path is. Separate from `DERIVED_SUMMARY`, which is what
+    #: compression produces from objects already in the graph: this reads source
+    #: text, and it is the only path that can tell "I prefer fixed-point for money"
+    #: from "I use the subway to get to work".
+    MODEL_EXTRACTED = "model_extracted"
     ACCOUNT_EXPORT_PARSE = "account_export_parse"
     BROWSER_CAPTURE = "browser_capture"
     MCP_LIVE_WRITE = "mcp_live_write"
@@ -96,6 +102,11 @@ DEFAULT_CONFIDENCE: dict[ExtractionMethod, float] = {
     ExtractionMethod.EXPLICIT_STATEMENT: 0.95,
     ExtractionMethod.MCP_LIVE_WRITE: 0.90,
     ExtractionMethod.PROVIDER_CURATED: 0.85,
+    #: Above pattern matching, below a provider's own curation. Measured on a real
+    #: archive: over the same 1,229 turns the pattern path produced 7 memories and
+    #: the model path 171, with transient fragments falling from 18% to 0%. Landing
+    #: it on DERIVED_SUMMARY had scored the better extractor *below* the worse one.
+    ExtractionMethod.MODEL_EXTRACTED: 0.75,
     ExtractionMethod.BROWSER_CAPTURE: 0.70,
     ExtractionMethod.ACCOUNT_EXPORT_PARSE: 0.60,
     ExtractionMethod.DERIVED_SUMMARY: 0.50,

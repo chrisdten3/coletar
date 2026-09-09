@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     # Selecting a provider is a data-handling decision. The local default keeps user
     # turns on their machine; third-party providers remain explicit opt-ins.
     extraction_provider: Literal["ollama", "anthropic", "openai"] = "ollama"
+    #: How many extraction calls are in flight at once during an import. Only the
+    #: calls are parallel; graph writes stay ordered. 8 keeps a real archive under
+    #: an hour without tripping a provider's rate limit.
+    extraction_concurrency: int = 8
 
     # Provider-specific defaults are intentionally visible rather than one ambiguous
     # `extraction_model` whose meaning changes with another setting.
