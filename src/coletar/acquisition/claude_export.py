@@ -36,6 +36,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from coletar.schema.objects import ExtractionMethod, default_confidence
+
+#: Claude already did this extraction, with the whole conversation in front of
+#: it and usually under the user's eye in its own memory UI. Mined prose from
+#: the same archive is a different claim and keeps the lower export-parse score.
+_CURATED = default_confidence(ExtractionMethod.PROVIDER_CURATED)
+
 CONVERSATIONS = "conversations.json"
 
 #: What the emailed manifest calls each archive. Every one is a separate ZIP behind a
@@ -536,6 +543,10 @@ class BundleReport:
     conversation_turns: int = 0
     created: int = 0
     corroborated: int = 0
+    #: Turns the model never examined — a timeout or an outage. Reported apart from
+    #: the turns that genuinely held nothing, so a failed run cannot be read as a
+    #: clean extraction of zero.
+    unavailable: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -547,6 +558,7 @@ class BundleReport:
             "conversation_turns": self.conversation_turns,
             "created": self.created,
             "corroborated": self.corroborated,
+            "unavailable": self.unavailable,
         }
 
 
@@ -629,12 +641,12 @@ async def import_bundle(
                         type=ObjectType.PROJECT,
                         content=f"{record.name}. {record.description}".strip(". "),
                         scope=scope,
-                        confidence=0.60,
-                        extraction_method=ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+                        confidence=_CURATED,
+                        extraction_method=ExtractionMethod.PROVIDER_CURATED,
                         provenance=Provenance(
                             origin_type=OriginType.USER,
                             provider=Provider.CLAUDE,
-                            confidence=0.60,
+                            confidence=_CURATED,
                             source_object_ids=[record.id],
                         ),
                     ),
@@ -650,9 +662,9 @@ async def import_bundle(
                         kind=MemoryKind.INSTRUCTION,
                         scope=scope,
                         provider=Provider.CLAUDE,
-                        extraction_method=ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+                        extraction_method=ExtractionMethod.PROVIDER_CURATED,
                         origin_type=OriginType.USER,
-                        confidence=0.60,
+                        confidence=_CURATED,
                         source_object_ids=[record.id],
                     ),
                     "projects/prompt_template",
@@ -666,12 +678,12 @@ async def import_bundle(
                         type=ObjectType.ARTIFACT,
                         content=doc.content,
                         scope=scope,
-                        confidence=0.60,
-                        extraction_method=ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+                        confidence=_CURATED,
+                        extraction_method=ExtractionMethod.PROVIDER_CURATED,
                         provenance=Provenance(
                             origin_type=OriginType.USER,
                             provider=Provider.CLAUDE,
-                            confidence=0.60,
+                            confidence=_CURATED,
                             source_object_ids=[record.id, doc.doc_id],
                         ),
                         payload={"filename": doc.filename},
@@ -700,9 +712,9 @@ async def import_bundle(
                         kind=kind,
                         scope=scope,
                         provider=Provider.CLAUDE,
-                        extraction_method=ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+                        extraction_method=ExtractionMethod.PROVIDER_CURATED,
                         origin_type=OriginType.USER,
-                        confidence=0.60,
+                        confidence=_CURATED,
                         source_object_ids=[line.source_path],
                     ),
                     f"memories:{line.source_path}",
@@ -712,7 +724,15 @@ async def import_bundle(
     # --- conversations last: mined prose corroborating what is already known ---
     conversations = root / CONVERSATIONS
     if include_conversations and conversations.exists():
-        from coletar.extraction import extract_memories
+        from coletar.config import get_settings
+        from coletar.extraction import extract_memories, extract_with_model
+        from coletar.extraction.providers import ExtractionUnavailable
+
+        # The regex path recovers about a third of durable statements from export
+        # prose, and on a real archive it also produced memories that were not about
+        # the user at all. Telling those apart needs semantics, so this is the same
+        # opt-in the ChatGPT importer already had; the Claude one simply lacked it.
+        use_model = get_settings().extraction_mode == "model"
 
         for raw in json.loads(conversations.read_text(encoding="utf-8")):
             if not isinstance(raw, dict):
@@ -723,14 +743,31 @@ async def import_bundle(
             report.conversations += 1
             for message in conversation.messages:
                 report.conversation_turns += 1
+                source_ids = [
+                    p for p in (message.conversation_id, message.message_id) if p
+                ]
+                if use_model:
+                    try:
+                        objects, _edges = await extract_with_model(
+                            transcript=message.text, provider=Provider.CLAUDE
+                        )
+                    except ExtractionUnavailable:
+                        # Never examined. Counted apart from the turns that genuinely
+                        # held nothing, so a provider outage cannot read as a quiet
+                        # extraction of zero.
+                        report.unavailable += 1
+                        continue
+                    for obj in objects:
+                        obj.provenance.source_object_ids = source_ids
+                        await _write(obj, "conversations", obj.scope)
+                    continue
+
                 for memory in await extract_memories(user_text=message.text):
                     memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
                     memory.confidence = 0.60
                     memory.provenance.provider = Provider.CLAUDE
                     memory.provenance.confidence = 0.60
-                    memory.provenance.source_object_ids = [
-                        p for p in (message.conversation_id, message.message_id) if p
-                    ]
+                    memory.provenance.source_object_ids = source_ids
                     from coletar.schema.objects import GLOBAL_SCOPE
 
                     await _write(memory, "conversations", GLOBAL_SCOPE)

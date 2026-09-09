@@ -22,7 +22,13 @@ from coletar.acquisition.claude_export import (
     read_memories,
     read_projects,
 )
-from coletar.schema.objects import ExtractionMethod, ObjectType, Provider, ScopeType
+from coletar.schema.objects import (
+    ExtractionMethod,
+    ObjectType,
+    Provider,
+    ScopeType,
+    default_confidence,
+)
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
@@ -62,9 +68,7 @@ def export(tmp_path: Path) -> Path:
                     },
                 ],
                 "conversations_memory": "- Chris ships C++20 for EventBook.\n",
-                "project_memories": {
-                    PROJECT_ID: "- The ledger service settled on double-entry.\n"
-                },
+                "project_memories": {PROJECT_ID: "- The ledger service settled on double-entry.\n"},
             }
         )
     )
@@ -129,9 +133,7 @@ def test_claudes_own_filing_becomes_scope(export: Path) -> None:
     per-project containers instead of a single blob."""
     by_text = {line.text: line for line in read_memories(export / "memories" / "mem.json")}
 
-    assert by_text["The bracket model uses Poisson scoring rates."].project_id == (
-        "bracket-model"
-    )
+    assert by_text["The bracket model uses Poisson scoring rates."].project_id == ("bracket-model")
     assert by_text["Chris is a backend engineer."].project_id is None
     # Keyed by uuid, so this one is exact rather than inferred from a filename.
     assert by_text["The ledger service settled on double-entry."].project_id == PROJECT_ID
@@ -194,8 +196,26 @@ async def test_the_import_types_each_kind_of_thing(export: Path) -> None:
 
     for obj in objects:
         assert obj.provenance.provider is Provider.CLAUDE
-        assert obj.extraction_method is ExtractionMethod.ACCOUNT_EXPORT_PARSE
         assert obj.provenance.source_object_ids
+        # Confidence follows from the method rather than being a literal the
+        # importer happened to type at each call site.
+        assert obj.confidence == default_confidence(obj.extraction_method)
+
+    # This fixture holds both halves of an export, and the graph distinguishes them.
+    # Flattening both to ACCOUNT_EXPORT_PARSE is what left the Context Inspector
+    # unable to tell a user whether Claude had curated a memory or a regex had
+    # lifted it out of prose.
+    methods = {o.extraction_method for o in objects}
+    assert methods == {
+        ExtractionMethod.PROVIDER_CURATED,
+        ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+    }
+    curated = [o for o in objects if o.extraction_method is ExtractionMethod.PROVIDER_CURATED]
+    mined = [o for o in objects if o.extraction_method is ExtractionMethod.ACCOUNT_EXPORT_PARSE]
+    # The memories/, projects/ and docs halves are curated; only conversation prose
+    # is mined, and it scores lower so ranking can prefer the curated statement.
+    assert len(curated) > len(mined)
+    assert min(o.confidence for o in curated) > max(o.confidence for o in mined)
 
 
 @pytest.mark.asyncio
@@ -206,9 +226,7 @@ async def test_project_scoped_memory_lands_in_a_readable_scope(export: Path) -> 
     await import_bundle(store, TENANT, export)
 
     scoped = [
-        o
-        for o in await store.list_objects(TENANT, limit=500)
-        if o.scope.type is ScopeType.PROJECT
+        o for o in await store.list_objects(TENANT, limit=500) if o.scope.type is ScopeType.PROJECT
     ]
     assert scoped
     assert any(o.scope.id == "claude_ledger-research" for o in scoped)

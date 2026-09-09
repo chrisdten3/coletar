@@ -7,14 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="COLETAR_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="COLETAR_", env_file=".env", extra="ignore")
 
     # Tenant resolved by *application boundaries* only — the CLI and the local
     # proxy. The MCP server never reads this: it derives the tenant from the
@@ -96,6 +94,13 @@ class Settings(BaseSettings):
     ollama_extraction_model: str = "llama3.1"
     anthropic_extraction_model: str = "claude-sonnet-5"
     openai_extraction_model: str = "gpt-5.6-terra"
+    #: Accepts the vendor's own name as well as the prefixed one, because that is
+    #: what a `.env` already holds and what every other tool on the machine reads.
+    #: Pydantic loads `.env` into settings without exporting to `os.environ`, so a
+    #: key sitting there was invisible to the OpenAI client until this existed.
+    openai_api_key: str = Field(
+        default="", validation_alias=AliasChoices("COLETAR_OPENAI_API_KEY", "OPENAI_API_KEY")
+    )
 
     # Capture-then-batch (docs/CAPTURE_AND_BATCH.md). Off by default: retaining the
     # turns a user typed before anything has judged them is a materially larger
