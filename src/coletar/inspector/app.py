@@ -16,11 +16,13 @@ which is exactly as far as it should be trusted until there is a session model.
 from __future__ import annotations
 
 from html import escape
+from pathlib import Path
 from typing import Annotated
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Form
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from coletar.capture import is_pending
 from coletar.config import get_settings
@@ -40,6 +42,7 @@ from coletar.inspector.review import (
     rescope,
     review_status,
 )
+from coletar.inspector.web import router as web_router
 from coletar.schema.events import Event
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
@@ -56,43 +59,49 @@ from coletar.store.base import Store
 
 app = FastAPI(title="coletar context inspector", version="0.2.0")
 
+app.include_router(web_router)
+
 _PREVIEW_LEN = 120
 
+app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
+
 _PAGE = """<!doctype html>
-<html><head><meta charset="utf-8"><title>coletar — context inspector</title>
-<style>
-body {{ font-family: ui-monospace, monospace; margin: 2rem auto; max-width: 64rem;
-       line-height: 1.45; }}
-h2 {{ margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }}
-.meta {{ color: #666; }}
-.error {{ color: #b00020; }}
-.gate {{ padding: .8rem 1rem; border-radius: 6px; margin: 1rem 0; }}
-.blocked {{ background: #fff4f4; border: 1px solid #e0b4b4; }}
-.open {{ background: #f2fbf2; border: 1px solid #b4e0b4; }}
-.card {{ border: 1px solid #ddd; border-radius: 6px; padding: .7rem 1rem; margin: .6rem 0; }}
-.unreviewed {{ border-left: 4px solid #d08a00; }}
-.local-only {{ color: #8a4a00; background: #fff6e8; padding: 0 .35rem;
-              border-radius: 3px; font-weight: 600; }}
-.reviewed {{ border-left: 4px solid #4a9a4a; }}
-input[type=text] {{ width: 28rem; font-family: inherit; }}
-form.inline {{ display: inline; }}
-code {{ background: #f5f5f5; padding: 0 .2rem; }}
-nav {{ margin: .4rem 0 1rem; }}
-nav a {{ margin-right: .4rem; }}
-table {{ border-collapse: collapse; width: 100%; margin: .6rem 0; }}
-th, td {{ text-align: left; padding: .25rem .5rem; border-bottom: 1px solid #eee; }}
-th {{ color: #666; font-weight: normal; }}
-.stat {{ display: inline-block; margin: 0 1.6rem .6rem 0; }}
-.stat b {{ display: block; font-size: 1.5rem; }}
-.cold {{ color: #8a4a00; }}
-</style></head><body>
-<h1>coletar context inspector</h1>
-<nav><a href="/">graph</a> · <a href="/dashboard">dashboard</a>
- · <a href="/agentic">entity / fact / episode</a></nav>
-<p class="meta">tenant <code>{tenant}</code> — everything below is the live store.</p>
-{flash}
-{body}
-</body></html>"""
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} · coletar</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#2d6e5d">
+<link rel="stylesheet" href="/static/app.css">
+</head><body><a class="skip" href="#main">Skip to content</a>
+<aside class="sidebar"><a class="brand" href="/"><span class="mark">c</span> coletar</a>
+<nav aria-label="Workspace">{navigation}</nav>
+<div class="workspace"><span class="status-dot">●</span> Local workspace<br>
+<span class="meta">Tenant <code>{tenant}</code><br>Stored on your configured backend</span></div>
+</aside><div class="main"><header class="topbar"><h1>{title}</h1>
+<span class="meta">Your context. Your rules.</span></header>
+<main id="main" class="content">{flash}{body}
+<p class="footer">Local preview · Accounts and hosted access are not configured.</p>
+</main></div></body></html>"""
+
+
+def _shell(tenant: TenantId, body: str, *, title: str = "Library", error: str = "") -> str:
+    links = [
+        ("/", "Library"),
+        ("/review", "Review"),
+        ("/dashboard", "Activity"),
+        ("/agentic", "Capture & graph"),
+    ]
+    navigation = "".join(
+        f'<a href="{url}"' + (' aria-current="page"' if label == title else "") + f">{label}</a>"
+        for url, label in links
+    )
+    return _PAGE.format(
+        title=escape(title),
+        tenant=escape(tenant),
+        navigation=navigation,
+        flash=f'<p class="error" role="alert">{escape(error)}</p>' if error else "",
+        body=body,
+    )
 
 
 def _tenant() -> TenantId:
@@ -146,18 +155,20 @@ def _object_card(obj: ContextObject, *, reviewed: bool) -> str:
  · {_locality(obj)}</div>
 <form action="/edit" method="post">
   <input type="hidden" name="object_id" value="{escape(obj.id)}">
-  <input type="text" name="content" value="{escape(obj.content)}">
+  <label>Memory content<textarea name="content">{escape(obj.content)}</textarea></label>
   <button type="submit">save</button>
 </form>
 <form action="/rescope" method="post" class="inline">
   <input type="hidden" name="object_id" value="{escape(obj.id)}">
-  <input type="text" name="project" value="{scope_value}" placeholder="(blank = global)"
+  <input type="text" aria-label="Project scope" name="project" value="{scope_value}"
+         placeholder="(blank = global)"
          size="18">
   <button type="submit">re-scope</button>
 </form>
 <form action="/merge" method="post" class="inline">
   <input type="hidden" name="survivor_id" value="{escape(obj.id)}">
-  <input type="text" name="absorbed_id" placeholder="absorb object id" size="24">
+  <input type="text" aria-label="Object to merge" name="absorbed_id" placeholder="absorb object id"
+         size="24">
   <button type="submit">merge in</button>
 </form>
 <form action="/review" method="post" class="inline">
@@ -169,46 +180,138 @@ def _object_card(obj: ContextObject, *, reviewed: bool) -> str:
 
 def _event_log(events: list[Event]) -> str:
     rows = [
-        f"<li>{e.at.isoformat()} <span class=\"meta\">{escape(str(e.actor))}</span> "
+        f'<li>{e.at.isoformat()} <span class="meta">{escape(str(e.actor))}</span> '
         f"{escape(str(e.type))} <code>{escape(e.object_id or '-')}</code></li>"
         for e in events
     ]
     return "<ul>" + "".join(rows) + "</ul>" if rows else '<p class="meta">(none)</p>'
 
 
-async def _render(store: Store, tenant: TenantId) -> str:
+def _library_card(obj: ContextObject, *, reviewed: bool) -> str:
+    restricted = obj.locality.mode is not LocalityMode.SYNCED
+    kind = escape(str(getattr(obj, "kind", obj.type)))
+    return (
+        f'<article class="memory {"restricted" if restricted else ""}">'
+        f'<a class="memory-title" href="/objects/{quote(obj.id, safe="")}">'
+        f'{escape(obj.content)}</a><div class="memory-meta">'
+        f'<span class="badge">{kind}</span><span>{escape(str(obj.scope))}</span>'
+        f"{_locality(obj)}<span>via {escape(str(obj.provenance.provider))}</span>"
+        f"<span>{escape(str(obj.extraction_method))}</span>"
+        f"<span>confidence {obj.confidence:.2f}</span>"
+        f"<span>{'Reviewed' if reviewed else 'Awaiting review'}</span>"
+        "</div></article>"
+    )
+
+
+async def _render(store: Store, tenant: TenantId, *, q: str = "", view: str = "all") -> str:
     status = await review_status(store, tenant)
     unreviewed_ids = {o.id for o in status.unreviewed}
-    # Unreviewed first: the page's job is to get the gate open, so the objects
-    # standing between the user and a compile belong at the top.
-    ordered = sorted(
-        status.eligible, key=lambda o: (o.id not in unreviewed_ids, str(o.scope), o.id)
+    ordered = sorted(status.eligible, key=lambda o: (o.updated_at, o.id), reverse=True)
+    shown = [
+        o
+        for o in ordered
+        if q.casefold() in o.content.casefold()
+        and (
+            view == "all"
+            or (view == "unreviewed" and o.id in unreviewed_ids)
+            or (view == "restricted" and o.locality.mode is not LocalityMode.SYNCED)
+            or view == str(getattr(o, "kind", o.type))
+        )
+    ]
+    filters = "".join(
+        f'<a class="chip" href="/?{escape(urlencode({"view": value, "q": q}))}"'
+        + (' aria-current="page"' if value == view else "")
+        + f">{label}</a>"
+        for value, label in [
+            ("all", "All context"),
+            ("preference", "Preferences"),
+            ("fact", "Facts"),
+            ("decision", "Decisions"),
+            ("restricted", "Restricted"),
+            ("unreviewed", "Unreviewed"),
+        ]
     )
-    cards = "".join(
-        _object_card(obj, reviewed=obj.id not in unreviewed_ids) for obj in ordered
+    cards = "".join(_library_card(o, reviewed=o.id not in unreviewed_ids) for o in shown)
+    empty = (
+        '<div class="empty"><h2>No matching context</h2>'
+        '<p>Try another search or return to all context.</p><a href="/">Clear filters</a></div>'
+        if status.eligible
+        else '<div class="empty"><span class="eyebrow">A place for what matters</span>'
+        "<h2>Your library starts here.</h2><p>Memories from your imports and connected "
+        "tools will appear here, with their source and reach.</p>"
+        '<p class="meta">Import and connection setup are currently available through '
+        "the coletar CLI. Web onboarding is the next step.</p></div>"
     )
-    events = await store.list_events(tenant, limit=40)
     return (
-        _gate(status)
-        + f"<h2>Canonical Context Graph <span class='meta'>"
-        f"({status.reviewed_count}/{len(status.eligible)} reviewed)</span></h2>"
-        + (cards or '<p class="meta">(no compile-eligible objects)</p>')
-        + "<h2>Event/Revision Log</h2>"
-        + _event_log(events)
-    )
-
-
-async def _page(error: str = "") -> str:
-    tenant = _tenant()
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(
-        tenant=escape(tenant), flash=flash, body=await _render(build_store(), tenant)
+        '<span class="eyebrow">One library, across your tools</span>'
+        '<p class="meta">Explore what your assistants know, where it came from, '
+        "and which surfaces may read it.</p>"
+        '<form class="toolbar" method="get" role="search">'
+        f'<input type="hidden" name="view" value="{escape(view)}">'
+        f'<input type="search" name="q" value="{escape(q)}" '
+        'aria-label="Search your context" placeholder="Search your context">'
+        '<button type="submit">Search</button></form>'
+        f'<nav class="filters" aria-label="Filter context">{filters}</nav>'
+        f'<div class="summary"><span>{len(shown)} objects · '
+        f"{len(status.unreviewed)} awaiting review</span><span>Last written first</span></div>"
+        + (cards or empty)
+        + _gate(status)
+        + '<p class="meta">Withheld objects are recorded in a compile manifest, never dropped.</p>'
     )
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(error: str = "") -> str:
-    return await _page(error)
+async def index(error: str = "", q: str = "", view: str = "all") -> str:
+    tenant = _tenant()
+    return _shell(tenant, await _render(build_store(), tenant, q=q, view=view), error=error)
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_page() -> str:
+    tenant, store = _tenant(), build_store()
+    status = await review_status(store, tenant)
+    cards = "".join(_object_card(o, reviewed=False) for o in status.unreviewed)
+    return _shell(
+        tenant,
+        _gate(status)
+        + (
+            cards
+            or '<div class="empty"><h2>You’re all caught up.</h2>'
+            "<p>New and changed context will appear here for review.</p></div>"
+        ),
+        title="Review",
+    )
+
+
+@app.get("/objects/{object_id}", response_class=HTMLResponse)
+async def object_page(object_id: str) -> str:
+    tenant, store = _tenant(), build_store()
+    obj = await store.get_object(tenant, object_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="Object not found in this workspace")
+    status = await review_status(store, tenant)
+    events = await store.list_events(tenant, object_id=object_id, limit=1000)
+    timeline = "".join(
+        f"<li><strong>{escape(str(e.type))}</strong><time>{e.at.isoformat()}</time>"
+        f" · {escape(str(e.actor))}</li>"
+        for e in sorted(events, key=lambda e: e.at)
+    )
+    sources = ", ".join(escape(x) for x in obj.provenance.source_object_ids) or "No source objects"
+    body = (
+        '<a href="/">← Library</a>'
+        + _object_card(obj, reviewed=obj.id not in {o.id for o in status.unreviewed})
+        + '<div class="columns"><section><h2>History</h2>'
+        '<p class="meta">Recorded events, oldest first. Opening this page does not mark '
+        "an object reviewed. Showing up to 1,000 recent events.</p>"
+        f'<ol class="timeline">{timeline}</ol></section><section><h2>Provenance & reach</h2>'
+        f"<p>Origin: {escape(str(obj.provenance.origin_type))}</p>"
+        f"<p>Source objects: <code>{sources}</code></p><p>{_locality(obj)}</p>"
+        f"<p>In force from: {escape(str(obj.valid_from or 'Not specified'))}<br>"
+        f"Until: {escape(str(obj.valid_until or 'Not specified'))}</p>"
+        '<p class="meta">Reach is shown from the stored policy. Reach editing is not '
+        "available in this first web slice.</p></section></div>"
+    )
+    return _shell(tenant, body, title="Object")
 
 
 async def _act(action: str, **kwargs: object) -> RedirectResponse:
@@ -384,8 +487,7 @@ def _render_agentic(view: AgenticView) -> str:
             ],
         )
         sections.append(
-            f"<h2>{escape(object_type)} "
-            f"<span class='meta'>({len(rows)})</span></h2>{listed}"
+            f"<h2>{escape(object_type)} <span class='meta'>({len(rows)})</span></h2>{listed}"
         )
 
     lineage = _table(
@@ -414,16 +516,14 @@ def _render_agentic(view: AgenticView) -> str:
 async def dashboard(error: str = "") -> str:
     tenant = _tenant()
     board = await build_dashboard(build_store(), tenant)
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_dashboard(board))
+    return _shell(tenant, _render_dashboard(board), title="Activity", error=error)
 
 
 @app.get("/agentic", response_class=HTMLResponse)
 async def agentic(error: str = "") -> str:
     tenant = _tenant()
     view = await build_agentic_view(build_store(), tenant)
-    flash = f'<p class="error">{escape(error)}</p>' if error else ""
-    return _PAGE.format(tenant=escape(tenant), flash=flash, body=_render_agentic(view))
+    return _shell(tenant, _render_agentic(view), title="Capture & graph", error=error)
 
 
 @app.post("/erase-episode")

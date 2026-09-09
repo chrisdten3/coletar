@@ -7,6 +7,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,6 +62,12 @@ class Settings(BaseSettings):
 
     # Read-only Context Inspector (§8.2). Local-only, so no auth of its own.
     inspector_port: int = 8789
+    # Single-owner hosted preview gate, separate from scoped connector credentials.
+    # Account/session auth remains a later milestone; never expose the owner API bare.
+    web_username: str = "coletar"
+    web_password: str = ""
+    public_url: str = ""
+    cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 
     # Retrieval. "hashing" is the default because the in-process store has to work
     # with nothing installed; "ollama" is what a real deployment runs, against the

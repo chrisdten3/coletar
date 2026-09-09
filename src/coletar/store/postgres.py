@@ -26,6 +26,7 @@ from taste:
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -128,19 +129,30 @@ class PostgresStore:
         self.embedding_dim = embedding_dim
         self._embedder = embedder or build_embedder()
         self._pool: AsyncConnectionPool | None = None
+        self._pool_lock = asyncio.Lock()
 
     @property
     def embedder_model(self) -> str:
         return self._embedder.model
 
     async def _get_pool(self) -> AsyncConnectionPool:
+        async with self._pool_lock:
+            return await self._open_pool()
+
+    async def _open_pool(self) -> AsyncConnectionPool:
         if self._pool is None:
             # `configure` runs on every pooled connection, registering pgvector's
             # type adapters so embeddings cross the wire in binary as `vector`
             # rather than as a hand-formatted decimal string. It reads the type OID
             # from the database, so the `vector` extension must already exist --
             # run `coletar migrate` before pointing a store at a fresh database.
-            pool = AsyncConnectionPool(self.dsn, open=False, configure=register_vector_async)
+            # Supabase transaction pooling cannot retain prepared statements between
+            # transactions. Keep each function instance's connection budget small.
+            pool = AsyncConnectionPool(
+                self.dsn, open=False, configure=register_vector_async,
+                min_size=0, max_size=4, timeout=15,
+                kwargs={"prepare_threshold": None, "connect_timeout": 10},
+            )
             await pool.open(wait=True)
             self._pool = pool
         return self._pool
