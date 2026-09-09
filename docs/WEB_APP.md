@@ -119,8 +119,13 @@ the latest 2,000 events, not a billing ledger. The app loads at most 10,000 obje
 pagination and scale optimisation are future work. Historical snapshots exclude raw
 episodes. Dates are displayed in UTC; event times use the browser's timezone.
 
-The Inspector server remains loopback-only. A separate password-gated hosted
-entrypoint serves Vercel. New POST endpoints reject cross-origin browser requests.
+The Inspector server remains loopback-only. A separate hosted entrypoint serves
+Vercel, and since 8 September 2026 it is served with no credential: the workspace is
+public to read and to write. Keep private context out of that tenant. The app says
+so on screen — the sidebar reads "Public workspace" and Settings carries a
+Workspace access notice — rather than leaving it to be discovered. Connector bearer
+keys and the scheduler key are separate authorities and still apply. POST endpoints
+still reject cross-origin browser requests, which is CSRF protection, not a gate.
 
 ## The hosted workspace's contents
 

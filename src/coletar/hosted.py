@@ -1,7 +1,20 @@
 """Single-owner Vercel deployment. Account onboarding remains ROADMAP web follow-up.
 
-The owner API and connector API have different authorities: a connector's bearer
-key must never unlock the Inspector's unrestricted graph view.
+**The workspace is deliberately unauthenticated.** Anyone with the URL can read the
+graph *and* change it: add, edit, retire, import, compile, and run the extraction
+batch. That was chosen knowingly for this deployment; it is not an oversight to be
+quietly repaired. Two things it does not open, because they are different
+authorities and never depended on a workspace password:
+
+  * **Connector keys still gate the connector API.** A bearer key admits a surface
+    to `/mcp` and `/v1`, scoped and rate-limited on its own terms. `/web-api` being
+    open does not mint one.
+  * **The scheduler still needs `CRON_SECRET`.** `/api/jobs/capture` is a machine
+    endpoint, not a page, and a public trigger for a paid batch is a bill.
+
+Anything private must therefore stay out of this tenant. Locality still governs what
+each *compiled destination* receives, but it was never a gate on the owner view, and
+with no owner check left there is nothing between a visitor and a restricted object.
 """
 
 from __future__ import annotations
@@ -11,11 +24,10 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, cast
+from typing import cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.applications import Starlette
@@ -30,29 +42,6 @@ from coletar.mcp.server import build_app
 from coletar.store import build_store
 from coletar.store.postgres import PostgresStore
 
-basic = HTTPBasic(auto_error=False)
-
-
-async def owner(
-    credentials: Annotated[HTTPBasicCredentials | None, Depends(basic)],
-) -> None:
-    settings = get_settings()
-    if not settings.web_password:
-        raise HTTPException(503, "Workspace access has not been configured.")
-    if (
-        credentials is None
-        or not secrets.compare_digest(credentials.username.encode(), settings.web_username.encode())
-        or not secrets.compare_digest(credentials.password.encode(), settings.web_password.encode())
-    ):
-        raise HTTPException(
-            401,
-            "Workspace password required.",
-            headers={
-                "WWW-Authenticate": 'Basic realm="coletar workspace", charset="UTF-8"',
-                "Cache-Control": "no-store",
-            },
-        )
-
 
 class ConnectionStatus(BaseModel):
     hosted: bool = True
@@ -62,6 +51,9 @@ class ConnectionStatus(BaseModel):
     capture_enabled: bool
     upload_limit_mb: int = 4
     account_auth: bool = False
+    #: Surfaced so the app can say so on screen rather than leaving it to be
+    #: discovered. See this module's docstring.
+    public_workspace: bool = True
     extraction_backend: str = "off"
     worker_schedule: str = "not configured"
     credentials: str = "Connector keys are stored in the deployment's private environment file."
@@ -93,8 +85,6 @@ def create_app() -> FastAPI:
         settings = get_settings()
         if settings.store_backend != "postgres":
             raise RuntimeError("Hosted coletar requires Postgres; function files are ephemeral.")
-        if len(settings.web_password) < 24:
-            raise RuntimeError("Set a random COLETAR_WEB_PASSWORD of at least 24 characters.")
         connector = build_app(stateless=True)
         app.mount("/", cast(ASGIApp, connector))
         mounted = app.router.routes[-1]
@@ -122,7 +112,7 @@ def create_app() -> FastAPI:
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
-    @app.get("/", dependencies=[Depends(owner)])
+    @app.get("/")
     async def home() -> RedirectResponse:
         return RedirectResponse("/app#/home")
 
@@ -130,7 +120,7 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/web-api/connections", dependencies=[Depends(owner)], response_model=ConnectionStatus)
+    @app.get("/web-api/connections", response_model=ConnectionStatus)
     async def connections() -> ConnectionStatus:
         settings = get_settings()
         await build_store().list_objects(tenant(), limit=1)
@@ -145,7 +135,7 @@ def create_app() -> FastAPI:
             else "on demand only",
         )
 
-    @app.post("/web-api/process-captures", dependencies=[Depends(owner), Depends(same_origin)])
+    @app.post("/web-api/process-captures", dependencies=[Depends(same_origin)])
     async def process_now() -> BatchResult:
         return await process_captures()
 
@@ -170,6 +160,9 @@ def create_app() -> FastAPI:
             status_code=409,
         )
 
-    app.include_router(router, dependencies=[Depends(owner), Depends(same_origin)])
+    # `same_origin` is not authentication. It stops another site's page from
+    # POSTing here in a visitor's browser; it does not stop anyone who asks
+    # directly, and with the owner check gone nothing does.
+    app.include_router(router, dependencies=[Depends(same_origin)])
     app.mount("/static", StaticFiles(directory=Path(__file__).parent / "inspector" / "static"))
     return app

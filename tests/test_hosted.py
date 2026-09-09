@@ -1,4 +1,10 @@
-"""Hosted owner authority must remain separate from connector authority."""
+"""The hosted workspace is open; the connector and scheduler authorities are not.
+
+This deployment serves `/web-api` with no credential at all, by choice. These tests
+pin the two things that must not follow from that: an open workspace does not admit
+anyone to the connector API, and it does not become a public trigger for a paid
+extraction batch.
+"""
 
 import json
 
@@ -10,16 +16,12 @@ from coletar.hosted import create_app
 from coletar.store import reset_store
 from coletar.store.memory import InMemoryStore
 
-PASSWORD = "test-owner-password-longer-than-24"
-
 
 @pytest.fixture
 def hosted(monkeypatch):
     import coletar.store
 
     monkeypatch.setenv("COLETAR_STORE_BACKEND", "postgres")
-    monkeypatch.setenv("COLETAR_WEB_USERNAME", "coletar")
-    monkeypatch.setenv("COLETAR_WEB_PASSWORD", PASSWORD)
     monkeypatch.setenv("COLETAR_PUBLIC_URL", "https://coletar.example")
     monkeypatch.setenv("COLETAR_DEFAULT_TENANT_ID", "tenant_test")
     monkeypatch.setenv("COLETAR_MCP_ALLOWED_HOSTS", "testserver")
@@ -45,33 +47,37 @@ def hosted(monkeypatch):
     reset_store()
 
 
-def test_owner_endpoints_reject_connector_keys_and_anonymous_requests(hosted):
-    for path in ("/", "/app", "/web-api/state", "/web-api/connections"):
-        assert hosted.get(path).status_code == 401
-        assert (
-            hosted.get(path, headers={"Authorization": "Bearer connector-key"}).status_code == 401
-        )
+def test_workspace_serves_anonymously(hosted):
+    """No credential is asked for, and none is refused for being the wrong kind."""
+    for path in ("/app", "/web-api/state", "/web-api/connections"):
+        assert hosted.get(path).status_code == 200
+        with_key = hosted.get(path, headers={"Authorization": "Bearer connector-key"})
+        assert with_key.status_code == 200
     assert hosted.get("/healthz").json() == {"status": "ok"}
-    response = hosted.get("/web-api/state", auth=("coletar", PASSWORD))
-    assert response.status_code == 200
+    assert hosted.get("/").status_code == 200
+    response = hosted.get("/web-api/state")
     assert response.json()["hosted"] is True
+    # Still uncached: an open page is not a page that should sit in a shared proxy.
     assert response.headers["cache-control"] == "no-store"
-    assert hosted.get("/edit", auth=("coletar", PASSWORD)).status_code != 200
+    assert hosted.get("/web-api/connections").json()["public_workspace"] is True
+    # The developer Inspector's own routes are not mounted here.
+    assert hosted.get("/edit").status_code != 200
 
 
-def test_owner_password_does_not_unlock_connector_and_writes_require_same_origin(hosted):
-    assert (
-        hosted.post("/v1/search", json={"query": "test"}, auth=("coletar", PASSWORD)).status_code
-        == 401
-    )
+def test_open_workspace_does_not_open_the_connector_api(hosted):
+    """Reading the graph through the page is not a scope on the connector API."""
+    assert hosted.post("/v1/search", json={"query": "test"}).status_code == 401
+    ping = hosted.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert ping.status_code == 401
+    # `same_origin` survives: another site's page still cannot POST here in a
+    # visitor's browser, which is a different protection from a credential.
     denied = hosted.post(
         "/web-api/memories",
         json={"content": "Injected"},
-        auth=("coletar", PASSWORD),
         headers={"Origin": "https://evil.example"},
     )
     assert denied.status_code == 403
-    assert hosted.get("/web-api/state", auth=("coletar", PASSWORD)).json()["objects"] == []
+    assert hosted.get("/web-api/state").json()["objects"] == []
 
 
 def test_hosted_stateless_protocol_and_rest_share_graph(hosted):
@@ -114,7 +120,7 @@ def test_hosted_stateless_protocol_and_rest_share_graph(hosted):
     response = hosted.post("/v1/search", headers=headers, json={"query": "integer cents"})
     assert response.status_code == 200
     assert "integer cents" in response.text
-    objects = hosted.get("/web-api/state", auth=("coletar", PASSWORD)).json()["objects"]
+    objects = hosted.get("/web-api/state").json()["objects"]
     assert any("integer cents" in o["content"] for o in objects)
 
 
@@ -142,7 +148,6 @@ def test_scheduled_worker_requires_its_own_key_and_explicit_optin(hosted, monkey
     monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "false")
     get_settings.cache_clear()
     assert hosted.get("/api/jobs/capture").status_code == 401
-    assert hosted.get("/api/jobs/capture", auth=("coletar", PASSWORD)).status_code == 401
     headers = {"Authorization": "Bearer scheduler-key"}
     assert hosted.get("/api/jobs/capture", headers=headers).status_code == 409
     assert not called
@@ -151,4 +156,3 @@ def test_scheduled_worker_requires_its_own_key_and_explicit_optin(hosted, monkey
     get_settings.cache_clear()
     assert hosted.get("/api/jobs/capture", headers=headers).json()["extraction"]["processed"] == 1
     assert called == ["tenant_test"]
-    assert hosted.get("/web-api/state", headers=headers).status_code == 401

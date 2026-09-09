@@ -62,10 +62,9 @@ class Settings(BaseSettings):
 
     # Read-only Context Inspector (§8.2). Local-only, so no auth of its own.
     inspector_port: int = 8789
-    # Single-owner hosted preview gate, separate from scoped connector credentials.
-    # Account/session auth remains a later milestone; never expose the owner API bare.
-    web_username: str = "coletar"
-    web_password: str = ""
+    # The hosted deployment serves its workspace unauthenticated by choice; see
+    # `coletar.hosted`. Connector credentials below are a separate authority and are
+    # unaffected. Account/session auth remains a later milestone.
     public_url: str = ""
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 

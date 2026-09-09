@@ -7,18 +7,34 @@ container-host instructions are preserved in [DEPLOYMENT_FLY.md](DEPLOYMENT_FLY.
 
 ## Access and configuration
 
-The workspace uses a generated HTTP Basic password. Full account/session auth is
-deferred. Private access instructions are in `data/hosted-access.md`; deployment
-configuration is in `.env.vercel`. Both are Git-ignored, upload-excluded, mode 0600.
-Do not share either file. Production and preview environment variables are set in
-Vercel; secrets are stored as sensitive variables and never embedded in JavaScript.
+**The workspace is served with no credential at all.** Anyone with the URL can read
+every object in the tenant — including objects marked restricted, whose locality
+governs what a *compiled destination* receives and was never a gate on the owner
+view — and can add, edit, retire, import and compile. This was chosen deliberately
+on 8 September 2026, replacing an HTTP Basic gate; it is not an oversight. The
+consequence is a rule about what may live here: **keep private context out of this
+tenant.** Full account/session auth remains deferred.
+
+Two authorities did not follow the workspace and are still required:
+
+| Surface | Credential |
+|---|---|
+| `/web-api`, `/app` | none |
+| `/mcp`, `/v1` | connector bearer key, scoped per surface |
+| `/api/jobs/capture` | `CRON_SECRET` |
+
+Connector keys are in `data/hosted-access.md`; deployment configuration is in
+`.env.vercel`. Both are Git-ignored, upload-excluded, mode 0600. Do not share either
+file. Production and preview environment variables are set in Vercel; secrets are
+stored as sensitive variables and never embedded in JavaScript.
 
 The local Inspector still binds loopback. The hosted entrypoint is `app.py`, backed
 by `coletar.hosted.create_app`. It exposes only the new web router, not the old
-unauthenticated Inspector forms. Owner passwords, connector bearer keys and the cron
-key have separate authorities. Owner writes enforce same-origin browser requests.
+Inspector forms. Web writes still enforce same-origin browser requests — that stops
+another site's page from POSTing here in a visitor's browser, and it is not
+authentication: it does not stop anyone who asks directly.
 
-The startup refuses an in-memory store or an inadequately configured owner password.
+The startup refuses an in-memory store.
 Supabase is the canonical Postgres store. Its eight migrations were checked against
 the ledger; pending migrations 004–007 and new migration 008 were applied on 2026-09-08. The project had
 been paused and was resumed before validation. Managed backups and a tested restore
@@ -75,7 +91,9 @@ crypto-shredded. Successful model extraction is not claimed until retested after
 
 Vercel invokes `/api/jobs/capture` daily at 03:00 UTC (Hobby scheduling may run within
 the scheduled hour). It requires `CRON_SECRET`. The Capture queue also offers a
-password-protected, same-origin **Process pending turns with OpenAI** action. Each
+unauthenticated, same-origin **Process pending turns with OpenAI** action. Anyone
+who loads the page can trigger a paid batch; the per-pass bounds below are what caps
+the cost. Each
 pass uses the existing tenant lease, processes at most five turns, expires aged
 sources through crypto-shredding, and has a 240-second execution bound. A backlog
 larger than five turns needs additional manual runs or a more frequent worker.
@@ -97,8 +115,8 @@ resolves the repository's `src` directory explicitly because the editable instal
 link is not retained in the deployed runtime. `.vercelignore` excludes secrets,
 exports, local stores, test data and dependency caches.
 
-`/healthz` is public liveness only. `/web-api/connections` requires the workspace
-password and tests a real Store read. MCP hostnames use an explicit allowlist; add
+`/healthz` is public liveness only. `/web-api/connections` is public and tests a
+real Store read. MCP hostnames use an explicit allowlist; add
 any new domain to `COLETAR_MCP_ALLOWED_HOSTS` before using it for MCP. The production
 alias is configured; arbitrary preview hostnames are not automatically trusted.
 
