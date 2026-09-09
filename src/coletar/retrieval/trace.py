@@ -80,6 +80,13 @@ class RetrievalTrace:
     #: Which door the search came through: mcp, proxy, cli. §6's dashboard groups by
     #: it, and it is how "the local bridge injected this" is told from "Claude asked".
     surface: str
+    #: *Which assistant* asked, as opposed to which door it came through. Both
+    #: matter and they are not the same question: every Claude surface and every
+    #: ChatGPT surface arrives through the one `mcp` door, so grouping reads by
+    #: `surface` answers "how did this reach us" and cannot answer "who has seen
+    #: this fact". Taken from the authenticated principal's key-issuance surface,
+    #: never from anything the caller says about itself.
+    provider: str | None
     #: The authenticated caller, or None for an unauthenticated local surface.
     principal: str | None
     top_k: int
@@ -100,6 +107,7 @@ class RetrievalTrace:
             "query_digest": self.query_digest,
             "scope": self.scope,
             "surface": self.surface,
+            "provider": self.provider,
             "principal": self.principal,
             "top_k": self.top_k,
             "token_budget": self.token_budget,
@@ -128,6 +136,7 @@ def build_trace(
     embedder_model: str,
     backend: str = "unknown",
     surface: str = "unknown",
+    provider: str | None = None,
     principal: str | None = None,
     strategy: str = "published",
     record_query_text: bool = False,
@@ -136,6 +145,7 @@ def build_trace(
         query_digest=query_digest(query),
         scope=str(scope) if scope is not None else "any",
         surface=surface,
+        provider=provider,
         principal=principal,
         top_k=top_k,
         token_budget=token_budget,

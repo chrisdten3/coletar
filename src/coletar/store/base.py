@@ -90,6 +90,57 @@ class Lease(BaseModel):
         return self.owner == owner and self.expires_at > now
 
 
+class ReadReceipt(BaseModel):
+    """One recorded occasion on which one object was served to one caller.
+
+    Derived from the retrieval trace, not stored alongside it. §5.1 records one
+    trace per search rather than one row per hit, so a receipt is a *projection* of
+    a trace onto a single object — which keeps the log the same size it has always
+    been and means read receipts add an index, not a second write path.
+
+    `provider` is which assistant asked; `surface` is which door the request came
+    through. They answer different questions and a dashboard needs both: every
+    Claude and ChatGPT surface arrives through the one `mcp` door, so grouping by
+    surface can tell you how context reached a model and can never tell you which
+    model saw a fact. `provider` comes from the principal's key-issuance surface,
+    which is the one identity a caller cannot assert about itself.
+
+    `query_text` is present only where the calling code opted in per call (§11);
+    otherwise the digest is all there is, by design.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    at: datetime
+    provider: str | None
+    surface: str
+    principal: str | None
+    query_digest: str
+    query_text: str | None
+    returned: int
+
+    @classmethod
+    def from_trace(cls, event: Event) -> ReadReceipt:
+        """Project one `retrieval.trace` onto a receipt.
+
+        Shared by both backends rather than written twice: the two stores are held
+        to being identical through this interface, and a projection implemented
+        once cannot drift between them.
+        """
+        detail = event.detail
+        return cls(
+            at=event.at,
+            # `provider` predates nothing — traces written before it existed simply
+            # have no answer, and None says that rather than guessing one.
+            provider=detail.get("provider"),
+            surface=str(detail.get("surface", "unknown")),
+            principal=detail.get("principal"),
+            query_digest=str(detail.get("query_digest", "")),
+            query_text=detail.get("query_text"),
+            returned=len(detail.get("returned_ids") or ()),
+        )
+
+
 @runtime_checkable
 class Store(Protocol):
     @property
@@ -231,6 +282,22 @@ class Store(Protocol):
     ) -> list[Event]:
         """Newest first. Returned events are copies: the log is append-only, and a
         caller mutating what it was handed must not be able to rewrite history."""
+        ...
+
+    async def reads_of(
+        self, tenant_id: TenantId, object_id: str, *, limit: int = 100
+    ) -> list[ReadReceipt]:
+        """Who has been served this object, newest first.
+
+        The counterpart to `list_events(object_id=...)`, which answers who *wrote*
+        it. Locality decides which surfaces may read a fact; this is what makes that
+        decision auditable after the fact rather than merely configured — including
+        the case that matters most, a restricted object with no receipts at all.
+
+        Implementations must filter by tenant like every other read path: a receipt
+        names an object and a caller, which is exactly the kind of row that must not
+        cross a tenant boundary.
+        """
         ...
 
     async def search(

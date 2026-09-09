@@ -33,6 +33,7 @@ from typing import Any
 import numpy as np
 from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from coletar.retrieval.embedding import Embedder, build_embedder, cosine, tokenize
@@ -48,7 +49,7 @@ from coletar.schema.objects import (
     object_from_record,
 )
 from coletar.schema.tenancy import CrossTenantError, TenantId
-from coletar.store.base import Lease
+from coletar.store.base import Lease, ReadReceipt
 
 #: Always qualified, and every query below aliases `context_object` as `o`. The
 #: search query joins against a candidate CTE that also has an `id`, so an
@@ -568,6 +569,25 @@ class PostgresStore:
             rows = await cur.fetchall()
         return [_event_from_row(row) for row in rows]
 
+    async def reads_of(
+        self, tenant_id: TenantId, object_id: str, *, limit: int = 100
+    ) -> list[ReadReceipt]:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                # Containment against the GIN index from migration 009 rather than a
+                # scan of the log. Jsonb(...) sends the id as a JSON scalar, which is
+                # what `@>` needs to test membership of the returned_ids array.
+                "SELECT id, type, object_id, actor, provider, at, detail "
+                "FROM event_log "
+                "WHERE tenant_id = %s AND type = %s "
+                "AND detail -> 'returned_ids' @> %s "
+                "ORDER BY at DESC, id DESC LIMIT %s",
+                (tenant_id, str(EventType.RETRIEVAL_TRACE), Jsonb(object_id), limit),
+            )
+            rows = await cur.fetchall()
+        return [ReadReceipt.from_trace(_event_from_row(row)) for row in rows]
+
     # -- retrieval ----------------------------------------------------------
     async def search(
         self,
@@ -704,8 +724,6 @@ class PostgresStore:
 def _object_params(
     tenant_id: TenantId, obj: ContextObject, dump: dict[str, Any]
 ) -> dict[str, Any]:
-    from psycopg.types.json import Jsonb
-
     return {
         "tenant_id": tenant_id,
         "id": obj.id,

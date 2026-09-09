@@ -40,7 +40,7 @@ from coletar.schema.objects import (
     object_from_record,
 )
 from coletar.schema.tenancy import LEGACY_TENANT, CrossTenantError, TenantId
-from coletar.store.base import Lease
+from coletar.store.base import Lease, ReadReceipt
 
 #: Bumped when tenancy landed. A version-1 snapshot has no tenant on any record.
 SNAPSHOT_FORMAT_VERSION = 2
@@ -412,6 +412,17 @@ class InMemoryStore:
         # Deep copies: the log is append-only, and a caller that mutates a returned
         # event's `before`/`after` dict must not be able to rewrite history.
         return [e.model_copy(deep=True) for e in out[-limit:][::-1]]
+
+    async def reads_of(
+        self, tenant_id: TenantId, object_id: str, *, limit: int = 100
+    ) -> list[ReadReceipt]:
+        receipts = [
+            ReadReceipt.from_trace(event)
+            for event in reversed(self._events.get(tenant_id, []))
+            if event.type is EventType.RETRIEVAL_TRACE
+            and object_id in (event.detail.get("returned_ids") or ())
+        ]
+        return receipts[:limit]
 
     # -- retrieval ----------------------------------------------------------
     async def _ensure_embeddings(self, tenant_id: TenantId) -> None:

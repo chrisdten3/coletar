@@ -902,12 +902,28 @@ second provider, and ChatGPT currently has no working surface at all.
 Each of these was checked against the competitive set and none of them appear to be
 done by anyone — which is a reason to write them down, not a reason to start.
 
-- [ ] **Read receipts.** Every *write* is logged immutably; **no read is logged at
-      all**. So the graph can answer "where did this come from" and cannot answer
-      "who has seen it" — and for a lawyer with a privileged matter in their graph,
-      the second question is the more urgent one. A per-surface access log makes
-      locality *provable* rather than merely configured, and it is the same
-      substrate rather than a new one. The natural first build
+- [x] **Read receipts.** *This entry was wrong when written*, and the correction is
+      the interesting part: reads have been logged since M2.3, one `retrieval.trace`
+      per search. What was missing was the *shape* of the question. The log answers
+      "where did this come from" per object because `event_log.object_id` is
+      indexed; it could not answer "who has seen this fact" because a trace records
+      one row per search, not per hit, so the object ids sit inside
+      `detail->'returned_ids'`.
+
+      `Store.reads_of(tenant, object_id)` is that question, as a projection of the
+      trace onto one object — a GIN index (migration 009) rather than a second
+      write path, so the log stays the size it has always been. Both backends
+      implement it and `tests/test_read_receipts.py` runs against both.
+
+      Two things had to change for the answer to be true. Traces recorded only the
+      *door* a request came through (`mcp`, `proxy`, `cli`), which cannot answer
+      which assistant read a fact when every Claude and ChatGPT surface shares the
+      one MCP door — so a trace now also records `provider`, taken from the
+      principal's key-issuance surface, the one identity a caller cannot assert
+      about itself. And the Object page shows the receipts next to the reach
+      controls, because a restricted object with an empty receipt list is the
+      evidence that the restriction held. Locality is now provable rather than
+      merely configured
 
 - [ ] **Redaction instead of withholding.** Locality is binary today: a surface sees
       a memory or it does not. The useful answer is often partial — "handling a
