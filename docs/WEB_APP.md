@@ -122,6 +122,18 @@ episodes. Dates are displayed in UTC; event times use the browser's timezone.
 The Inspector server remains loopback-only. A separate password-gated hosted
 entrypoint serves Vercel. New POST endpoints reject cross-origin browser requests.
 
+## The hosted workspace's contents
+
+As of 8 September 2026 the deployed Supabase graph holds, besides the design
+examples: four memories from an early ChatGPT/Claude import, one erased capture
+episode, and three `Synthetic deployment check` memories written by connector smoke
+tests. All eight were retired before the examples were loaded, so they do not appear
+on any screen; they are still in the log, and their events are still replayable.
+Nothing here hard-deletes them.
+
+The `mcp` row in Settings' usage is real: 162 tokens served through the MCP door
+during those smoke tests, recorded as ordinary retrieval traces.
+
 ## Repository assessment and next work
 
 At the starting commit `91fd36e`, the graph, both storage backends, retrieval, three
