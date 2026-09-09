@@ -92,6 +92,48 @@ Local models are not a substitute on this machine and were not pursued: llama3.1
 4.7 GB against 8 GB of RAM and times out, and a 0.5b model does not clear the
 false-positive bar.
 
+## Results: regex vs. model, on the same 1,229 Claude turns
+
+Every column is the same archive through the same importer. Only extraction differs.
+
+| | regex | model, first prompt | model, current prompt |
+|---|---|---|---|
+| Objects | 195 | 571 | 411 |
+| Mined memories | **7** | 171 | **84** |
+| Entities | 0 | 171 | 105 |
+| Facts | 0 | 41 | 34 |
+| Median length | 49 ch | 68 ch | **84 ch** |
+| Under 45 chars | 43% | 29% | **19%** |
+| Transient phrasing | 14% | **0%** | **0%** |
+| Per-task imperatives | 0% | 4% | 5% |
+
+**Recall: 7 → 84, a 12x increase**, and the regex column's 7 is the honest ceiling
+of pattern matching over years of prose it was never tuned for. Entities and facts
+go from nothing to a populated graph; patterns can only emit first-person memories,
+so a third party had nowhere to go except the user's own profile.
+
+The current prompt extracts *half* what the first one did (84 against 171) and that
+is the point. Precision-over-recall is the standing rule, the quality metrics all
+move the right way, and the drop is the prompt declining turns the earlier one
+accepted.
+
+### What is still wrong
+
+**~5% of mined memories are per-task imperatives**: `Dont import any outside
+modules`, `dont use munchin and crunchin`, `make the responses simpler`. These are
+commands to an assistant inside one piece of work, not durable facts about the user.
+The prompt's TRANSIENT examples cover narration and requests but not instructions,
+which read as standing preferences because grammatically that is what they look
+like. Regex scored 0% here only because its patterns could not match an imperative
+at all.
+
+**Third-person statements still land as first-person memories**: `He has prior
+experience in software devolpment` is a claim about someone else, and belongs in
+`facts` linked to an entity. The rule exists in the prompt for pasted text; it does
+not yet cover the user describing a third party in their own words.
+
+Both are prompt work, measurable against this table.
+
 ## Running it once there are credits
 
 ```sh
