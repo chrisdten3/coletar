@@ -98,6 +98,31 @@ account for an address that already has one is refused, never upserted: quietly
 returning the existing account would make `create` a way to acquire someone else's
 graph by guessing their address.
 
+## Running the tests against a real database
+
+`tests/test_accounts.py` runs against both directories, but the Postgres half
+**skips silently** when nothing is reachable on 5433 — which is how the `touch_key`
+bug below survived a green suite. Bring one up before trusting a result:
+
+```sh
+docker compose up -d          # or, with no Docker, a local Postgres on 5433
+uv run pytest tests/test_accounts.py
+```
+
+With a database: 800 passed, 3 skipped across the whole suite. Without: 732 passed,
+67 skipped. A run that reports 67 skips has not tested any SQL.
+
+### The bug that justifies the discipline
+
+`touch_key` ran an `UPDATE` with no `RETURNING` through the row-fetching helper.
+psycopg raises when asked for records a statement did not produce, so it failed on
+Postgres and passed in memory. It is called on **every authenticated request**, so
+the production failure mode was every connector call erroring while CI stayed green.
+
+Fixed with a separate `_execute` for statements that return nothing, and guarded at
+the call site: refusing a valid credential because a last-used stamp could not be
+written would turn a bookkeeping problem into an outage.
+
 ## Not built
 
 Sign-up and sign-in flows, sessions, and a key-management UI. The web app still
