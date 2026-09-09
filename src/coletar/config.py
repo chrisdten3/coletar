@@ -64,8 +64,13 @@ class Settings(BaseSettings):
     inspector_port: int = 8789
     # The hosted deployment serves its workspace unauthenticated by choice; see
     # `coletar.hosted`. Connector credentials below are a separate authority and are
-    # unaffected. Account/session auth remains a later milestone.
+    # unaffected.
     public_url: str = ""
+    # Which identity provider vouches for an account. "local" trusts whoever can
+    # reach the port, which is a laptop assumption and is refused when `public_url`
+    # is set. Clerk and Supabase Auth plug in here; see `coletar.accounts.identity`
+    # for the whole of what adopting one involves.
+    identity_provider: str = "local"
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 
     # Retrieval. "hashing" is the default because the in-process store has to work

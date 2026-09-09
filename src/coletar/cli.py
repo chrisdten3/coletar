@@ -32,6 +32,7 @@ def _tenant(explicit: str | None) -> TenantId:
     """Resolve the tenant, preferring an explicit flag over configuration."""
     return parse_tenant_id(explicit or get_settings().default_tenant_id)
 
+
 app = typer.Typer(help="coletar — a portable AI workspace.", no_args_is_help=True)
 
 
@@ -136,9 +137,7 @@ def search(
 
 
 @app.command()
-def compress(
-    project: str | None = typer.Option(None), tenant: str | None = TENANT_OPTION
-) -> None:
+def compress(project: str | None = typer.Option(None), tenant: str | None = TENANT_OPTION) -> None:
     """Run the compression job (§6) over one scope."""
     from coletar.jobs import compress as run_compress
 
@@ -297,9 +296,7 @@ def compile(
         "chatgpt": ChatGPTCompiler,
     }
     if destination not in compilers:
-        raise typer.BadParameter(
-            f"unknown destination {destination!r}; have {sorted(compilers)}"
-        )
+        raise typer.BadParameter(f"unknown destination {destination!r}; have {sorted(compilers)}")
 
     async def _run() -> None:
         resolved = _tenant(tenant)
@@ -426,9 +423,7 @@ def watch_downloads(
                 return
             held = store_archive(path)
             typer.echo(f"  found a {provider} export: {path.name} -> {held.short_id}")
-            report = await importers[provider](
-                store, resolved, held.path, scope=_scope(project)
-            )
+            report = await importers[provider](store, resolved, held.path, scope=_scope(project))
             typer.echo(json.dumps(report.as_dict(), indent=2))
 
         await watch(folder, on_export, poll_seconds=POLL_SECONDS)
@@ -484,9 +479,7 @@ def import_claude(
                     include_conversations=not memories_only,
                 )
             else:
-                report = await import_export(
-                    build_store(), resolved, target, scope=_scope(project)
-                )
+                report = await import_export(build_store(), resolved, target, scope=_scope(project))
         except ClaudeExportError as exc:
             raise typer.BadParameter(str(exc)) from exc
         typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
@@ -522,8 +515,9 @@ def mirror(
             report = await pull_edits(store, resolved, vault, dry_run=dry_run)
         else:
             report = await run_mirror(store, resolved, vault)  # type: ignore[assignment]
-        typer.echo(json.dumps({"tenant": resolved, "vault": str(vault),
-                               **report.as_dict()}, indent=2))
+        typer.echo(
+            json.dumps({"tenant": resolved, "vault": str(vault), **report.as_dict()}, indent=2)
+        )
 
     asyncio.run(_run())
 
@@ -581,9 +575,7 @@ def as_of(
             for hit in hits:
                 typer.echo(f"  {hit.score:.4f}  [{hit.obj.scope}] {hit.obj.content}")
             return
-        objects = await graph_as_of(
-            store, resolved, moment, scope=scope, in_force_at=force
-        )
+        objects = await graph_as_of(store, resolved, moment, scope=scope, in_force_at=force)
         label = f" (in force {force.date()})" if force else ""
         typer.echo(f"as of {moment.isoformat()}{label} — {len(objects)} objects")
         for obj in objects:
@@ -697,8 +689,9 @@ def evaluate(
     async def _run() -> None:
         settings = get_settings()
         embedder = (
-            OllamaEmbedder(settings.upstream_base_url, settings.embedding_model,
-                           settings.embedding_dim)
+            OllamaEmbedder(
+                settings.upstream_base_url, settings.embedding_model, settings.embedding_dim
+            )
             if ollama
             else HashingEmbedder(settings.embedding_dim)
         )
@@ -865,3 +858,159 @@ def events(limit: int = 50, tenant: str | None = TENANT_OPTION) -> None:
 
 if __name__ == "__main__":
     app()
+
+
+account_app = typer.Typer(help="Accounts: who owns a graph, and what may reach it.")
+app.add_typer(account_app, name="account")
+
+
+@account_app.command("create")
+def account_create(
+    email: str = typer.Argument(..., help="The owner's email address."),
+    name: str = typer.Option("", "--name", help="Display name."),
+    key: bool = typer.Option(True, help="Also issue a first API key."),
+    surface: str = typer.Option(
+        "coletar", help="Which assistant the first key is for: claude|chatgpt|local|coletar."
+    ),
+) -> None:
+    """Provision an account and the tenant whose graph is theirs.
+
+    No password is asked for and none is stored. The account records which identity
+    provider vouches for it — `local` until a real one is configured — and is
+    claimed by whichever identity signs in as it later.
+    """
+    from coletar.accounts import build_directory
+    from coletar.accounts.directory import DirectoryError
+    from coletar.schema.objects import Provider
+
+    async def run() -> None:
+        directory = build_directory()
+        try:
+            account = await directory.create_account(email, display_name=name)
+        except DirectoryError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
+
+        typer.echo(f"account   {account.id}")
+        typer.echo(f"email     {account.email}")
+        typer.echo(f"tenant    {account.tenant_id}")
+        typer.echo(f"identity  {account.identity_provider} (unclaimed)")
+        if not key:
+            return
+        issued = await directory.issue_key(
+            account.id, name=f"{surface} connector", surface=Provider(surface)
+        )
+        typer.echo("")
+        typer.secho(
+            "Copy this key now — it is not stored and cannot be shown again:",
+            fg=typer.colors.YELLOW,
+        )
+        typer.echo(f"  {issued.secret}")
+        typer.echo("")
+        typer.echo(
+            f"Point COLETAR_DEFAULT_TENANT_ID at {account.tenant_id} to work as this account."
+        )
+
+    asyncio.run(run())
+
+
+@account_app.command("list")
+def account_list() -> None:
+    """Every provisioned account and the tenant it owns."""
+    from coletar.accounts import build_directory
+
+    async def run() -> None:
+        accounts = await build_directory().list_accounts()
+        if not accounts:
+            typer.echo("No accounts. Provision one with `coletar account create <email>`.")
+            return
+        for account in accounts:
+            claimed = account.external_id or "unclaimed"
+            typer.echo(
+                f"{account.id}  {account.email:<32}  {account.tenant_id}  "
+                f"{account.identity_provider}:{claimed}"
+            )
+
+    asyncio.run(run())
+
+
+@account_app.command("issue-key")
+def account_issue_key(
+    email: str = typer.Argument(..., help="Whose account to issue a key for."),
+    name: str = typer.Option(..., "--name", help="What this key is for."),
+    surface: str = typer.Option("coletar", help="claude|chatgpt|local|coletar."),
+    read_only: bool = typer.Option(False, "--read-only", help="Issue without the write scope."),
+) -> None:
+    """Mint a connector key. The secret is printed once and never stored."""
+    from coletar.accounts import build_directory
+    from coletar.accounts.directory import DirectoryError
+    from coletar.schema.objects import Provider
+
+    async def run() -> None:
+        directory = build_directory()
+        account = await directory.account_by_email(email)
+        if account is None:
+            typer.secho(f"No account for {email}.", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        try:
+            issued = await directory.issue_key(
+                account.id,
+                name=name,
+                surface=Provider(surface),
+                scopes=frozenset({"read"}) if read_only else None,
+            )
+        except DirectoryError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
+        typer.echo(f"key     {issued.key.id}  ({issued.key.surface}, {sorted(issued.key.scopes)})")
+        typer.secho("Copy this now — it is not stored:", fg=typer.colors.YELLOW)
+        typer.echo(f"  {issued.secret}")
+
+    asyncio.run(run())
+
+
+@account_app.command("keys")
+def account_keys(
+    email: str = typer.Argument(..., help="Whose keys to list."),
+) -> None:
+    """List issued keys. Secrets are not shown, because they are not kept."""
+    from coletar.accounts import build_directory
+
+    async def run() -> None:
+        directory = build_directory()
+        account = await directory.account_by_email(email)
+        if account is None:
+            typer.secho(f"No account for {email}.", fg=typer.colors.RED)
+            raise typer.Exit(1)
+        keys = await directory.list_keys(account.id)
+        if not keys:
+            typer.echo("No keys issued.")
+            return
+        for key in keys:
+            used = key.last_used_at.strftime("%Y-%m-%d %H:%M") if key.last_used_at else "never"
+            state = "revoked" if key.revoked_at else "active"
+            typer.echo(
+                f"{key.id}  {key.prefix}…  {key.name:<24}  {key.surface:<8}  "
+                f"{','.join(sorted(key.scopes)):<11}  used {used:<16}  {state}"
+            )
+
+    asyncio.run(run())
+
+
+@account_app.command("revoke-key")
+def account_revoke_key(
+    key_id: str = typer.Argument(..., help="The key id to revoke."),
+) -> None:
+    """Revoke a key. Takes effect on the next request — nothing is cached."""
+    from coletar.accounts import build_directory
+    from coletar.accounts.directory import DirectoryError
+
+    async def run() -> None:
+        try:
+            key = await build_directory().revoke_key(key_id)
+        except DirectoryError as exc:
+            typer.secho(str(exc), fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
+        typer.echo(f"{key.id} revoked at {key.revoked_at:%Y-%m-%d %H:%M:%S} UTC")
+
+    asyncio.run(run())
