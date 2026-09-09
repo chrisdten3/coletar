@@ -140,3 +140,44 @@ def test_unavailable_and_configuration_errors_are_different_types() -> None:
     """Pinned because the importers' behaviour depends entirely on which is raised."""
     assert not issubclass(ExtractionConfigurationError, ExtractionUnavailable)
     assert not issubclass(ExtractionUnavailable, ExtractionConfigurationError)
+
+
+def test_the_system_prompt_stays_long_enough_to_cache() -> None:
+    """OpenAI caches a prompt prefix only from 1024 tokens up.
+
+    At 287 tokens this instruction sat under the line, so every call in a
+    17,881-turn import paid full price for a prefix that never changed. Guarded
+    because the natural instinct when editing a prompt is to tighten it, and
+    tightening this one below the threshold silently multiplies the bill.
+
+    tiktoken is not a runtime dependency, so this counts characters against a
+    conservative bytes-per-token ratio rather than tokenising. It is a floor, not
+    an estimate: if this passes, the real token count is comfortably higher.
+    """
+    from coletar.extraction.prompt import CACHEABLE_PREFIX_TOKENS, EXTRACTION_SYSTEM
+
+    # English prose runs ~4 characters per token; 3.5 is a deliberate under-count
+    # so this cannot pass on a prompt that would actually fall short.
+    floor = int(len(EXTRACTION_SYSTEM) / 4.2)
+    assert floor >= CACHEABLE_PREFIX_TOKENS, (
+        f"prompt is ~{floor} tokens, under the {CACHEABLE_PREFIX_TOKENS}-token "
+        "cacheable prefix — shortening it makes every import call cost full price"
+    )
+
+
+def test_the_prompt_teaches_the_distinction_it_gets_wrong() -> None:
+    """The examples are load-bearing, not padding.
+
+    These exact turns were kept as durable preferences by the earlier prompt on
+    Chris's own archive. They are in the instruction now because that is what
+    fixed them, so removing them is a regression rather than a tidy-up.
+    """
+    from coletar.extraction.prompt import EXTRACTION_SYSTEM
+
+    for regression in (
+        "I run the build site",
+        "I use retrieval augmented generation to train gpt-4",
+        "we are using QuickSelect",
+    ):
+        assert regression in EXTRACTION_SYSTEM
+    assert "TRANSIENT" in EXTRACTION_SYSTEM and "DURABLE" in EXTRACTION_SYSTEM
