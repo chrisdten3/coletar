@@ -98,19 +98,19 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 
 ## To do
 
-### 1. Accounts and auth — nothing here exists
+### 1. Accounts and auth — single-owner password gate only
 - [ ] User accounts: signup, login, password reset, email verification
 - [ ] Replace static `COLETAR_MCP_API_KEYS` with issued-per-user keys in the database
 - [ ] Key management UI — create, name, scope, revoke, last-used
-- [ ] Session auth for the web UI (the Inspector currently has **none**)
+- [ ] Session auth for the web UI (hosted preview has a temporary owner password gate)
 - [ ] OAuth for MCP connectors, so users don't paste bearer tokens by hand
 - [ ] Password hashing, rate-limited login, CSRF on all forms
 - [ ] Tenant provisioning on signup (the tenancy model is ready; nothing creates one)
 
 ### 2. Hosting and infrastructure
-- [ ] Decide the host — **Fly trial has ended and deploys are failing**. `fly-deploy.yml`
-      is `workflow_dispatch`-only until then, so a dead deploy cannot keep `main`
-      permanently red next to the new required checks
+- [x] Vercel web app plus stateless MCP/REST, backed by existing Supabase Postgres;
+      see [DEPLOYMENT.md](DEPLOYMENT.md). Old Fly workflow stays manual.
+- [x] Supabase backend-only RLS: close public-role access to graph, history and keys
 - [ ] Managed Postgres with backups and a tested restore
 - [ ] Secrets management; database credentials out of `.env`
 - [ ] Migration strategy for production (runner exists; no zero-downtime story)
@@ -145,14 +145,24 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
       someone sets it
 - [ ] Dependency scanning and update automation
 
-### 4. The web product — no designed UI exists
-- [ ] Marketing site (the preview page is a gated demo, not a product site)
+### 4. The web product — local prototype and private hosted deployment
+- [x] Local marketing/pricing/security prototype linked to the app
+- [ ] Published marketing site with substantiated pricing and service claims
 - [ ] Signed-in app shell: navigation, account, settings
-- [ ] Onboarding: connect a tool, import your history, see your first memories
-- [ ] Redesign the Inspector for users rather than developers
-- [ ] Empty states, loading states, error states
-- [ ] Mobile-responsive; the Inspector is desktop-only
-- [ ] Design system: type, colour, spacing, components
+- [x] Local export upload, extraction result and review flow
+- [x] Hosted workspace password gate, real endpoint instructions, and opt-in OpenAI
+      capture worker with daily scheduling and manual processing
+- [ ] Fund OpenAI API credits and complete live model-extraction check (configured
+      key/model valid; provider returned `credit_balance_exhausted`)
+- [ ] Real connector onboarding and verified connection status
+- [x] First Library/Inspector slice: search, filters, review queue, object provenance
+      and history in a responsive shell; see [WEB_APP.md](WEB_APP.md)
+- [x] Full app prototype: editable reach, retirement, source inspection, grouped
+      review, conflict resolution, two-date audit and actual compiler downloads
+- [ ] Full history diffs, signed audit reports and server-side project policies
+- [x] Prototype empty, loading and error states
+- [ ] Complete mobile polish across workflows (Library and shared shell now responsive)
+- [x] Shared prototype styles and components based on the supplied design PDFs
 - [ ] Accessibility pass
 
 ### 5. Distribution

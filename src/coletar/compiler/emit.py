@@ -18,7 +18,7 @@ from coletar.compiler.continuity import (
     MigrationManifest,
     WithheldEntry,
 )
-from coletar.schema.objects import ContextObject, Provider, Scope, ScopeType
+from coletar.schema.objects import ContextObject, ObjectType, Provider, Scope, ScopeType
 
 
 def compile_eligible(objects: list[ContextObject]) -> list[ContextObject]:
@@ -31,7 +31,18 @@ def compile_eligible(objects: list[ContextObject]) -> list[ContextObject]:
     counted against coverage instead of quietly dropped.
     """
     superseded = {o.supersedes for o in objects if o.supersedes}
-    return [o for o in objects if o.is_active and o.id not in superseded]
+    # Encrypted captures are source evidence awaiting judgement, not portable
+    # context. Compiling their ciphertext makes review impossible and can move raw
+    # source records into a destination package. Derived memories remain eligible.
+    return [
+        o
+        for o in objects
+        if o.is_active
+        and o.id not in superseded
+        and not (
+            o.type is ObjectType.EPISODE and o.payload.get("content_encryption") == "aesgcm-v1"
+        )
+    ]
 
 
 def partition_by_locality(
@@ -181,8 +192,7 @@ def render_manifest(
         ]
         for held in manifest.withheld:
             lines.append(
-                f"| `{held.source_id}` | {held.source_type} | "
-                f"{', '.join(held.allowed_surfaces)} |"
+                f"| `{held.source_id}` | {held.source_type} | {', '.join(held.allowed_surfaces)} |"
             )
     lines += ["", "## Objects", "", "| id | fidelity | destination | note |", "|---|---|---|---|"]
     for entry in manifest.entries:

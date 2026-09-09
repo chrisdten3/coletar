@@ -29,6 +29,7 @@ conversations.json
 .DS_Store
 .idea/
 .vscode/
+.vercel/
 
 # ...but the importer tests need a synthetic export to parse, and the rules above
 # would swallow it. These two are generated fixtures — "Conversation 0",

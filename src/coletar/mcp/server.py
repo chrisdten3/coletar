@@ -436,14 +436,17 @@ def allowed_origins() -> frozenset[str]:
     )
 
 
-def build_app() -> AuthMiddleware:
+def build_app(*, stateless: bool = False) -> AuthMiddleware:
     """The served ASGI app: the MCP streamable-HTTP app plus the browser bridge's two
     REST endpoints, all behind the same auth gate and the same tenancy."""
     from starlette.routing import Route
 
     from coletar.mcp import rest
 
-    app = mcp.streamable_http_app(transport_security=transport_security())
+    app = mcp.streamable_http_app(
+        transport_security=transport_security(), stateless_http=stateless,
+        json_response=stateless,
+    )
     # Added to the same Starlette app rather than mounted separately, so there is one
     # auth gate and one place a route can be exposed by accident.
     for path, endpoint, methods in rest.routes():

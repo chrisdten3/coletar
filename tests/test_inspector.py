@@ -7,6 +7,8 @@ then*, so the interesting tests are the ones where an approval has to stop count
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from coletar.inspector.review import (
@@ -96,6 +98,7 @@ async def test_erasing_a_raw_episode_retires_it_and_shreds_its_key() -> None:
         await decrypt_episode(store, TENANT, retained)
     events = await store.list_events(TENANT, object_id=episode.id)
     assert any(event.type is EventType.OBJECT_SHREDDED for event in events)
+
 
 @pytest.mark.asyncio
 async def test_gate_watches_exactly_the_set_the_compiler_would_move() -> None:
@@ -323,9 +326,7 @@ async def test_page_escapes_object_content(live_store: None) -> None:
     read (§11). It renders as text or it is a stored XSS."""
     from coletar.store import build_store
 
-    await build_store().put_object(
-        TENANT, Memory.from_write('<script>alert("x")</script>')
-    )
+    await build_store().put_object(TENANT, Memory.from_write('<script>alert("x")</script>'))
     body = _get()
     assert "<script>alert" not in body
     assert "&lt;script&gt;" in body
@@ -363,9 +364,7 @@ async def test_page_shows_which_surfaces_may_receive_an_object(live_store: None)
         TENANT,
         Memory.from_write(
             "Private note.",
-            locality=Locality(
-                mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.LOCAL})
-            ),
+            locality=Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({Provider.LOCAL})),
         ),
     )
     body = _get()
@@ -418,9 +417,7 @@ async def test_agentic_page_shows_and_can_erase_pending_raw_turn(live_store: Non
 async def test_the_dashboard_escapes_object_ids_and_content(live_store: None) -> None:
     from coletar.store import build_store
 
-    await build_store().put_object(
-        TENANT, Memory.from_write('<script>alert("x")</script>')
-    )
+    await build_store().put_object(TENANT, Memory.from_write('<script>alert("x")</script>'))
     body = _get("/agentic")
     assert "<script>alert" not in body
 
@@ -439,3 +436,267 @@ def test_every_page_offers_the_others(live_store: None) -> None:
         body = _get(path)
         assert 'href="/dashboard"' in body
         assert 'href="/agentic"' in body
+
+
+@pytest.mark.asyncio
+async def test_library_filters_and_detail_are_tenant_scoped(live_store: None) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.schema.tenancy import tenant_id
+    from coletar.store import build_store
+
+    store = build_store()
+    own = Memory.from_write("Use fixed-point arithmetic.", kind=MemoryKind.PREFERENCE)
+    other = Memory.from_write("A different tenant's private fact.")
+    await store.put_object(TENANT, own)
+    await store.put_object(tenant_id("other-web-tenant"), other)
+    client = TestClient(app)
+    assert own.content in client.get("/?q=fixed&view=preference").text
+    assert own.content not in client.get("/?q=missing").text
+    assert "No matching context" in client.get("/?q=missing").text
+    assert other.content not in client.get("/").text
+    assert client.get(f"/objects/{other.id}").status_code == 404
+    detail = client.get(f"/objects/{own.id}")
+    assert detail.status_code == 200
+    assert "object.created" in detail.text
+    assert not (await review_status(store, TENANT)).can_compile
+    client.post("/review", data={"object_id": own.id})
+    assert own.content not in client.get("/?view=unreviewed").text
+    assert "You’re all caught up" in client.get("/review").text
+
+
+@pytest.mark.asyncio
+async def test_web_detail_escapes_textarea_and_search_input(live_store: None) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.store import build_store
+
+    obj = Memory.from_write('</textarea><script>alert("stored")</script>')
+    await build_store().put_object(TENANT, obj)
+    client = TestClient(app)
+    detail = client.get(f"/objects/{obj.id}").text
+    assert "<script>alert" not in detail
+    assert "&lt;/textarea&gt;" in detail
+    search = client.get("/", params={"q": '"><script>alert(1)</script>'}).text
+    assert "<script>alert" not in search
+    assert "&lt;script&gt;" in search
+
+
+@pytest.mark.asyncio
+async def test_product_review_compile_and_reach_flow(live_store: None) -> None:
+    import io
+    import zipfile
+
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.store import build_store
+
+    client = TestClient(app)
+    assert client.get("/app").status_code == 200
+    created = client.post(
+        "/web-api/memories",
+        json={
+            "content": "The private launch date is November 14.",
+            "locality": {"mode": "local_only", "surfaces": ["claude"]},
+        },
+    )
+    assert created.status_code == 200
+    oid = created.json()["id"]
+    assert (
+        client.post("/web-api/compile/download", json={"destination": "chatgpt"}).status_code == 409
+    )
+    assert client.post(f"/web-api/objects/{oid}", json={"action": "review"}).status_code == 200
+    preview = client.post("/web-api/compile/preview", json={"destination": "chatgpt"})
+    assert preview.status_code == 200
+    assert preview.json()["withheld"][0]["source_id"] == oid
+    response = client.post("/web-api/compile/download", json={"destination": "chatgpt"})
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        for name in z.namelist():
+            if not name.endswith("manifest.json"):
+                assert b"The private launch date" not in z.read(name)
+    events = await build_store().list_events(TENANT)
+    assert any(e.type is EventType.COMPILE_RUN for e in events)
+    client.post(
+        f"/web-api/objects/{oid}",
+        json={
+            "action": "reach",
+            "locality": {"mode": "synced", "surfaces": []},
+        },
+    )
+    assert not client.get("/web-api/state").json()["can_compile"]
+    assert any(e.detail.get("field") == "locality" for e in await build_store().list_events(TENANT))
+
+
+@pytest.mark.asyncio
+async def test_product_import_recognises_both_providers_and_user_turns(live_store: None) -> None:
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+
+    client = TestClient(app)
+    for provider in ["claude", "chatgpt"]:
+        path = (
+            Path(__file__).parent / "fixtures" / "export_sources" / provider / "conversations.json"
+        )
+        response = client.post(
+            "/web-api/import",
+            files={"file": ("conversations.json", path.read_bytes(), "application/json")},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["turns"] > 0
+        assert response.json()["memories"] + response.json()["corroborated"] > 0
+    state = client.get("/web-api/state").json()
+    assert all(o["provenance"]["provider"] == "claude" for o in state["objects"])
+    assert any(e["type"] == "object.corroborated" for e in state["events"])
+    assert not state["can_compile"]
+    malformed = client.post("/web-api/import", files={"file": ("bad.json", b"{broken")})
+    assert malformed.status_code == 422
+    unrelated = client.post("/web-api/import", files={"file": ("unrelated.json", b'[{"other":1}]')})
+    assert unrelated.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_product_conflict_resolution_and_temporal_snapshot(live_store: None) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.store import build_store
+
+    client = TestClient(app)
+    assert client.post("/web-api/sample").status_code == 200
+    assert client.post("/web-api/sample").status_code == 409
+    response = client.post(
+        "/web-api/resolve", json={"keep": "mem_ledger", "retire": "mem_ledger_conflict"}
+    )
+    assert response.status_code == 200
+    retired = await build_store().get_object(TENANT, "mem_ledger_conflict")
+    assert retired is not None and retired.retired_at is not None
+    snapshot = client.get(
+        "/web-api/audit", params={"at": "2026-03-03T23:59:59Z", "valid": "2026-01-01T12:00:00Z"}
+    )
+    assert snapshot.status_code == 200
+    assert [o["id"] for o in snapshot.json()["objects"]] == ["mem_old_money"]
+    assert snapshot.json()["signed"] is False
+
+
+@pytest.mark.asyncio
+async def test_product_refuses_cross_origin_mutations_and_other_tenant(live_store: None) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.schema.tenancy import tenant_id
+    from coletar.store import build_store
+
+    other = Memory.from_write("Other tenant secret")
+    await build_store().put_object(tenant_id("other-web-tenant"), other)
+    client = TestClient(app)
+    assert other.id not in str(client.get("/web-api/state").json())
+    assert client.post(f"/web-api/objects/{other.id}", json={"action": "review"}).status_code == 404
+    assert (
+        client.post(
+            "/web-api/memories",
+            headers={"Origin": "https://evil.example"},
+            json={"content": "An unwanted memory"},
+        ).status_code
+        == 403
+    )
+
+
+@pytest.mark.asyncio
+async def test_captured_source_is_not_a_compile_or_review_candidate(live_store: None) -> None:
+    from coletar.capture import capture_turn
+    from coletar.compiler.emit import compile_eligible
+    from coletar.schema.objects import Provider
+    from coletar.store import build_store
+
+    store = build_store()
+    episode = await capture_turn(store, TENANT, "Raw submitted source", surface=Provider.CLAUDE)
+    assert compile_eligible([episode]) == []
+    assert (await review_status(store, TENANT)).can_compile
+
+
+@pytest.mark.asyncio
+async def test_design_sample_populates_review_and_read_log(live_store: None) -> None:
+    """The design fixture has to leave the dashboards with something to show.
+
+    A seed that pre-reviews everything makes Review an empty screen, and a seed
+    with no retrieval traces makes both Audit's read log and Settings' usage read
+    as "nothing has ever happened" — which is exactly what the reference does not
+    show. Assert the shape, not the wording.
+    """
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+
+    client = TestClient(app)
+    assert client.post("/web-api/sample").status_code == 200
+    state = client.get("/web-api/state").json()
+
+    # The supersession and both sides of the conflict are what Review is about.
+    unreviewed = set(state["unreviewed"])
+    assert {"mem_money", "mem_ledger", "mem_ledger_conflict"} <= unreviewed
+    assert "mem_northwind" not in unreviewed
+    assert not state["can_compile"]
+
+    # Usage is derived from real traces, so a populated Settings screen implies a
+    # populated read log rather than a second fixture.
+    assert set(state["usage"]) == {"claude", "claude_code", "local", "chatgpt"}
+    assert state["usage"]["claude"] > state["usage"]["local"] > 0
+    assert state["usage"]["chatgpt"] == 0
+
+    traces = [e for e in state["events"] if e["type"] == "retrieval.trace"]
+    assert len(traces) == 5
+    withheld = [t for t in traces if not t["detail"]["returned_ids"]]
+    assert len(withheld) == 1
+    assert withheld[0]["detail"]["surface"] == "chatgpt"
+    assert withheld[0]["detail"]["withheld"] == 6
+    assert all(t["detail"]["design_sample"] for t in traces)
+
+    # Reviewing what Review shows is what unlocks the compiler.
+    assert client.post("/web-api/review", json={"ids": sorted(unreviewed)}).status_code == 200
+    assert client.get("/web-api/state").json()["can_compile"]
+
+
+def test_app_shell_stamps_its_asset_digest() -> None:
+    """A deploy that changes the client without changing its URL reaches nobody."""
+    from coletar.inspector.web import _STATIC, _app_html
+
+    html = _app_html()
+    assert "__ASSETS__" not in html
+    digest = re.search(r"product\.js\?v=([0-9a-f]{12})", html)
+    assert digest is not None
+    assert f"product.css?v={digest.group(1)}" in html
+    assert (_STATIC / "product.js").exists()
+
+
+@pytest.mark.asyncio
+async def test_design_sample_loads_over_retired_only_history(live_store: None) -> None:
+    """A workspace whose objects are all retired has nothing on its screens.
+
+    That is exactly the workspace the examples exist for, and seeding it appends
+    rather than deleting — the retired object and its events are still there
+    afterwards.
+    """
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+    from coletar.store import build_store
+
+    store = build_store()
+    old = Memory.from_write("Cleared out of the workspace")
+    await store.put_object(TENANT, old)
+    client = TestClient(app)
+    assert client.post("/web-api/sample").status_code == 409
+
+    await store.retire_object(TENANT, old.id, reason="test_cleared")
+    assert client.post("/web-api/sample").status_code == 200
+
+    survivor = await store.get_object(TENANT, old.id)
+    assert survivor is not None and survivor.retired_at is not None
+    assert "mem_northwind" in {o.id for o in await store.list_objects(TENANT, limit=100)}

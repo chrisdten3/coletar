@@ -118,8 +118,8 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
-@pytest.fixture
-def live_mcp_server(monkeypatch):
+@pytest.fixture(params=[False, True], ids=["stateful", "stateless"])
+def live_mcp_server(monkeypatch, request):
     """The real MCP app, real auth middleware, on a real port.
 
     A TestClient would not do: the point is that `streamable_http_client` can
@@ -153,7 +153,8 @@ def live_mcp_server(monkeypatch):
     get_settings.cache_clear()
     reset_store()
     config = uvicorn.Config(
-        mcp_server.build_app(), host="127.0.0.1", port=port, log_level="error"
+        mcp_server.build_app(stateless=request.param),
+        host="127.0.0.1", port=port, log_level="error"
     )
     server = uvicorn.Server(config)
     thread = threading.Thread(target=server.run, daemon=True)

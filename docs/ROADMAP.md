@@ -951,3 +951,27 @@ done by anyone — which is a reason to write them down, not a reason to start.
 - [ ] **Break-glass access.** An explicit, loudly-logged override for withheld
       context. Compliance buyers expect the escape hatch to exist *and* to be
       impossible to use quietly
+
+
+## Web product prototype — local and private hosted, 2026-09-08
+
+The `/app` prototype covers Library, object detail, Capture queue, grouped Review,
+Audit, Migrate, Surfaces/import onboarding, Settings, and marketing/pricing/security
+pages from the design references. It uses the existing Store, event log, parser,
+extraction and compiler operations. Graph edits, reach, retirement, review, conflict
+resolution, two-date audit queries and package downloads work. Local API-key and
+connection setup remain simulations. The Vercel deployment uses a temporary owner
+password gate and real, separate surface keys; account/session auth and billing
+remain unbuilt. Encrypted capture episodes are excluded from compiler eligibility because
+they are source evidence, not portable memories. Regression tests pin these flows.
+See [WEB_APP.md](WEB_APP.md) for operation, boundaries and remaining work.
+
+The original M3 hosting decision is superseded for this deployment: MCP now has an
+explicit stateless JSON transport for Vercel, while the original stateful mode stays
+available. Both modes pass real socket tests. Supabase was resumed and migrations
+004–007 applied. OpenAI candidate-turn extraction was explicitly opted in by the
+owner, with a bounded daily/on-demand worker. See [DEPLOYMENT.md](DEPLOYMENT.md).
+Migration 008 enables backend-only RLS after verifying that Supabase public API roles
+could otherwise read application tables. Direct reads under both public roles are
+now blocked. Live OpenAI extraction awaits API credits; the provider returned
+`credit_balance_exhausted`, while encrypted capture and the scheduler were verified.
