@@ -985,3 +985,11 @@ Store-backed operations and provider boundaries remain the same. See
 [UI_REDESIGN.md](UI_REDESIGN.md) for the design direction and
 [WEB_APP.md](WEB_APP.md#astra-ui-design-experiment) for implemented behavior and
 remaining design targets.
+
+### Second UI design experiment — 2026-09-10
+
+`codex/product-ui-primefold` explores a photographic, forest-toned website and
+workspace after preserving and pushing the first direction. Hero stories, context
+flow controls, permission/source/history examples, and keyboard workspace search
+communicate portability and control. See [UI_DESIGN_HORIZON.md](UI_DESIGN_HORIZON.md).
+This is a visual experiment over existing product flows, not a connector milestone.

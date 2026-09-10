@@ -196,3 +196,15 @@ checks pass. Browser checks cover landing eligibility changes, source receipts,
 history switching, mobile navigation, library views, saved reach and its appended
 event, and review-to-compiler preview across ChatGPT and local destinations.
 Responsive checks use 1440×900, 1024×768, and 390×844 viewports.
+
+## Horizon UI design experiment
+
+`codex/product-ui-primefold` builds a second direction on the preserved first-design
+commit `bacfe1d`. See [UI_DESIGN_HORIZON.md](UI_DESIGN_HORIZON.md) for the visual
+specification and reference exploration. The website now uses locally served
+landscape photography, three selectable hero stories, a three-step context-flow
+diagram, native navigation disclosures and FAQs, and the existing synthetic access
+and history demonstrations. The workspace uses a forest/white visual system and
+adds Quick search (Cmd/Ctrl-K) for active objects. Source credits are available in
+the footer and `static/images/CREDITS.md`; icon provenance is in `static/ICONS.md`.
+No frontend runtime dependency or backend graph behavior changes are introduced.
