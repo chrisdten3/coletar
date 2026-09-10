@@ -281,7 +281,9 @@ function library() {
   return shell(
     "Library",
     `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : ""}">${
-      filtered
+      libraryView === "atlas"
+        ? atlasGraph()
+        : filtered
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
         .map(card)
         .join("") ||
@@ -962,6 +964,7 @@ function render() {
   bind();
   bindDesign();
   bindHorizon();
+  bindGraph();
   if (route === "home" && parts[1])
     requestAnimationFrame(() =>
       document.getElementById(parts[1])?.scrollIntoView(),
@@ -1463,3 +1466,293 @@ refresh()
     $("#app").innerHTML =
       `<main class="loading"><h1>Couldn’t open your workspace.</h1><p>${esc(error.message)}</p><button onclick="location.reload()">Try again</button></main>`;
   });
+
+/* --- Atlas: the library as a graph -----------------------------------------
+   Entities are what a corpus of 3,818 objects is actually *about*, and the
+   `mentions` edges to reach them already existed — the list view simply drew
+   entities as if they were peers of the memories they describe.
+
+   Two states, because 1,722 entities is not a picture. The constellation shows
+   the hubs, sized by how many facts mention them; clicking one drops into the
+   hub-and-spoke the entity deserves, its facts in a ring around it.
+
+   Vanilla SVG and a small force loop rather than a graph library: the client is
+   dependency-free by convention, and what this needs — repel, centre, settle — is
+   less code than the import would be. */
+let graphData = null;
+let graphFocus = null;
+let graphLoading = false;
+
+function loadGraph(focus = null) {
+  if (graphLoading) return;
+  graphLoading = true;
+  const q = focus ? `?focus=${encodeURIComponent(focus)}` : "?limit=48";
+  api("/graph" + q)
+    .then((data) => {
+      graphData = data;
+      graphFocus = focus;
+    })
+    .catch(() => {
+      graphData = { nodes: [], edges: [], error: true };
+    })
+    .finally(() => {
+      graphLoading = false;
+      if (location.hash.startsWith("#/library")) render();
+    });
+}
+
+function atlasGraph() {
+  if (!graphData) {
+    loadGraph();
+    return '<div class="atlas-stage"><p class="atlas-status">Drawing your context…</p></div>';
+  }
+  if (graphData.error)
+    return '<div class="atlas-stage"><p class="atlas-status">The graph could not be loaded.</p></div>';
+  if (!graphData.nodes.length)
+    return `<div class="atlas-stage"><p class="atlas-status">No connected entities yet. Facts link to the people and organisations they mention; import or add context and they appear here.</p></div>`;
+
+  const focused = graphFocus
+    ? graphData.nodes.find((n) => n.id === graphFocus)
+    : null;
+  const omitted = graphData.omitted_entities;
+  const caption = focused
+    ? `${esc(focused.label)} · ${graphData.nodes.length - 1} connected ${graphData.nodes.length - 1 === 1 ? "fact" : "facts"}`
+    : `${graphData.nodes.filter((n) => n.type === "entity").length} of ${graphData.total_entities} entities${omitted ? ` · ${omitted} less-connected hidden` : ""}`;
+
+  return `<div class="atlas-stage">
+    <div class="atlas-toolbar">
+      <span class="mono muted">${caption}</span>
+      <div class="row">
+        ${focused ? '<button class="quiet small" data-graph-back>← All entities</button>' : ""}
+        <button class="quiet small" data-graph-zoom="out" aria-label="Zoom out">−</button>
+        <button class="quiet small" data-graph-zoom="in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+    <svg id="atlas-svg" role="img" aria-label="Context graph"><g id="atlas-root"></g></svg>
+    <div class="atlas-hint mono muted">${focused ? "Click a fact to open it · drag to pan" : "Click an entity to see what mentions it · drag to pan"}</div>
+  </div>`;
+}
+
+/* A few dozen iterations of repulsion and centring. Deterministic seeding, so the
+   same graph lays out the same way twice — a picture that rearranges itself on
+   every render is one nobody can learn the shape of. */
+function layoutGraph(nodes, edges, width, height, focus) {
+  const centre = { x: width / 2, y: height / 2 };
+  if (focus) {
+    // Hub and spoke: the entity in the middle, everything that mentions it in a
+    // ring. Deterministic and legible, which a force sim is not at this size.
+    const others = nodes.filter((n) => n.id !== focus);
+    const outer = Math.min(width, height) / 2 - 70;
+    // Facts are sentences, not filenames, so a single ring of thirty-nine of them
+    // is a wall of overlapping text. Rings are added until each one holds few
+    // enough that its labels have room.
+    const rings = Math.max(1, Math.min(3, Math.ceil(others.length / 14)));
+    const perRing = Math.ceil(others.length / rings);
+    others.forEach((n, i) => {
+      const ring = Math.floor(i / perRing);
+      const withinRing = i % perRing;
+      const count = Math.min(perRing, others.length - ring * perRing);
+      // Each ring is offset half a step so nodes sit in the gaps of the one
+      // outside it rather than directly along the same spokes.
+      const angle =
+        ((withinRing + (ring % 2) * 0.5) / count) * Math.PI * 2 - Math.PI / 2;
+      const r = outer * (1 - ring * (0.3 / Math.max(1, rings - 1 || 1)));
+      n.x = centre.x + Math.cos(angle) * r;
+      n.y = centre.y + Math.sin(angle) * r;
+      // Labels alternate above and below, which halves the collisions again.
+      n.labelAbove = withinRing % 2 === 1;
+    });
+    const hub = nodes.find((n) => n.id === focus);
+    if (hub) {
+      hub.x = centre.x;
+      hub.y = centre.y;
+    }
+    return;
+  }
+
+  let seed = 7;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  nodes.forEach((n, i) => {
+    const angle = (i / nodes.length) * Math.PI * 2;
+    const r = (0.35 + rand() * 0.5) * Math.min(width, height) * 0.42;
+    n.x = centre.x + Math.cos(angle) * r;
+    n.y = centre.y + Math.sin(angle) * r;
+  });
+
+  const index = new Map(nodes.map((n, i) => [n.id, i]));
+  const links = edges
+    .map((e) => [index.get(e.src), index.get(e.dst)])
+    .filter(([a, b]) => a !== undefined && b !== undefined);
+
+  // Labels sit under their node and are wider than it, so spacing is driven by
+  // the text, not the circle. Without this the constellation reads as a pile of
+  // overlapping names however far apart the dots are.
+  const spacing = (n) => 46 + Math.min(150, n.label.length * 5.5);
+
+  for (let step = 0; step < 220; step++) {
+    const cool = 1 - step / 260;
+    for (let i = 0; i < nodes.length; i++) {
+      let fx = 0;
+      let fy = 0;
+      for (let j = 0; j < nodes.length; j++) {
+        if (i === j) continue;
+        const dx = nodes[i].x - nodes[j].x;
+        const dy = nodes[i].y - nodes[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const want = (spacing(nodes[i]) + spacing(nodes[j])) / 2;
+        // Only push while crowded. A constant inverse-square repulsion is what
+        // drove every node to the border and left the middle empty.
+        if (dist < want) {
+          const push = ((want - dist) / dist) * 0.5;
+          fx += dx * push;
+          fy += dy * push;
+        }
+      }
+      fx += (centre.x - nodes[i].x) * 0.03;
+      fy += (centre.y - nodes[i].y) * 0.03;
+      nodes[i].vx = fx;
+      nodes[i].vy = fy;
+    }
+    // Co-mentioned entities pull together, so the picture groups by what actually
+    // appears alongside what.
+    links.forEach(([a, b]) => {
+      const dx = nodes[b].x - nodes[a].x;
+      const dy = nodes[b].y - nodes[a].y;
+      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      const pull = ((dist - 190) / dist) * 0.06;
+      nodes[a].vx += dx * pull;
+      nodes[a].vy += dy * pull;
+      nodes[b].vx -= dx * pull;
+      nodes[b].vy -= dy * pull;
+    });
+    nodes.forEach((n) => {
+      n.x += Math.max(-18, Math.min(18, n.vx)) * cool;
+      n.y += Math.max(-18, Math.min(18, n.vy)) * cool;
+    });
+  }
+  const padX = 90;
+  const padY = 60;
+  nodes.forEach((n) => {
+    n.x = Math.max(padX, Math.min(width - padX, n.x));
+    n.y = Math.max(padY, Math.min(height - padY, n.y));
+  });
+}
+
+function drawGraph() {
+  const svg = $("#atlas-svg");
+  const root = $("#atlas-root");
+  if (!svg || !root || !graphData?.nodes?.length) return;
+
+  const box = svg.getBoundingClientRect();
+  const width = box.width || 900;
+  const height = box.height || 560;
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+  // Focus mode draws every returned node; the constellation draws entities only,
+  // because the facts are what you get *after* choosing one.
+  const nodes = graphFocus
+    ? graphData.nodes.map((n) => ({ ...n }))
+    : graphData.nodes.filter((n) => n.type === "entity").map((n) => ({ ...n }));
+  const ids = new Set(nodes.map((n) => n.id));
+  const edges = graphData.edges.filter((e) => ids.has(e.src) && ids.has(e.dst));
+  layoutGraph(nodes, edges, width, height, graphFocus);
+  const at = new Map(nodes.map((n) => [n.id, n]));
+
+  const maxDegree = Math.max(1, ...nodes.map((n) => n.degree || 0));
+  const radiusOf = (n) =>
+    n.id === graphFocus
+      ? 30
+      : n.type === "entity"
+        ? 9 + Math.sqrt(n.degree / maxDegree) * 17
+        : 5;
+
+  const line = (e) => {
+    const a = at.get(e.src);
+    const b = at.get(e.dst);
+    if (!a || !b) return "";
+    return `<line class="atlas-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"/>`;
+  };
+
+  const label = (n) => {
+    const r = radiusOf(n);
+    const cap = n.type === "entity" ? 34 : 30;
+    const text = n.label.length > cap ? n.label.slice(0, cap - 1) + "…" : n.label;
+    const dy = n.labelAbove ? -(r + 8) : r + 15;
+    return `<text class="atlas-label ${n.type}" x="${n.x.toFixed(1)}" y="${(n.y + dy).toFixed(1)}">${esc(text)}</text>`;
+  };
+
+  root.innerHTML =
+    edges.map(line).join("") +
+    nodes
+      .map(
+        (n) =>
+          `<g class="atlas-node ${n.type} ${n.id === graphFocus ? "focused" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}"><circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${radiusOf(n).toFixed(1)}"/><title>${esc(n.description || n.label)}${n.type === "entity" ? ` — mentioned by ${n.degree} ${n.degree === 1 ? "fact" : "facts"}` : ""}</title></g>`,
+      )
+      .join("") +
+    nodes.map(label).join("");
+}
+
+function bindGraph() {
+  const svg = $("#atlas-svg");
+  if (!svg) return;
+  drawGraph();
+
+  document.querySelectorAll("[data-node]").forEach((el) => {
+    const id = el.dataset.node;
+    const open = () => {
+      const node = graphData.nodes.find((n) => n.id === id);
+      // An entity is a place to stand; a fact is a thing to read, so it opens in
+      // the same object view the list links to.
+      if (node?.type === "entity" && id !== graphFocus) loadGraph(id);
+      else location.hash = `#/object/${encodeURIComponent(id)}`;
+    };
+    el.onclick = open;
+    el.onkeydown = (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        open();
+      }
+    };
+  });
+
+  if ($("[data-graph-back]"))
+    $("[data-graph-back]").onclick = () => {
+      graphData = null;
+      graphFocus = null;
+      loadGraph();
+    };
+
+  let zoom = 1;
+  let panX = 0;
+  let panY = 0;
+  const apply = () => {
+    $("#atlas-root")?.setAttribute(
+      "transform",
+      `translate(${panX} ${panY}) scale(${zoom})`,
+    );
+  };
+  document.querySelectorAll("[data-graph-zoom]").forEach((b) => {
+    b.onclick = () => {
+      zoom = Math.max(0.4, Math.min(2.6, zoom * (b.dataset.graphZoom === "in" ? 1.25 : 0.8)));
+      apply();
+    };
+  });
+
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  svg.onpointerdown = (e) => {
+    if (e.target.closest("[data-node]")) return;
+    dragging = true;
+    startX = e.clientX - panX;
+    startY = e.clientY - panY;
+    svg.setPointerCapture(e.pointerId);
+  };
+  svg.onpointermove = (e) => {
+    if (!dragging) return;
+    panX = e.clientX - startX;
+    panY = e.clientY - startY;
+    apply();
+  };
+  svg.onpointerup = () => (dragging = false);
+}

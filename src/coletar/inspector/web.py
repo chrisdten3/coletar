@@ -279,6 +279,125 @@ async def object_reads(object_id: str) -> dict[str, Any]:
     }
 
 
+class GraphNode(BaseModel):
+    id: str
+    label: str
+    #: An entity's one-line identity, shown on hover. Empty for facts, which say
+    #: everything they have to say in the label.
+    description: str = ""
+    type: str
+    #: How many facts mention this entity. The Atlas view sizes and orders by it,
+    #: because a hub with nine facts is the thing worth drawing and a name
+    #: mentioned once is the long tail.
+    degree: int = 0
+
+
+class GraphEdge(BaseModel):
+    src: str
+    dst: str
+
+
+class ContextGraph(BaseModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    #: Entities that exist but are not drawn, so the view can say so rather than
+    #: quietly implying the graph is smaller than it is.
+    omitted_entities: int = 0
+    total_entities: int = 0
+
+
+@router.get("/web-api/graph", response_model=ContextGraph)
+async def context_graph(limit: int = 60, focus: str | None = None) -> ContextGraph:
+    """Entities and the facts that mention them, small enough to draw.
+
+    A separate endpoint rather than more fields on `/web-api/state`: the snapshot
+    already ships every object to the browser, and the graph needs the *opposite*
+    shape — labels and edges, no payloads, no provenance. Sending both would be
+    sending the same corpus twice in two formats.
+
+    Unfocused, this returns the most-mentioned entities, because 1,722 nodes is not
+    a picture. `focus` returns one entity and everything that mentions it, which is
+    the drill-down the hub-and-spoke layout is for.
+    """
+    store = build_store()
+    owner = tenant()
+    objects = await store.list_objects(owner, limit=10000)
+    by_id = {o.id: o for o in objects}
+
+    # Facts point at entities, so the mention count per entity is a reverse lookup.
+    mentions: list[tuple[str, str]] = []
+    for obj in objects:
+        if obj.type is not ObjectType.FACT:
+            continue
+        for edge in await store.edges_from(owner, obj.id):
+            if edge.type is EdgeType.MENTIONS and edge.dst_id in by_id:
+                mentions.append((obj.id, edge.dst_id))
+
+    degree: dict[str, int] = {}
+    for _, entity_id in mentions:
+        degree[entity_id] = degree.get(entity_id, 0) + 1
+
+    entities = [o for o in objects if o.type is ObjectType.ENTITY]
+    if focus is not None:
+        if focus not in by_id:
+            raise HTTPException(404, "No such object in this workspace.")
+        keep = {focus} | {f for f, e in mentions if e == focus} | {
+            e for f, e in mentions if f == focus
+        }
+    else:
+        ranked = sorted(entities, key=lambda o: (-degree.get(o.id, 0), o.content))
+        # An entity nothing mentions is an island; drawing hundreds of them is what
+        # makes a graph view look like static.
+        hubs = [o.id for o in ranked if degree.get(o.id, 0) > 0][:limit]
+        keep = set(hubs) | {f for f, e in mentions if e in set(hubs)}
+
+    nodes = [
+        GraphNode(
+            id=o.id,
+            # An entity's identity is its name; `content` holds the one-line
+            # description, which reads as "An investment bank." on a node that
+            # should say "JPMorgan". Facts have no name and are their own label.
+            label=str(o.payload.get("name") or o.content),
+            description=o.content if o.payload.get("name") else "",
+            type=o.type.value,
+            degree=degree.get(o.id, 0),
+        )
+        for oid in keep
+        if (o := by_id.get(oid)) is not None
+    ]
+    drawn = {n.id for n in nodes}
+    if focus is None:
+        # Entities do not link to each other; facts link to entities. So the
+        # overview's edges are co-mentions — two entities joined because one fact
+        # names both. That is a real relation in the data ("a fact about my time
+        # at Georgetown that also names Hoya Developers"), and without it the
+        # constellation is a scatter of circles rather than a graph.
+        per_fact: dict[str, list[str]] = {}
+        for fact_id, entity_id in mentions:
+            if entity_id in drawn:
+                per_fact.setdefault(fact_id, []).append(entity_id)
+        pairs: set[tuple[str, str]] = set()
+        for named in per_fact.values():
+            for i, a in enumerate(named):
+                for b in named[i + 1 :]:
+                    if a != b:
+                        pairs.add((a, b) if a < b else (b, a))
+        graph_edges = [GraphEdge(src=a, dst=b) for a, b in sorted(pairs)]
+        nodes = [n for n in nodes if n.type == "entity"]
+    else:
+        graph_edges = [
+            GraphEdge(src=f, dst=e) for f, e in mentions if f in drawn and e in drawn
+        ]
+
+    linked = len([o for o in entities if degree.get(o.id, 0) > 0])
+    return ContextGraph(
+        nodes=nodes,
+        edges=graph_edges,
+        total_entities=len(entities),
+        omitted_entities=max(0, linked - sum(1 for n in nodes if n.type == "entity")),
+    )
+
+
 @router.get("/web-api/audit")
 async def audit(at: datetime, valid: datetime | None = None) -> dict[str, Any]:
     at = at.replace(tzinfo=UTC) if at.tzinfo is None else at
