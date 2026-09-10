@@ -182,3 +182,52 @@ async def test_the_checkpoint_is_per_tenant(tmp_path, model_mode, monkeypatch) -
     await claude_export.import_bundle(store, tenant_id("tenant_other"), archive)
     assert len(seen) == 4
     assert await store.extracted_hashes(tenant_id("tenant_other")) != set()
+
+
+@pytest.mark.asyncio
+async def test_the_importer_does_not_relabel_what_the_extractor_decided(
+    tmp_path, model_mode, monkeypatch
+) -> None:
+    """`_store_graph` runs only on the model path and used to stamp every object
+    ACCOUNT_EXPORT_PARSE at 0.60.
+
+    That relabelled model-extracted objects as regex output — the same flattening
+    the curated/mined split was introduced to end, one layer down — and silently
+    undid the 0.75 rung, so ranking could not prefer a model reading over a pattern
+    match. On the real archive it mislabelled 3,278 of 3,818 objects.
+    """
+    import coletar.extraction as extraction_pkg
+    from coletar.acquisition import chatgpt_export
+    from coletar.schema.objects import ExtractionMethod, Memory, default_confidence
+
+    async def one_memory(**kwargs: object) -> tuple[list[object], list[object]]:
+        return [
+            Memory.from_write(
+                "I prefer fixed-point arithmetic for money.",
+                extraction_method=ExtractionMethod.MODEL_EXTRACTED,
+            )
+        ], []
+
+    monkeypatch.setattr(extraction_pkg, "extract_with_model", one_memory)
+    store = InMemoryStore()
+    report = chatgpt_export.ImportReport()
+    await chatgpt_export._store_graph(
+        store,
+        TENANT,
+        (await one_memory())[0],
+        [],
+        report=report,
+        archive="export.zip",
+        conversation="chat",
+        scope=None,
+        source_ids=["c1", "n1"],
+        known_entities={},
+    )
+
+    stored = await store.list_objects(TENANT, limit=10)
+    assert stored, "the memory should have been written"
+    for obj in stored:
+        assert obj.extraction_method is ExtractionMethod.MODEL_EXTRACTED
+        assert obj.confidence == default_confidence(ExtractionMethod.MODEL_EXTRACTED)
+        # Provenance confidence follows the object's, rather than a stale literal.
+        assert obj.provenance.confidence == obj.confidence

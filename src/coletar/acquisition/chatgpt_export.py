@@ -337,7 +337,7 @@ async def _store_graph(
     """
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
-    from coletar.schema.objects import ExtractionMethod, Memory, ObjectType, Provider
+    from coletar.schema.objects import Memory, ObjectType, Provider
 
     def _event(object_id: str) -> Event:
         return Event(
@@ -355,10 +355,14 @@ async def _store_graph(
 
     merged: dict[str, str] = {}
     for obj in objects:
-        obj.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
-        obj.confidence = 0.60
+        # The method and confidence are the *extractor's* to set, and it already
+        # did. This function runs only on the model path, so overwriting them with
+        # ACCOUNT_EXPORT_PARSE relabelled every model-extracted object as regex
+        # output — the same flattening the curated/mined split was introduced to
+        # end, recurring one layer down. It also silently undid the 0.75 rung, so
+        # ranking could not prefer a model reading over a pattern match.
         obj.provenance.provider = Provider.CHATGPT
-        obj.provenance.confidence = 0.60
+        obj.provenance.confidence = obj.confidence
         # Points back at the exact node, so the Inspector can show a user which line
         # of their own export a person or a fact came from.
         obj.provenance.source_object_ids = source_ids
