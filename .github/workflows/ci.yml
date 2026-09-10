@@ -102,7 +102,9 @@ jobs:
         with:
           node-version: '20'
       - name: Parse web prototype
-        run: node --check src/coletar/inspector/static/product.js
+        run: |
+          node --check src/coletar/inspector/static/product.js
+          node --check src/coletar/inspector/static/horizon.js
       - name: node --test
         working-directory: sdk/js
         run: node --test
