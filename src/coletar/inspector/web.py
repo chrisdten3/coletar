@@ -162,8 +162,13 @@ async def state() -> Snapshot:
     usage: dict[str, int] = {}
     for event in events:
         if event.type is EventType.RETRIEVAL_TRACE:
-            surface = str(event.detail.get("surface", "unknown"))
-            usage[surface] = usage.get(surface, 0) + int(event.detail.get("token_estimate", 0))
+            # Group by which assistant asked, falling back to the door it came
+            # through for traces written before `provider` was recorded. "How much
+            # context has Claude been served" is the question; every Claude and
+            # ChatGPT surface shares the one `mcp` door, so grouping by door
+            # cannot answer it.
+            who = str(event.detail.get("provider") or event.detail.get("surface", "unknown"))
+            usage[who] = usage.get(who, 0) + int(event.detail.get("token_estimate", 0))
     conflicts = []
     for obj in objects:
         for edge in await store.edges_from(tenant(), obj.id):
@@ -255,6 +260,23 @@ async def review_many(body: ReviewInput) -> dict[str, int]:
     for object_id in set(body.ids):
         await mark_reviewed(build_store(), tenant(), object_id)
     return {"reviewed": len(set(body.ids))}
+
+
+@router.get("/web-api/objects/{object_id}/reads")
+async def object_reads(object_id: str) -> dict[str, Any]:
+    """Which surfaces have been served this object.
+
+    The counterpart to the object's lineage, which answers who wrote it. Loading
+    the object first is not redundant: it is what keeps the tenant filter on this
+    path identical to every other one.
+    """
+    obj = await load_object(object_id)
+    receipts = await build_store().reads_of(tenant(), obj.id, limit=50)
+    return {
+        "object_id": obj.id,
+        "restricted": obj.locality.mode is LocalityMode.LOCAL_ONLY,
+        "reads": [r.model_dump(mode="json") for r in receipts],
+    }
 
 
 @router.get("/web-api/audit")
@@ -645,7 +667,10 @@ async def _seed_reads(store: Store, owner: TenantId) -> None:
         detail = RetrievalTrace(
             query_digest=query_digest(query),
             scope="any",
-            surface=surface,
+            # The fixture's reads are recorded the way a real one is: the door it
+            # came through, and separately which assistant asked.
+            surface="mcp",
+            provider=surface,
             principal=f"design-sample:{surface}",
             top_k=8,
             token_budget=8_000,

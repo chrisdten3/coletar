@@ -654,7 +654,10 @@ async def test_design_sample_populates_review_and_read_log(live_store: None) -> 
     assert len(traces) == 5
     withheld = [t for t in traces if not t["detail"]["returned_ids"]]
     assert len(withheld) == 1
-    assert withheld[0]["detail"]["surface"] == "chatgpt"
+    # `provider` is which assistant asked; `surface` is the door it came through.
+    # The fixture records both the way a real read does.
+    assert withheld[0]["detail"]["provider"] == "chatgpt"
+    assert withheld[0]["detail"]["surface"] == "mcp"
     assert withheld[0]["detail"]["withheld"] == 6
     assert all(t["detail"]["design_sample"] for t in traces)
 

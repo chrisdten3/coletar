@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from inspect import isawaitable
 from typing import Any, Protocol, runtime_checkable
 
 from coletar.mcp.ratelimit import RateLimiter
@@ -88,9 +89,7 @@ class Principal:
 
 #: Set by the middleware for the duration of one request. Tool bodies read it rather
 #: than threading a principal argument through every signature.
-_CURRENT_PRINCIPAL: ContextVar[Principal | None] = ContextVar(
-    "coletar_principal", default=None
-)
+_CURRENT_PRINCIPAL: ContextVar[Principal | None] = ContextVar("coletar_principal", default=None)
 
 
 def current_principal() -> Principal | None:
@@ -128,8 +127,17 @@ class Authenticator(Protocol):
         """
         ...
 
-    def authenticate(self, credential: str | None) -> Principal | None:
-        """Return the principal, or None to reject. Must not raise on bad input."""
+    def authenticate(
+        self, credential: str | None
+    ) -> Principal | None | Awaitable[Principal | None]:
+        """Return the principal, or None to reject. Must not raise on bad input.
+
+        May be async. Keys held in configuration resolve synchronously; keys held
+        in the directory need a query, and the alternative — caching them in the
+        process — would leave a revoked key working until the cache next refreshed.
+        Revocation has to take effect on the next request, so the lookup happens on
+        the request, and the middleware awaits whichever kind it was handed.
+        """
         ...
 
 
@@ -206,8 +214,12 @@ class ApiKeyAuthenticator:
                         f"must be one of: {legal}"
                     ) from None
             principals.append(
-                (str(entry["secret"]), Principal(id=str(entry["id"]), tenant_id=tenant,
-                                                 scopes=scopes, surface=surface))
+                (
+                    str(entry["secret"]),
+                    Principal(
+                        id=str(entry["id"]), tenant_id=tenant, scopes=scopes, surface=surface
+                    ),
+                )
             )
         return cls(principals)
 
@@ -255,8 +267,7 @@ def _origin(headers: Iterable[tuple[bytes, bytes]]) -> str | None:
 
 
 _TOO_MANY_BODY = (
-    b'{"error": "rate limited", "detail": "too many requests for this key; '
-    b'see Retry-After"}'
+    b'{"error": "rate limited", "detail": "too many requests for this key; see Retry-After"}'
 )
 
 
@@ -325,12 +336,18 @@ class AuthMiddleware:
         # statement about which methods and headers are permitted.
         if scope.get("method") == "OPTIONS" and origin is not None:
             status = 204 if cors else 403
-            await send({"type": "http.response.start", "status": status,
-                        "headers": [*cors, (b"content-length", b"0")]})
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": status,
+                    "headers": [*cors, (b"content-length", b"0")],
+                }
+            )
             await send({"type": "http.response.body", "body": b""})
             return
 
-        principal = self.authenticator.authenticate(bearer_token(headers))
+        resolved = self.authenticator.authenticate(bearer_token(headers))
+        principal = await resolved if isawaitable(resolved) else resolved
         if principal is None:
             await send(
                 {

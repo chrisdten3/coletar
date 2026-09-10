@@ -98,14 +98,25 @@ is *coverage* — which model surfaces are actually wired up — and compliance.
 
 ## To do
 
-### 1. Accounts and auth — single-owner password gate only
-- [ ] User accounts: signup, login, password reset, email verification
-- [ ] Replace static `COLETAR_MCP_API_KEYS` with issued-per-user keys in the database
-- [ ] Key management UI — create, name, scope, revoke, last-used
-- [ ] Session auth for the web UI (hosted preview has a temporary owner password gate)
+### 1. Accounts and auth
+- [x] Account records with their own tenant, behind a `Directory` protocol —
+      separate from `Store` because resolving *whose* graph is the one lookup that
+      protocol refuses to do. Both backends, one suite. See [ACCOUNTS.md](ACCOUNTS.md)
+- [x] Tenant provisioning — `coletar account create`; tenant derived from the email
+      so re-provisioning cannot strand a graph under a second tenant
+- [x] Issued-per-account keys in the database, replacing static
+      `COLETAR_MCP_API_KEYS`. The env var still resolves, checked second, so a
+      deployment migrates without a flag day
+- [x] Revocation without a redeploy — nothing is cached, so the next request fails
+- [x] A pluggable identity seam. **No password is stored anywhere**, which is what
+      makes Clerk or Supabase Auth a matter of verifying a different token rather
+      than a secret migration. `local` is refused when `COLETAR_PUBLIC_URL` is set
+- [ ] Choose the provider (Clerk or Supabase Auth) and implement its `verify`
+- [ ] Sign-up and sign-in flows; sessions for the web UI
+- [ ] Key management UI — the Settings panel is still a labelled simulation and does
+      not yet show issued keys
+- [ ] Wire the web app's tenant to the directory instead of `COLETAR_DEFAULT_TENANT_ID`
 - [ ] OAuth for MCP connectors, so users don't paste bearer tokens by hand
-- [ ] Password hashing, rate-limited login, CSRF on all forms
-- [ ] Tenant provisioning on signup (the tenancy model is ready; nothing creates one)
 
 ### 2. Hosting and infrastructure
 - [x] Vercel web app plus stateless MCP/REST, backed by existing Supabase Postgres;

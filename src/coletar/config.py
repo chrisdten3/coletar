@@ -7,14 +7,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="COLETAR_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="COLETAR_", env_file=".env", extra="ignore")
 
     # Tenant resolved by *application boundaries* only — the CLI and the local
     # proxy. The MCP server never reads this: it derives the tenant from the
@@ -64,8 +62,13 @@ class Settings(BaseSettings):
     inspector_port: int = 8789
     # The hosted deployment serves its workspace unauthenticated by choice; see
     # `coletar.hosted`. Connector credentials below are a separate authority and are
-    # unaffected. Account/session auth remains a later milestone.
+    # unaffected.
     public_url: str = ""
+    # Which identity provider vouches for an account. "local" trusts whoever can
+    # reach the port, which is a laptop assumption and is refused when `public_url`
+    # is set. Clerk and Supabase Auth plug in here; see `coletar.accounts.identity`
+    # for the whole of what adopting one involves.
+    identity_provider: str = "local"
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 
     # Retrieval. "hashing" is the default because the in-process store has to work
@@ -85,12 +88,23 @@ class Settings(BaseSettings):
     # Selecting a provider is a data-handling decision. The local default keeps user
     # turns on their machine; third-party providers remain explicit opt-ins.
     extraction_provider: Literal["ollama", "anthropic", "openai"] = "ollama"
+    #: How many extraction calls are in flight at once during an import. Only the
+    #: calls are parallel; graph writes stay ordered. 8 keeps a real archive under
+    #: an hour without tripping a provider's rate limit.
+    extraction_concurrency: int = 8
 
     # Provider-specific defaults are intentionally visible rather than one ambiguous
     # `extraction_model` whose meaning changes with another setting.
     ollama_extraction_model: str = "llama3.1"
     anthropic_extraction_model: str = "claude-sonnet-5"
     openai_extraction_model: str = "gpt-5.6-terra"
+    #: Accepts the vendor's own name as well as the prefixed one, because that is
+    #: what a `.env` already holds and what every other tool on the machine reads.
+    #: Pydantic loads `.env` into settings without exporting to `os.environ`, so a
+    #: key sitting there was invisible to the OpenAI client until this existed.
+    openai_api_key: str = Field(
+        default="", validation_alias=AliasChoices("COLETAR_OPENAI_API_KEY", "OPENAI_API_KEY")
+    )
 
     # Capture-then-batch (docs/CAPTURE_AND_BATCH.md). Off by default: retaining the
     # turns a user typed before anything has judged them is a materially larger

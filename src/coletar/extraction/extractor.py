@@ -413,7 +413,7 @@ async def extract_with_model(
 
     return materialise(
         _grounded(proposal, transcript),
-        extraction_method=ExtractionMethod.DERIVED_SUMMARY,
+        extraction_method=ExtractionMethod.MODEL_EXTRACTED,
         provider=provider,
         scope=scope,
     )

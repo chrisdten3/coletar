@@ -277,6 +277,9 @@ async def retrieve(
                 context=context,
                 embedder_model=store.embedder_model,
                 surface=surface,
+                # The locality gate is the one identity the caller cannot choose
+                # for itself, which is exactly what a read receipt needs.
+                provider=caller_surface.value if caller_surface else None,
                 principal=principal,
                 strategy=strategy.name,
                 record_query_text=record_query_text,

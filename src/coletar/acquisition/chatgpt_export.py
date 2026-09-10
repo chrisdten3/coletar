@@ -26,6 +26,7 @@ dropped rather than guessed at.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import zipfile
 from collections.abc import Iterator, Sequence
@@ -65,6 +66,9 @@ MAX_BRANCH_DEPTH = 20_000
 
 class ChatGPTExportError(Exception):
     """The archive is not a ChatGPT export, phrased for the person who chose it."""
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -202,9 +206,7 @@ def read_export(archive: Path) -> Iterator[ExportedConversation]:
     if archive.is_dir():
         names = sorted(child.name for child in archive.iterdir() if child.is_file())
         for name in _conversation_entries(names, source=archive.name):
-            yield from _conversations_in(
-                (archive / name).read_bytes(), name, archive.name
-            )
+            yield from _conversations_in((archive / name).read_bytes(), name, archive.name)
         return
 
     try:
@@ -221,9 +223,7 @@ def read_export(archive: Path) -> Iterator[ExportedConversation]:
         raise ChatGPTExportError(f"{archive.name} is not a readable ZIP: {exc}") from exc
 
 
-def _conversations_in(
-    payload: bytes, name: str, source: str
-) -> Iterator[ExportedConversation]:
+def _conversations_in(payload: bytes, name: str, source: str) -> Iterator[ExportedConversation]:
     """Parse one conversations file, whichever of the two layouts it came from."""
     try:
         parsed = json.loads(payload)
@@ -283,6 +283,8 @@ class ImportReport:
     #: empty. Folding the two together is how an import skips thousands and still
     #: reports success.
     unavailable: int = 0
+    #: Turns skipped because an earlier run already paid to extract them.
+    resumed: int = 0
     skipped: dict[str, int] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
@@ -295,6 +297,7 @@ class ImportReport:
             "entities": self.entities,
             "facts": self.facts,
             "unavailable": self.unavailable,
+            "resumed": self.resumed,
             "skipped": dict(sorted(self.skipped.items())),
         }
 
@@ -408,6 +411,7 @@ async def import_export(
     archive: Path,
     *,
     scope: Any = None,
+    reprocess: bool = False,
 ) -> ImportReport:
     """Read an export and offer every human turn to the extractor.
 
@@ -426,7 +430,8 @@ async def import_export(
     redundancy M4.3 measured as absent from a curated corpus.
     """
     from coletar.config import get_settings
-    from coletar.extraction import extract_memories, extract_with_model
+    from coletar.extraction import extract_memories
+    from coletar.extraction.batch import extract_in_order, turn_hash
     from coletar.extraction.providers import ExtractionUnavailable
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
@@ -441,41 +446,83 @@ async def import_export(
     use_model = get_settings().extraction_mode == "model"
     # name -> id for every entity written during this import; see _store_graph.
     known_entities: dict[str, str] = {}
+    # Read once, not per turn: an archive is tens of thousands of turns, and a
+    # round trip each to save one API call is a poor trade. Empty unless a previous
+    # run was interrupted, so a first import is unaffected.
+    already = set() if reprocess else await store.extracted_hashes(tenant_id)
+    if already:
+        logger.info("resuming: %d turns already extracted, skipping", len(already))
+    batch_size = max(1, get_settings().extraction_concurrency)
 
     for conversation in read_export(archive):
         report.conversations += 1
         for reason, count in conversation.skipped.items():
             report.skipped[reason] = report.skipped.get(reason, 0) + count
 
+        if use_model:
+            # Calls fan out; writes below stay in order, because corroboration and
+            # entity linking both depend on what is already in the graph.
+            all_messages = list(conversation.messages)
+            report.messages += len(all_messages)
+            # Skipped before the call, which is the whole point: the cost is the
+            # API round trip, not the parsing.
+            messages = [m for m in all_messages if turn_hash(m.text) not in already]
+            report.resumed += len(all_messages) - len(messages)
+            done: set[str] = set()
+            # `finally`, not a flush after the loop: the failure this exists for
+            # — a credit balance running out — lands *inside* a window, so the
+            # turns already paid for must be banked on the way out rather than
+            # after a completion that never happens.
+            try:
+                async for index, extracted in extract_in_order(
+                    [m.text for m in messages],
+                    provider=Provider.CHATGPT,
+                    scope=scope,
+                    concurrency=get_settings().extraction_concurrency,
+                ):
+                    message = messages[index]
+                    if isinstance(extracted, BaseException):
+                        if isinstance(extracted, ExtractionUnavailable):
+                            # Never examined. Counted rather than silently folded into
+                            # the turns that genuinely held nothing, and deliberately
+                            # not checkpointed: a turn nobody looked at is not done.
+                            report.unavailable += 1
+                            continue
+                        raise extracted
+                    objects, edges = extracted
+                    done.add(turn_hash(message.text))
+                    # Flushed per window, not per conversation: a single conversation
+                    # can hold hundreds of turns, and banking them only at its end
+                    # loses all of it to a failure in the middle.
+                    if len(done) >= batch_size:
+                        await store.mark_extracted(tenant_id, done)
+                        already.update(done)
+                        done.clear()
+                    await _store_graph(
+                        store,
+                        tenant_id,
+                        objects,
+                        edges,
+                        report=report,
+                        archive=archive.name,
+                        conversation=conversation.title,
+                        scope=scope,
+                        source_ids=[
+                            part for part in (message.conversation_id, message.node_id) if part
+                        ],
+                        known_entities=known_entities,
+                    )
+                # Flushed per conversation rather than at the end, so an import killed
+                # partway keeps the turns it actually finished.
+                await store.mark_extracted(tenant_id, done)
+            finally:
+                await store.mark_extracted(tenant_id, done)
+                already.update(done)
+            continue
+
         for message in conversation.messages:
             report.messages += 1
-            source_ids = [
-                part for part in (message.conversation_id, message.node_id) if part
-            ]
-
-            if use_model:
-                try:
-                    objects, edges = await extract_with_model(
-                        transcript=message.text, scope=scope, provider=Provider.CHATGPT
-                    )
-                except ExtractionUnavailable:
-                    # Never examined. Counted rather than silently folded into the
-                    # turns that genuinely held nothing.
-                    report.unavailable += 1
-                    continue
-                await _store_graph(
-                    store,
-                    tenant_id,
-                    objects,
-                    edges,
-                    report=report,
-                    archive=archive.name,
-                    conversation=conversation.title,
-                    scope=scope,
-                    source_ids=source_ids,
-                    known_entities=known_entities,
-                )
-                continue
+            source_ids = [part for part in (message.conversation_id, message.node_id) if part]
 
             for memory in await extract_memories(user_text=message.text, scope=scope):
                 memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE

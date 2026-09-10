@@ -110,6 +110,7 @@ let state,
   manifest = null,
   previewing = false,
   previewFailed = null,
+  reads = null,
   auditResult = null;
 let auditAt = "2026-03-03",
   auditValid = "2026-01-01",
@@ -296,8 +297,38 @@ function humanEvent(e) {
     }[e.type] || e.type
   );
 }
+/* Read receipts for one object, fetched on demand: the workspace snapshot carries
+   the whole event log already, but a receipt is a containment query over it, which
+   belongs on the server where it is indexed. */
+function loadReads(id) {
+  if (reads?.object_id === id || reads === "loading") return;
+  reads = "loading";
+  api(`/objects/${encodeURIComponent(id)}/reads`)
+    .then((result) => {
+      reads = result;
+      if (location.hash.includes(encodeURIComponent(id))) render();
+    })
+    .catch(() => {
+      reads = { object_id: id, reads: [], error: true };
+    });
+}
+function readReceipts(o) {
+  if (reads === "loading" || reads?.object_id !== o.id)
+    return '<p class="mono muted">Looking up who has been served this…</p>';
+  if (reads.error)
+    return '<p class="mono muted">Read history could not be loaded.</p>';
+  if (!reads.reads.length)
+    return `<p class="muted">No surface has been served this object.${isRestricted(o) ? " Its reach is restricted, and the empty list is the evidence that the restriction held." : ""}</p>`;
+  return `<table class="reads"><thead><tr><th>Surface</th><th>Served</th><th>In answer to</th></tr></thead><tbody>${reads.reads
+    .map(
+      (r) =>
+        `<tr><td>${r.provider ? tag(r.provider) : '<span class="mono muted">unattributed</span>'}</td><td class="mono">${time(r.at)}</td><td>${r.query_text ? `<span class="quoted">${esc(r.query_text)}</span>` : `<span class="mono muted">digest ${esc(r.query_digest)}</span>`} <span class="mono muted">· via ${esc(r.surface)}</span></td></tr>`,
+    )
+    .join("")}</tbody></table>`;
+}
 function detail(id) {
   const o = objById(id);
+  if (o) loadReads(id);
   if (!o)
     return shell(
       "Object",
@@ -314,7 +345,7 @@ function detail(id) {
   const sourceIds = o.provenance.source_object_ids || [];
   return shell(
     "Object",
-    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div><div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || "<li>No recorded events in this window.</li>"}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p></section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
+    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div><div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || "<li>No recorded events in this window.</li>"}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p><div class="eyebrow mt"><span class="green">→</span> Who has been served this</div><p class="small muted">Reach decides who <em>may</em> read this fact. This is who actually has — so a restriction is provable after the fact, not merely configured.</p>${readReceipts(o)}</section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
       ["claude", "Claude · web, Desktop & Code"],
       ["chatgpt", "ChatGPT"],
       ["local", "Local model"],
