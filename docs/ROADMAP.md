@@ -991,3 +991,21 @@ Migration 008 enables backend-only RLS after verifying that Supabase public API 
 could otherwise read application tables. Direct reads under both public roles are
 now blocked. Live OpenAI extraction awaits API credits; the provider returned
 `credit_balance_exhausted`, while encrypted capture and the scheduler were verified.
+
+
+### UI design experiment — 2026-09-09
+
+`codex/product-ui-testing` adds the context-atlas website and a redesigned workspace
+visual system, with synthetic interactive access/source/history examples. Existing
+Store-backed operations and provider boundaries remain the same. See
+[UI_REDESIGN.md](UI_REDESIGN.md) for the design direction and
+[WEB_APP.md](WEB_APP.md#astra-ui-design-experiment) for implemented behavior and
+remaining design targets.
+
+### Second UI design experiment — 2026-09-10
+
+`codex/product-ui-primefold` explores a photographic, forest-toned website and
+workspace after preserving and pushing the first direction. Hero stories, context
+flow controls, permission/source/history examples, and keyboard workspace search
+communicate portability and control. See [UI_DESIGN_HORIZON.md](UI_DESIGN_HORIZON.md).
+This is a visual experiment over existing product flows, not a connector milestone.

@@ -76,7 +76,11 @@ jobs:
           uv run --extra dev coletar migrate
 
       - name: pytest
-        run: uv run --extra dev pytest
+        # `-m ""` clears the local default, which deselects the `heavy` scale tests
+        # so an 8 GB laptop is not asked to hold a ten-thousand-object corpus in
+        # memory beside Postgres and a model server. CI has the headroom and is
+        # where those measurements are supposed to run.
+        run: uv run --extra dev pytest -m ""
 
       # The full run above already covers these. Re-running them alone asserts
       # they were not silently skipped, which is the failure mode that matters.
@@ -98,7 +102,9 @@ jobs:
         with:
           node-version: '20'
       - name: Parse web prototype
-        run: node --check src/coletar/inspector/static/product.js
+        run: |
+          node --check src/coletar/inspector/static/product.js
+          node --check src/coletar/inspector/static/horizon.js
       - name: node --test
         working-directory: sdk/js
         run: node --test
