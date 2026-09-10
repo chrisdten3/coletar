@@ -16,7 +16,13 @@ import sys
 from coletar.extraction import extract_with_model
 from coletar.schema.objects import Provider
 
-#: (turn, should_yield_a_first_person_memory, why)
+#: (turn, should_yield_something_durable, why)
+#:
+#: "Durable" means a memory *or* an entity-linked fact. A statement naming an
+#: organisation is meant to land as a fact linked to that entity rather than as a
+#: bare memory — the prompt says so explicitly — so demanding "a memory" here fails
+#: the model for obeying its own instruction, which is what the first version of
+#: this script did.
 CASES: list[tuple[str, bool, str]] = [
     ("I run the build site", False, "narration of the current step"),
     ("i run into infinite recursion", False, "a bug hit just now"),
@@ -27,8 +33,9 @@ CASES: list[tuple[str, bool, str]] = [
     ("don't use lucide react icons", False, "same"),
     ("Keep it technical", False, "steering this response"),
     ("All of the __str__ methods should return single quotes", False, "spec for open code"),
-    ("He has prior experience in machine learning", False, "a claim about a third party"),
-    ("my manager wants weekly updates", False, "third party; belongs in facts"),
+    # Durable, but must not become a memory about the user: entity + fact only.
+    ("He has prior experience in machine learning", True, "a claim about a third party"),
+    ("my manager wants weekly updates", True, "third party; belongs in facts"),
     ("I prefer fixed-point arithmetic for money, never floats.", True, "standing preference"),
     (
         "Always give me the failing test output before you propose a fix.",
@@ -42,14 +49,18 @@ CASES: list[tuple[str, bool, str]] = [
 
 async def main() -> int:
     passed = 0
-    for turn, want_memory, why in CASES:
+    for turn, want_durable, why in CASES:
         objects, _ = await extract_with_model(transcript=turn, provider=Provider.CHATGPT)
         memories = [o for o in objects if o.type.value == "memory"]
         others = [o for o in objects if o.type.value != "memory"]
-        ok = bool(memories) == want_memory
+        # A third-party claim is durable, but must never land as a memory *about
+        # the user*, so it is held to the stricter condition.
+        third_party = "third party" in why
+        ok = (bool(objects) == want_durable) and not (third_party and memories)
         passed += ok
+        want = "entity" if third_party else ("keep" if want_durable else "drop")
         print(
-            f"{'PASS' if ok else 'FAIL'}  want={'keep' if want_memory else 'drop':4} "
+            f"{'PASS' if ok else 'FAIL'}  want={want:6} "
             f"got={len(memories)}mem+{len(others)}other  {turn[:52]!r}  ({why})"
         )
         for obj in objects:
