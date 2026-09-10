@@ -52,7 +52,16 @@ packages = ["src/coletar"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q"
+# `heavy` is deselected by default because the scale tests hold their whole corpus
+# in memory at once — ten thousand objects, each with a 768-dimension embedding and
+# a detached copy inside the store. That is the right shape for the thing being
+# measured and the wrong shape for an 8 GB laptop running Postgres and a model
+# server alongside it, where it has caused kernel-level memory pressure rather than
+# a clean failure. CI runs the full set with `-m ""`.
+addopts = "-q -m 'not heavy'"
+markers = [
+    "heavy: holds a large corpus in memory; run explicitly or in CI",
+]
 
 [tool.ruff]
 line-length = 100

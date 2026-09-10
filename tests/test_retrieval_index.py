@@ -195,6 +195,7 @@ async def test_global_scoped_search_excludes_every_project(
 PERF_CEILING_MS = float(os.environ.get("COLETAR_PERF_CEILING_MS", "300"))
 
 
+@pytest.mark.heavy
 async def test_search_p95_stays_under_the_latency_ceiling_at_ten_thousand_objects():
     corpus_vocabulary = (
         "ledger invoice money currency rounding pytest ruff mypy postgres pgvector "
