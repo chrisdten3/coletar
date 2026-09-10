@@ -53,14 +53,11 @@ responsive layouts.
 
 ### Surface marks
 
-Every place a surface, model or destination is named carries a mark: the library
-card's `via claude`, the reach preview tabs, the object's reach toggles, the migrate
-destination cards, the audit read log, and the settings usage bar, legend and model
-rows. The marks are geometric rather than reproductions of anyone's logo — they
-identify a destination inside this UI and claim no trademark. Each has a colour
-(`--s-claude`, `--s-chatgpt`, `--s-claude_code`, `--s-local`, `--s-markdown`), and
-the usage bar, its legend and the marks all use the same one, so the same surface
-reads as the same thing across screens.
+Interface controls use Lucide, the icon family used by shadcn/ui. Named companies
+use vendored brand SVGs; generic local models use Lucide's CPU icon. Every mark is
+loaded from the local, versioned `icons.svg` sprite. The coletar mark and the hero
+artwork are original. See [icon sources](../src/coletar/inspector/static/ICONS.md)
+for package versions and included licenses.
 
 ### The design fixture populates the dashboards
 
@@ -160,3 +157,42 @@ checks exercise review-to-compile, audit, demo keys and desktop/mobile layouts.
 Ruff, strict mypy and JavaScript syntax checks pass. CI includes the web JS parse
 check. Local integrations without their services/settings are skipped; see the task
 report for the exact verification totals and environment limitations.
+
+
+## Astra UI design experiment
+
+The `codex/product-ui-testing` branch replaces the public home page with an original
+context-atlas composition and applies its paper, ink, and cobalt visual system to
+the workspace. Open `/app#/home` for the website and `/app#/library` for the app.
+The design direction is recorded in [UI_REDESIGN.md](UI_REDESIGN.md).
+
+The landing page includes a responsive SVG ribbon illustration, selectable
+destination previews, a four-object permission playground, source receipts, and a
+two-date history comparison. All landing examples are synthetic, held in browser
+memory, and never written to the Store. Reset restores the sample permissions.
+The actual workspace retains its existing event-producing APIs and review gates.
+
+Library now offers list and atlas-card views, keeps filters and scroll position
+when returning from an object, and uses the shared type and spacing system.
+History and Connections are the new labels for Audit and Surfaces; route URLs
+remain compatible. Object editing includes a before/after preview, and unsaved
+reach changes update their labels before explicit save. Source dialogs, the
+mobile menu, and the skip link support keyboard interaction.
+
+Instrument Serif and Manrope are self-hosted from Google Fonts' source repository.
+Their SIL Open Font License files are included alongside the font files in
+`src/coletar/inspector/static/fonts/`. No frontend framework or runtime dependency
+was added. The ribbon is SVG/CSS; no video, external image, or WebGL is required.
+
+This iteration uses a dedicated object detail page rather than the brief's
+proposed side inspector. The atlas-card view is an alternate arrangement of real
+objects, not a graph-edge visualization. Migration previews use the existing
+workspace compiler instead of an additional marketing-page simulation. Existing
+setup simulations remain labeled; this redesign does not add authentication,
+billing, or connector capabilities.
+
+Validation: the 35 Inspector tests pass; Ruff, strict mypy, and JavaScript syntax
+checks pass. Browser checks cover landing eligibility changes, source receipts,
+history switching, mobile navigation, library views, saved reach and its appended
+event, and review-to-compiler preview across ChatGPT and local destinations.
+Responsive checks use 1440×900, 1024×768, and 390×844 viewports.

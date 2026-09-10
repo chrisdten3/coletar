@@ -9,44 +9,54 @@ const esc = (value) =>
         c
       ],
   );
+// Vendored Lucide (shadcn's interface icon family) and brand assets. See ICONS.md.
+const iconSprite =
+  "/static/icons.svg?v=" +
+  new URL(document.currentScript.src).searchParams.get("v");
 const paths = {
-  library: "m3 7 9-5 9 5-9 5-9-5Zm0 5 9 5 9-5M3 17l9 5 9-5",
-  capture: "M4 4h16l2 14H2L4 4Zm-2 9h6l2 3h4l2-3h6",
-  review:
-    "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 9 3 3 7-7",
-  audit: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l4 3",
-  migrate: "M3 12h13m-5-5 5 5-5 5M19 3h3v18h-3",
-  surfaces: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7Z",
-  settings: "M3 6h6m4 0h8M3 18h12m4 0h2M9 3v6m6 6v6",
-  search: "m16 16 5 5M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z",
-  plus: "M12 4v16M4 12h16",
-  arrow: "M5 12h14m-6-6 6 6-6 6",
-  back: "M19 12H5m6-6-6 6 6 6",
-  check: "m4 12 5 5L20 6",
-  lock: "M6 10h12v11H6V10Zm3 0V6a3 3 0 0 1 6 0v4",
-  upload: "M12 16V3m-5 5 5-5 5 5M4 18v3h16v-3",
-  download: "M12 3v13m-5-5 5 5 5-5M4 19v2h16v-2",
-  close: "m5 5 14 14M5 19 19 5",
-  info: "M12 10v7m0-11v1M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z",
+  library: "layers",
+  capture: "inbox",
+  review: "clipboard-check",
+  audit: "history",
+  migrate: "arrow-right-from-line",
+  surfaces: "panels-top-left",
+  settings: "sliders-horizontal",
+  search: "search",
+  plus: "plus",
+  arrow: "arrow-right",
+  back: "arrow-left",
+  check: "check",
+  lock: "lock",
+  upload: "upload",
+  download: "download",
+  close: "x",
+  info: "info",
+  external: "arrow-up-right",
+  menu: "menu",
+  chevron: "chevron-down",
+  file: "file-text",
+  shield: "shield-check",
+  network: "network",
+  sparkles: "sparkles",
+  reset: "rotate-ccw",
+  cpu: "cpu",
+  code: "code-xml",
+  dot: "circle-dot",
 };
 const icon = (name) =>
-  `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[name] || paths.info}"/></svg>`;
-/* Surface marks. Deliberately geometric rather than reproductions of anyone's
-   logo: they identify a destination in this UI, they do not claim a trademark. */
+  `<svg class="icon lucide" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true"><use href="${iconSprite}#${paths[name] || paths.info}"/></svg>`;
 const marks = {
-  claude:
-    "M12 3.2v5m0 7.6v5M3.2 12h5m7.6 0h5M5.8 5.8l3.5 3.5m5.4 5.4 3.5 3.5m0-12.4-3.5 3.5m-5.4 5.4-3.5 3.5",
-  claude_code: "m8.5 8-4 4 4 4m7-8 4 4-4 4m-2-11.5-3 15",
-  chatgpt:
-    "M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4l8-4.6Zm0 5.3 3.4 2v3.8l-3.4 2-3.4-2v-3.8l3.4-2Z",
-  local:
-    "M8.5 8.5h7v7h-7v-7ZM5.5 5.5h13v13h-13v-13ZM9.5 2.5v3m5-3v3m-5 13v3m5-3v3M2.5 9.5h3m-3 5h3m13-5h3m-3 5h3",
-  markdown: "M12 2.5 21 8v8l-9 5.5L3 16V8l9-5.5Zm0 5.2L16.6 10v4L12 16.4 7.4 14v-4L12 7.7Z",
-  coletar: "M15.5 8.5a5 5 0 1 0 0 7",
+  claude: "brand-claude",
+  claude_code: "brand-claude_code",
+  chatgpt: "brand-chatgpt",
+  local: "cpu",
+  markdown: "brand-markdown",
+  coletar: "circle-dot",
+  ollama: "brand-ollama",
 };
 marks.desktop = marks.claude;
 marks.code = marks.claude_code;
-marks.ollama = marks.local;
+
 marks.qwen = marks.local;
 marks.gpt = marks.chatgpt;
 marks.openai = marks.chatgpt;
@@ -55,16 +65,19 @@ marks.all = marks.coletar;
 const markFor = (name) => {
   const key = String(name || "").toLowerCase();
   if (marks[key]) return key;
-  if (key.includes("claude_code") || key.includes("claude-code")) return "claude_code";
-  if (key.includes("claude") || key.includes("opus") || key.includes("sonnet")) return "claude";
+  if (key.includes("claude_code") || key.includes("claude-code"))
+    return "claude_code";
+  if (key.includes("claude") || key.includes("opus") || key.includes("sonnet"))
+    return "claude";
   if (key.includes("gpt") || key.includes("openai")) return "chatgpt";
   if (key.includes("markdown") || key.includes("obsidian")) return "markdown";
-  if (key.includes("local") || key.includes("ollama") || key.includes("qwen")) return "local";
+  if (key.includes("local") || key.includes("ollama") || key.includes("qwen"))
+    return "local";
   return "coletar";
 };
 const mark = (name, label = "") => {
   const key = markFor(name);
-  return `<svg class="mark mark-${key}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ${label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"'}><path d="${marks[key]}"/></svg>`;
+  return `<svg class="mark mark-${key}" viewBox="0 0 24 24" ${label ? `role="img" aria-label="${esc(label)}"` : 'aria-hidden="true"'}><use href="${iconSprite}#${marks[key]}"/></svg>`;
 };
 /* A surface named in running text, with its mark. */
 const tag = (name, text) =>
@@ -200,7 +213,7 @@ function card(o) {
   return `<a class="memory ${isRestricted(o) ? "restricted" : ""}" href="#/object/${encodeURIComponent(o.id)}"><p>${esc(o.content)}</p>${meta(o)}</a>`;
 }
 const brand =
-  '<a class="brand" href="#/home"><span class="brand-mark">c</span> coletar</a>';
+  '<a class="brand" href="#/home"><svg class="coletar-symbol" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M29 9a14 14 0 1 0 0 22M29 15a7 7 0 1 0 0 10" stroke="currentColor" stroke-width="5"/><circle cx="31" cy="20" r="3" fill="currentColor"/></svg>coletar</a>';
 function shell(title, body, actions = "") {
   const counts = {
     Library: activeObjects().length,
@@ -211,13 +224,17 @@ function shell(title, body, actions = "") {
     ["library", "Library"],
     ["capture", "Capture queue"],
     ["review", "Review"],
-    ["audit", "Audit"],
-    ["migrate", "Migrate"],
-    ["surfaces", "Surfaces"],
+    ["audit", "History"],
+    ["surfaces", "Connections"],
+    ["migrate", "Export & migrate"],
     ["settings", "Settings"],
   ];
+  title =
+    { Audit: "History", Migrate: "Export & migrate", Surfaces: "Connections" }[
+      title
+    ] || title;
   const total = Object.values(state.usage).reduce((a, b) => a + b, 0);
-  return `<aside class="sidebar">${brand}<nav aria-label="Workspace">${links.map(([route, label]) => `<a class="nav-link ${title === label || (title === "Object" && label === "Library") || (title === "Get set up" && label === "Surfaces") ? "active" : ""}" ${title === label ? 'aria-current="page"' : ""} href="#/${route}">${icon(route)}<span>${label}</span>${counts[label] !== undefined ? `<span class="count">${counts[label]}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="row between"><span>Context served</span><span class="mono">${number(total)} / 2M</span></div><div class="progress"><span style="width:${Math.min((total / 2000000) * 100, 100)}%"></span></div><a class="account" href="#/settings"><span class="avatar">${state.sample ? "DS" : state.hosted ? "PW" : "LW"}</span>${state.sample ? "Design sample workspace" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</a><span class="prototype-label">${isPublic() ? "Anyone with the link can read and change this" : state.hosted ? "Hosted preview" : "Local prototype"} · ${state.sample ? "synthetic examples" : "your configured store"}</span></div></aside><div class="workspace"><header class="topbar"><h1>${title}</h1><div class="top-actions">${actions}</div></header><main id="content">${body}</main></div>`;
+  return `<aside class="sidebar">${brand}<div class="rail-label eyebrow">Your workspace</div><nav aria-label="Workspace">${links.map(([route, label]) => `<a class="nav-link ${title === label || (title === "Object" && label === "Library") || (title === "Get set up" && label === "Connections") ? "active" : ""}" ${title === label ? 'aria-current="page"' : ""} href="#/${route}">${icon(route)}<span>${label}</span>${counts[label] !== undefined ? `<span class="count">${counts[label]}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="row between"><span>Context served</span><span class="mono">${number(total)} tokens</span></div><div class="progress"><span style="width:${Math.min((total / 2000000) * 100, 100)}%"></span></div><a class="account" href="#/settings"><span class="avatar">${state.sample ? "DS" : state.hosted ? "PW" : "LW"}</span>${state.sample ? "Design sample workspace" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</a><span class="prototype-label">${isPublic() ? "Anyone with the link can read and change this" : state.hosted ? "Hosted preview" : "Local prototype"} · ${state.sample ? "synthetic examples" : "your configured store"}</span></div></aside><div class="workspace"><header class="topbar"><div class="workspace-breadcrumb">Workspace <span>/</span> ${title}</div><div class="top-actions">${actions}</div></header><main id="content"><div class="workspace-heading"><div><span class="eyebrow">${state.sample ? "Design sample / synthetic data" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</span><h1>${title === "Library" ? "A place for what matters." : title === "Object" ? "Context inspector" : title}</h1></div><span class="heading-symbol" aria-hidden="true">${icon(title === "Library" ? "library" : "audit")}</span></div>${body}</main></div>`;
 }
 /* The deployment reports this; the app does not infer it from being hosted. */
 const isPublic = () => Boolean(connections?.public_workspace);
@@ -263,7 +280,7 @@ function library() {
   ];
   return shell(
     "Library",
-    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div>${
+    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : ""}">${
       filtered
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
         .map(card)
@@ -277,7 +294,7 @@ function library() {
           ? '<button data-action="clear">Clear filters</button>'
           : '<button class="primary" data-action="sample">Load design examples</button> <a class="btn" href="#/surfaces">Import your history</a>',
       )
-    }<p class="caption">Withheld objects are recorded in a compile manifest, never dropped.</p>`,
+    }</div><p class="caption">Withheld objects are recorded in a compile manifest, never dropped.</p>`,
     surfaceTabs(),
   );
 }
@@ -396,7 +413,9 @@ function capture() {
 /* The strip is a fixed five-stage legend, so the marker is placed by where the
    record time falls between the earliest event and now — not by pixel guesswork. */
 function asOfOffset() {
-  const events = state.events.map((e) => Date.parse(e.at)).filter(Number.isFinite);
+  const events = state.events
+    .map((e) => Date.parse(e.at))
+    .filter(Number.isFinite);
   if (!events.length || !auditResult) return 50;
   const first = Math.min(...events);
   const last = Math.max(Math.max(...events), Date.now());
@@ -422,7 +441,17 @@ function audit() {
     .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   return shell(
     "Audit",
-    `<form id="audit-form" class="panel date-form"><label><span class="eyebrow">As of — record time</span><input aria-label="Record time" name="at" type="date" value="${auditAt}" required><p class="small">when the graph was asked</p></label><label><span class="eyebrow">In force — valid time</span><input aria-label="Valid time" name="valid" type="date" value="${auditValid}" required><p class="small">when the fact itself applied</p></label><button class="primary">${icon("audit")} Run query</button></form><div class="audit-heading">${auditResult ? `What the graph believed on ${date(auditResult.at)}, about facts in force on ${date(auditResult.valid)}. ${changed.length} ${changed.length === 1 ? "object differs" : "objects differ"} from today.` : "Two dates. One explainable history."}</div><div class="panel event-strip">${auditResult ? `<span class="as-of" style="left:${asOfOffset()}%"><i>as of ${esc(date(auditResult.at))}</i></span>` : ""}${[["written", "green"], ["reviewed", "green"], ["edited", "green"], ["reach restricted", "amber"], ["superseded", "green"]].map(([x, tone]) => `<span class="${tone}-dot">${x}</span>`).join("")}</div><div class="columns asymmetric"><section><h2>What changed since</h2>${
+    `<form id="audit-form" class="panel date-form"><label><span class="eyebrow">As of — record time</span><input aria-label="Record time" name="at" type="date" value="${auditAt}" required><p class="small">when the graph was asked</p></label><label><span class="eyebrow">In force — valid time</span><input aria-label="Valid time" name="valid" type="date" value="${auditValid}" required><p class="small">when the fact itself applied</p></label><button class="primary">${icon("audit")} Run query</button></form><div class="audit-heading">${auditResult ? `What the graph believed on ${date(auditResult.at)}, about facts in force on ${date(auditResult.valid)}. ${changed.length} ${changed.length === 1 ? "object differs" : "objects differ"} from today.` : "Two dates. One explainable history."}</div><div class="panel event-strip">${auditResult ? `<span class="as-of" style="left:${asOfOffset()}%"><i>as of ${esc(date(auditResult.at))}</i></span>` : ""}${[
+      ["written", "green"],
+      ["reviewed", "green"],
+      ["edited", "green"],
+      ["reach restricted", "amber"],
+      ["superseded", "green"],
+    ]
+      .map(([x, tone]) => `<span class="${tone}-dot">${x}</span>`)
+      .join(
+        "",
+      )}</div><div class="columns asymmetric"><section><h2>What changed since</h2>${
       auditResult
         ? changed.length
           ? changed
@@ -457,7 +486,13 @@ function audit() {
 /* The reference shows Migrate with a score already on it. Compute it from the
    real compiler the moment the gate allows, instead of making the user ask. */
 function autoPreview() {
-  if (manifest || previewing || !state.can_compile || destination === "markdown") return;
+  if (
+    manifest ||
+    previewing ||
+    !state.can_compile ||
+    destination === "markdown"
+  )
+    return;
   // One attempt per destination. A preview that failed must not be retried on
   // every render; the explicit Preview button stays available.
   if (previewFailed === destination || !activeObjects().length) return;
@@ -584,7 +619,7 @@ function hostedConnect(id) {
 function surfaces() {
   return shell(
     "Get set up",
-    `<div class="stepper"><span class="current"><i>1</i> Connect</span><hr><span class="current"><i>2</i> Import your history</span><hr><span><i>3</i> Review what was found</span></div><div class="columns"><section><h2>Connected surfaces</h2><p class="muted">Every surface reads and writes the same graph. coletar has no chat interface of its own.</p>${connections ? hostedSurfaces() : surfaceList.map(([id, title, desc]) => `<div class="panel surface ${prefs.surfaces?.[id] ? "ready" : ""}"><div><h3>${mark(id)}${title}</h3><span class="mono">${desc}</span></div><div class="row"><span class="mono ${prefs.surfaces?.[id] ? "green" : "muted"}">${prefs.surfaces?.[id] ? "setup saved · unverified" : "not configured"}</span><button class="${prefs.surfaces?.[id] ? "quiet" : ""}" data-connect="${id}">${prefs.surfaces?.[id] ? "Manage" : "Connect"}</button></div></div>`).join("")}<p class="caption">${connections ? "Endpoints are live. A provider is connected only after you configure its client and successfully use it. Account integrations are never installed automatically." : "Setup controls simulate the connection flow. A saved setup does not establish a provider connection."}</p></section><section><h2>Import your history</h2><p class="muted">Click the export button inside your provider account, then drop the file here. coletar never signs in as you and never reads your archive on its own.</p><div class="panel dropzone" id="dropzone">${icon("upload")}<b>Drop a ChatGPT or Claude export</b><p class="small muted">.zip or conversations.json · processed ${state.hosted ? "on your hosted server" : "on this machine"}</p><label class="btn" for="import-file">Choose a file</label><input id="import-file" type="file" accept=".zip,.json" hidden></div><p class="caption">Pattern extraction · no third-party model calls · ${connections?.upload_limit_mb || 20} MB upload limit. Conservative extraction may miss facts.</p>${importReport ? `<div class="panel mt"><div class="row between"><b>${esc(importReport.name)}</b><span class="mono green">${importReport.busy ? "extracting…" : "complete"}</span></div><div class="progress mt"><span style="width:${importReport.busy ? 40 : 100}%"></span></div><p class="mono muted mt">${importReport.busy ? "Reading your uploaded file…" : `${importReport.conversations} conversations · ${importReport.turns} turns read · ${importReport.memories} new memories · ${importReport.corroborated} corroborated`}</p>${importReport.busy ? "" : '<a class="btn primary" href="#/review">Review what was found</a>'}</div>` : ""}<p class="caption">New memories appear in Review. Nothing compiles until every eligible object has been reviewed; live retrieval follows its existing policy.</p></section></div>`,
+    `<div class="stepper"><span class="current"><i>1</i> Connect</span><hr><span class="current"><i>2</i> Import your history</span><hr><span><i>3</i> Review what was found</span></div><div class="columns"><section><h2>Connected surfaces</h2><p class="muted">Connect supported tools to your context. Read and write capabilities depend on the surface; setup status is shown below.</p>${connections ? hostedSurfaces() : surfaceList.map(([id, title, desc]) => `<div class="panel surface ${prefs.surfaces?.[id] ? "ready" : ""}"><div><h3>${mark(id)}${title}</h3><span class="mono">${desc}</span></div><div class="row"><span class="mono ${prefs.surfaces?.[id] ? "green" : "muted"}">${prefs.surfaces?.[id] ? "setup saved · unverified" : "not configured"}</span><button class="${prefs.surfaces?.[id] ? "quiet" : ""}" data-connect="${id}">${prefs.surfaces?.[id] ? "Manage" : "Connect"}</button></div></div>`).join("")}<p class="caption">${connections ? "Endpoints are live. A provider is connected only after you configure its client and successfully use it. Account integrations are never installed automatically." : "Setup controls simulate the connection flow. A saved setup does not establish a provider connection."}</p></section><section><h2>Import your history</h2><p class="muted">Click the export button inside your provider account, then drop the file here. coletar never signs in as you and never reads your archive on its own.</p><div class="panel dropzone" id="dropzone">${icon("upload")}<b>Drop a ChatGPT or Claude export</b><p class="small muted">.zip or conversations.json · processed ${state.hosted ? "on your hosted server" : "on this machine"}</p><label class="btn" for="import-file">Choose a file</label><input id="import-file" type="file" accept=".zip,.json" hidden></div><p class="caption">Pattern extraction · no third-party model calls · ${connections?.upload_limit_mb || 20} MB upload limit. Conservative extraction may miss facts.</p>${importReport ? `<div class="panel mt"><div class="row between"><b>${esc(importReport.name)}</b><span class="mono green">${importReport.busy ? "extracting…" : "complete"}</span></div><div class="progress mt"><span style="width:${importReport.busy ? 40 : 100}%"></span></div><p class="mono muted mt">${importReport.busy ? "Reading your uploaded file…" : `${importReport.conversations} conversations · ${importReport.turns} turns read · ${importReport.memories} new memories · ${importReport.corroborated} corroborated`}</p>${importReport.busy ? "" : '<a class="btn primary" href="#/review">Review what was found</a>'}</div>` : ""}<p class="caption">New memories appear in Review. Nothing compiles until every eligible object has been reviewed; live retrieval follows its existing policy.</p></section></div>`,
   );
 }
 /* Named so the row reads as a routing choice. Prices stay yours to enter: this
@@ -604,7 +639,9 @@ function settings() {
   const rules = prefs.rules || [];
   return shell(
     "Settings",
-    `<div class="columns"><section><h2>Plan & usage</h2><p class="muted">Context tokens served to your surfaces, not how many memories you store.</p><div class="panel"><div class="row between"><b class="usage-total">${number(total)}</b><span class="mono muted">recorded tokens · no billing enabled</span></div><div class="progress mt">${Object.entries(usage)
+    `<div class="columns"><section><h2>Plan & usage</h2><p class="muted">Context tokens served to your surfaces, not how many memories you store.</p><div class="panel"><div class="row between"><b class="usage-total">${number(total)}</b><span class="mono muted">recorded tokens · no billing enabled</span></div><div class="progress mt">${Object.entries(
+      usage,
+    )
       .filter(([, n]) => n > 0)
       .map(
         ([s, n]) =>
@@ -626,50 +663,224 @@ function settings() {
         const delta = base ? Math.round(((rate - base) / base) * 100) : null;
         return `<tr><td>${tag(name)}</td><td>${i < 3 ? `<input type="number" min="0" step="0.01" aria-label="${esc(name)} price per million tokens" data-rate="${i}" value="${rate}">` : '<span class="mono">$0.00</span>'}</td><td class="mono" data-cost="${i}">$${((total / 1000000) * rate).toFixed(2)}</td><td class="mono ${delta === null || !i ? "muted" : delta <= 0 ? "green" : "amber"}" data-delta="${i}">${!i ? "—" : delta === null ? "—" : `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${Math.abs(delta)}%`}</td></tr>`;
       })
-      .join("")}</tbody></table></div><p class="caption">Scenario calculator, not current provider pricing or an invoice. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
+      .join(
+        "",
+      )}</tbody></table></div><p class="caption">Scenario calculator, not current provider pricing or an invoice. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
       isPublic()
         ? `<h2 class="mt">Workspace access</h2><div class="notice warning">${icon("info")} This workspace is served without a password. Anyone with the link can read every object — including ones marked restricted — and can add, edit, retire and import. Keep private context out of it.</div><p class="caption">Connector bearer keys are a separate authority and still gate the MCP and REST endpoints. The scheduled extraction batch still requires its own credential.</p>`
         : ""
     }<h2 class="mt">Default reach for new memories</h2><p class="muted">A browser preference for memories you add here. Existing memories and other surfaces are unaffected.</p><div class="panel"><div class="rule-row"><span class="mono">everything</span><span>${esc(prefs.defaultReach || "every surface")}</span></div>${rules.map((r, i) => `<div class="rule-row"><span class="mono">${esc(r.project)}</span><span>${esc(r.reach)} only <button class="quiet" data-remove-rule="${i}" aria-label="Remove ${esc(r.project)} rule">×</button></span></div>`).join("")}<button class="mt" data-action="new-rule">${icon("plus")} Add a rule</button></div><p class="caption">Project rules apply only to manual additions in this browser. Team policy and server-wide defaults are not configured.</p></section></div>`,
   );
 }
+// Synthetic examples are isolated from the Store and never call a graph-write API.
+const demoFacts = [
+  {
+    kind: "Preference",
+    title: "A little less jargon.",
+    content: "Use plain language and keep explanations concise.",
+    source: "I prefer plain language. Please keep your explanations concise.",
+    provider: "Claude",
+    reach: ["claude", "chatgpt", "local"],
+    project: "Global",
+    date: "04 Sep 2026",
+  },
+  {
+    kind: "Decision",
+    title: "Built for the long run.",
+    content: "Use PostgreSQL for the Atlas project.",
+    source:
+      "For Atlas, let's use PostgreSQL. We need a relational database we can grow with.",
+    provider: "Claude",
+    reach: ["claude", "local"],
+    project: "Project Atlas",
+    date: "06 Sep 2026",
+  },
+  {
+    kind: "Correction",
+    title: "Plans change. Context follows.",
+    content: "The Atlas launch is now 24 October.",
+    source:
+      "The launch has moved from 10 October to 24 October. Keep the previous date in the history.",
+    provider: "ChatGPT",
+    reach: ["claude", "chatgpt", "local"],
+    project: "Project Atlas",
+    date: "08 Sep 2026",
+  },
+  {
+    kind: "Personal note",
+    title: "Some things stay close.",
+    content: "Keep my personal journal on my local model.",
+    source: "My personal journal should only be available to my local model.",
+    provider: "Local",
+    reach: ["local"],
+    project: "Personal",
+    date: "09 Sep 2026",
+  },
+];
+let demoSelected = 1,
+  demoProvider = "claude",
+  historyStep = 1,
+  libraryView = "list";
+let demoReach = demoFacts.map((f) => [...f.reach]);
+const providerName = (s) =>
+  ({ claude: "Claude", chatgpt: "ChatGPT", local: "Local model" })[s];
+const wordmark = `<svg class="coletar-symbol" viewBox="0 0 40 40" fill="none" aria-hidden="true"><path d="M29 9a14 14 0 1 0 0 22M29 15a7 7 0 1 0 0 10" stroke="currentColor" stroke-width="5"/><circle cx="31" cy="20" r="3" fill="currentColor"/></svg>`;
 function marketingNav() {
-  return `<nav>${brand}<div class="row"><a class="hide-mobile" href="#/home">How it works</a><a class="hide-mobile" href="#/security">Security</a><a href="#/pricing">Pricing</a><a class="btn" href="#/library">Open prototype</a><a class="btn primary" href="#/surfaces">Get started</a></div></nav>`;
+  return `<nav class="site-nav" aria-label="Main"><a class="brand" href="#/home">${wordmark}coletar<span class="brand-period">®</span></a><div class="site-links"><a href="#/home/product" data-scroll="product">Product</a><a href="#/home/how-it-works" data-scroll="how-it-works">How it works</a><a href="https://github.com/chrisdten3/coletar#the-sdk" target="_blank" rel="noopener">Developers ↗</a></div><div class="row"><a class="btn primary" href="#/library">Open workspace ${icon("arrow")}</a><button class="menu-toggle quiet" aria-label="Toggle navigation" aria-expanded="false">Menu</button></div></nav>`;
 }
 function marketingFooter() {
-  return `<footer><div>${brand}<p class="muted mt">A portable AI workspace.<br>Memory as a first-class object.</p></div><div class="stack"><span class="eyebrow">Product</span><a href="#/surfaces">Surfaces</a><a href="#/pricing">Pricing</a><a href="#/library">Library</a></div><div class="stack"><span class="eyebrow">Trust</span><a href="#/security">Security & boundaries</a><a href="#/audit">Audit your context</a><a href="#/migrate">Take your context with you</a></div><div class="stack"><span class="eyebrow">Prototype</span><span class="muted">Local development preview<br>No signup or billing<br>No provider sign-in automation</span><a href="/" target="_blank" rel="noopener">Developer Inspector ↗</a></div></footer>`;
+  return `<footer class="site-footer"><div><a class="brand" href="#/home">${wordmark}coletar</a><p class="muted mt">A place for everything<br>you bring to AI.</p></div><div class="stack"><span class="eyebrow">Explore</span><a href="#/library">Your workspace</a><a href="#/surfaces">Connections & imports</a><a href="#/migrate">Export & migrate</a></div><div class="stack"><span class="eyebrow">Built on trust</span><a href="#/security">Privacy & boundaries</a><a href="#/audit">Context history</a><a href="https://github.com/chrisdten3/coletar/blob/main/docs/CONTINUITY_SCORE.md" target="_blank" rel="noopener">Continuity Score ↗</a></div><div class="stack"><span class="eyebrow">Open by design</span><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Source & documentation ↗</a><a href="/" target="_blank" rel="noopener">Developer Inspector ↗</a><span class="muted">Independent context.<br>Human control.</span></div></footer><div class="footer-bottom"><span>coletar / a portable AI workspace</span><span>Keep what matters. Carry it forward.</span></div>`;
+}
+function orbitArtwork() {
+  return `<svg class="orbit-art" viewBox="0 0 700 660" fill="none" aria-hidden="true"><defs><linearGradient id="ribbon" x1="100" y1="50" x2="550" y2="610" gradientUnits="userSpaceOnUse"><stop stop-color="#ecf1f7"/><stop offset=".22" stop-color="#9db8df"/><stop offset=".43" stop-color="#eef3fa"/><stop offset=".58" stop-color="#779acc"/><stop offset=".76" stop-color="#b9cdec"/><stop offset="1" stop-color="#527cb7"/></linearGradient><linearGradient id="edge" x1="0" y1="0" x2="600" y2="550" gradientUnits="userSpaceOnUse"><stop stop-color="#fff"/><stop offset=".5" stop-color="#eaf0fa"/><stop offset="1" stop-color="#7a99c9"/></linearGradient><filter id="soft"><feGaussianBlur stdDeviation="17"/></filter></defs><ellipse cx="353" cy="580" rx="200" ry="20" fill="#617899" opacity=".14" filter="url(#soft)"/><g transform="rotate(-34 350 330)"><ellipse cx="350" cy="330" rx="204" ry="270" stroke="#5577a3" stroke-width="49" opacity=".12" transform="translate(4 9)"/><ellipse cx="350" cy="330" rx="204" ry="270" stroke="url(#ribbon)" stroke-width="48"/><ellipse cx="350" cy="330" rx="226" ry="292" stroke="url(#edge)" stroke-width="2"/><ellipse cx="350" cy="330" rx="182" ry="248" stroke="#f0f5fd" stroke-width="2" opacity=".85"/></g><g transform="rotate(43 350 330)"><ellipse cx="350" cy="330" rx="215" ry="108" stroke="url(#ribbon)" stroke-width="32"/><ellipse cx="350" cy="330" rx="230" ry="123" stroke="url(#edge)" stroke-width="1.5"/><ellipse cx="350" cy="330" rx="199" ry="92" stroke="#eaf2ff" stroke-width="1.5"/></g><path d="M100 325H595M350 65V585" stroke="#47678d" stroke-dasharray="3 7" opacity=".2"/><circle cx="350" cy="330" r="73" fill="#f4f1e9" stroke="#b9cadc"/><circle cx="350" cy="330" r="64" stroke="#cfdbdf"/><path d="M370 303a32 32 0 1 0 0 54M370 316a17 17 0 1 0 0 28" stroke="#244be8" stroke-width="9"/><circle cx="375" cy="330" r="6" fill="#244be8"/></svg>`;
+}
+function atlasCards() {
+  return demoFacts
+    .slice(0, 3)
+    .map(
+      (f, i) =>
+        `<button class="atlas-slip slip-${i} ${demoReach[i].includes(demoProvider) ? "eligible" : "withheld"}" data-source="${i}"><span class="slip-label">${String(i + 1).padStart(2, "0")} / ${f.kind} <span>${demoReach[i].includes(demoProvider) ? "↗" : "⊘"}</span></span><strong>${f.content}</strong><span class="slip-source">${mark(f.provider)} ${f.project} · ${demoReach[i].includes(demoProvider) ? "Eligible" : "Withheld"}</span></button>`,
+    )
+    .join("");
+}
+function demoPanel() {
+  const f = demoFacts[demoSelected];
+  return `<div class="demo-library"><span class="eyebrow">01 / Your collection</span>${demoFacts.map((f, i) => `<button class="demo-object ${i === demoSelected ? "selected" : ""}" data-demo-object="${i}" aria-pressed="${i === demoSelected}"><span class="demo-object-icon">${icon(i === 3 ? "lock" : i === 2 ? "audit" : "library")}</span><span><small>${f.kind}</small><strong>${f.title}</strong></span><span class="demo-chevron">↗</span></button>`).join("")}</div><div class="demo-policy"><span class="eyebrow">02 / Set the boundaries</span><h3>${f.content}</h3><span class="badge">${f.project}</span><fieldset><legend>Who may read this?</legend>${["claude", "chatgpt", "local"].map((p) => `<label class="demo-toggle"><span>${mark(p)} ${providerName(p)}</span><input class="switch" type="checkbox" data-demo-permission="${p}" aria-label="${providerName(p)} may read this example" ${demoReach[demoSelected].includes(p) ? "checked" : ""}></label>`).join("")}</fieldset><button class="source-link quiet" data-source="${demoSelected}">Inspect the source ${icon("arrow")}</button></div><div class="demo-result"><span class="eyebrow">03 / See the difference</span><label class="preview-label" for="demo-provider">Preview context for</label><select id="demo-provider">${["claude", "chatgpt", "local"].map((p) => `<option value="${p}" ${p === demoProvider ? "selected" : ""}>${providerName(p)}</option>`).join("")}</select><div class="eligibility" aria-live="polite"><span class="eligibility-number">${demoReach.filter((r) => r.includes(demoProvider)).length}<small> / 4</small></span><p>objects eligible for retrieval</p>${demoFacts.map((f, i) => `<div class="eligibility-row ${demoReach[i].includes(demoProvider) ? "" : "off"}">${icon(demoReach[i].includes(demoProvider) ? "check" : "lock")}<span>${f.kind}<small>${demoReach[i].includes(demoProvider) ? "Within your access policy" : "Withheld by your access policy"}</small></span></div>`).join("")}</div><p class="demo-disclaimer">Permission makes context available. The assistant’s query determines what is retrieved.</p></div>`;
+}
+function historyExample() {
+  return `<div class="history-stamp"><span class="eyebrow">Project Atlas / Decision history</span>${icon("audit")}</div><div class="history-steps" role="group" aria-label="Example history"><button data-history-step="0" aria-pressed="${historyStep === 0}" class="${historyStep === 0 ? "active" : ""}"><span>01</span> 03 September</button><button data-history-step="1" aria-pressed="${historyStep === 1}" class="${historyStep === 1 ? "active" : ""}"><span>02</span> 08 September</button></div><div class="history-content" aria-live="polite"><span class="eyebrow">${historyStep ? "Current version" : "Previous version"}</span><p>The Atlas launch is<br><em>${historyStep ? "24" : "10"} October.</em></p>${historyStep ? '<div class="history-diff"><del>10 October</del><span>→</span><ins>24 October</ins></div>' : '<p class="small muted">Recorded on 03 September. Superseded on 08 September.</p>'}</div><div class="history-receipt">${mark(historyStep ? "chatgpt" : "claude")}<span>${historyStep ? "ChatGPT" : "Claude"}<small>Explicit statement · synthetic example</small></span><button class="quiet" data-source="${historyStep ? 2 : 4}">View source ↗</button></div>`;
 }
 function home() {
-  return `<div class="marketing">${marketingNav()}<main id="content" style="padding:0;max-width:none"><section class="hero"><div><h1>Your context should<br>outlive your model.</h1><p>Your facts, preferences and project state live in one typed graph that you own. You decide, fact by fact, which assistants may see what.</p><div class="row"><a class="btn primary" href="#/surfaces">Import your history ${icon("arrow")}</a><a class="btn" href="#/library">Explore the prototype</a></div><p class="small muted mt">No chat interface of our own — you stay where you already work.</p></div><div class="panel"><div class="eyebrow">One fact. Multiple surfaces. Your rules.</div><p>Handling the Northwind litigation matter; filings are due 14 November.</p><span class="mono muted">Design example · Claude-only reach</span><div class="mt">${[
-    ["claude", true],
-    ["chatgpt", false],
-    ["local", false],
-    ["claude_code", false],
-  ]
-    .map(
-      ([s, allowed]) =>
-        `<div class="reach-row ${allowed ? "" : "withheld"}"><span class="mono">${tag(s)}</span><span class="badge ${allowed ? "ok" : "reach-off"}">${allowed ? icon("check") : icon("lock")} ${allowed ? "may read" : "withheld"}</span></div>`,
-    )
-    .join(
-      "",
-    )}</div><span class="small muted">Withheld at read time, and recorded in the migration manifest.</span></div></section><div class="logo-strip">${[
-    ["claude", "claude.ai"],
-    ["claude", "Claude Desktop"],
-    ["claude_code", "Claude Code"],
-    ["chatgpt", "chatgpt.com"],
-    ["local", "Ollama & local models"],
-  ]
-    .map(([m, label]) => `<span>${mark(m)}${label}</span>`)
-    .join("")}<span>MCP · REST · Python · JavaScript</span></div><section class="features"><div><span class="feature-chip">${icon("lock")}</span><h2>Selective context</h2><p>Not every assistant should know everything. Choose reach per fact. The policy is enforced when context is read.</p></div><div><span class="feature-chip">${icon("audit")}</span><h2>Provenance you can prove</h2><p>Every object records where it came from, what changed it, and when. Ask what the graph believed on a past date.</p></div><div><span class="feature-chip">${icon("migrate")}</span><h2>An exit that works</h2><p>Compile context into a Claude import, a Custom GPT package or an Ollama Modelfile. Then disconnect us entirely.</p></div></section><section class="story"><div><h2>Every fact can<br>explain itself.</h2><p>Your library is more than a collection of sentences. Each memory carries its source, confidence, scope and full revision history.</p><a href="#/library">Explore the Context Inspector →</a></div><div class="panel"><span class="eyebrow">Lineage · design example</span><ol class="timeline">${["Turn captured on claude.ai", "Extracted and grounded in the source", "Created with provenance", "Reviewed by you", "Reach changed"].map((x) => `<li><strong>${x}</strong><span class="mono">An explainable step in the same history</span></li>`).join("")}</ol></div></section><section class="hero"><div class="panel"><div class="eyebrow">Continuity score · published weights</div>${[
-    ["Object coverage", "40%"],
-    ["Fidelity", "30%"],
-    ["Scope preservation", "20%"],
-    ["Staleness", "10%"],
-  ]
-    .map(([l, v]) => `<div class="rule-row"><span>${l}</span><b>${v}</b></div>`)
-    .join(
-      "",
-    )}<p class="small muted mt">Calculated from the actual compiler manifest.</p></div><div><h2 style="font-size:38px">Leaving is a feature,<br>not a support ticket.</h2><p>A package the destination understands, a manifest of what made it across, and a score that explains what was preserved.</p><a href="#/migrate">Try a migration →</a></div></section><section class="cta"><h2>Bring your history.<br>Keep it when you switch.</h2><p class="muted">Start with your own export or explore the design examples.</p><a class="btn primary" href="#/surfaces">Import your history ${icon("arrow")}</a></section></main>${marketingFooter()}</div>`;
+  return `<div class="marketing redesign">${marketingNav()}<main id="content" class="site-main"><section class="atlas-hero"><div class="hero-copy"><div class="eyebrow hero-kicker"><span class="status-dot"></span> A portable workspace for your AI context</div><h1>Your context.<br><em>Your rules.</em></h1><p>Everything you’ve taught your AI,<br class="desktop-break"> finally in a place that’s yours.</p><div class="hero-actions"><a class="btn primary" href="#/library">Explore your workspace ${icon("arrow")}</a><a class="text-link" href="#/home/product" data-scroll="product">See it in action <span>↘</span></a></div><div class="hero-footnote"><span class="tiny-orbit">◎</span><span>Keep using the AI tools you love.<br>Choose what they get to know.</span></div></div><div class="atlas-scene"><div class="atlas-coordinate mono">CONTEXT ATLAS — 001</div>${orbitArtwork()}<div id="atlas-cards">${atlasCards()}</div><span class="atlas-center-label">ONE WORKSPACE. YOURS.</span><div class="atlas-controls"><span class="mono">Preview context for</span><div class="atlas-providers" role="group" aria-label="Atlas destination">${["claude", "chatgpt", "local"].map((p) => `<button data-atlas-provider="${p}" aria-pressed="${p === demoProvider}" class="${p === demoProvider ? "active" : ""}">${mark(p)}${providerName(p)}</button>`).join("")}</div><span class="atlas-caption">Interactive example · synthetic data</span></div></div></section><div class="belief-strip"><span>A little continuity.<br><b>A lot more possibility.</b></span><div>${mark("claude")}Claude</div><div>${mark("chatgpt")}ChatGPT</div><div>${mark("local")}Local models</div><span class="mono">Your tools.<br>Your context between them.</span></div><section id="how-it-works" class="editorial-intro section-space"><span class="eyebrow section-index">01 / A continuous thread</span><div><h2>Your work moves forward.<br>Your context <em>should too.</em></h2><p>A preference here. A decision there. The details that make AI useful shouldn’t get lost between conversations. Collect what matters, give it a history, and choose where it goes next.</p></div><div class="three-principles"><div><span>01 — Collect</span><p>Bring your history.<br>Keep the useful parts.</p></div><div><span>02 — Control</span><p>The right context.<br>For the right assistant.</p></div><div><span>03 — Continue</span><p>New conversation.<br>Same understanding.</p></div></div></section><section id="product" class="access-section section-space"><div class="section-heading"><div><span class="eyebrow section-index">02 / Selective by design</span><h2>Decide who gets<br>to know <em>what.</em></h2></div><p>Your writing style can travel.<br>Your personal notes can stay close.<br>Set the boundaries, one fact at a time.</p></div><div class="demo-toolbar"><span><span class="status-dot"></span> The context playground</span><span class="mono">Synthetic data · changes stay in this example</span><button class="quiet" id="reset-demo">Reset example ↺</button></div><div id="context-demo" class="context-demo">${demoPanel()}</div><div class="access-caption"><span>${icon("lock")} Access is enforced when context is read.</span><span>Try selecting a fact and changing its reach. ↑</span></div></section><section class="history-section section-space"><div><span class="eyebrow section-index">03 / Nothing without a source</span><h2>Every fact<br>has a <em>history.</em></h2><p>See where a detail came from, when it changed, and what it used to say. Your context should be able to explain itself.</p><a class="text-link" href="#/audit">Explore context history ${icon("arrow")}</a></div><div id="history-example" class="history-example">${historyExample()}</div></section><section class="import-section section-space"><div class="import-art" aria-hidden="true"><div class="file-sheet back-sheet"></div><div class="file-sheet"><span>YOUR HISTORY</span>${icon("library")}<strong>conversations.json</strong><span>Facts. Preferences. Decisions.</span><div class="file-line"></div><div class="file-line short"></div></div><div class="file-seal">↗</div><span class="mono import-art-caption">A new home for what you already know.</span></div><div><span class="eyebrow section-index">04 / Start with your story</span><h2>You’re not<br>starting <em>over.</em></h2><p>Bring an export from your AI provider. coletar finds useful context and keeps a path back to its source.</p><ol class="import-steps"><li><span>01</span> Export your conversations from your provider.</li><li><span>02</span> Choose the downloaded file in coletar.</li><li><span>03</span> Inspect the context and set its reach.</li></ol><a class="btn primary" href="#/surfaces">Bring your context ${icon("arrow")}</a><p class="small muted mt">Imports start with a file you choose. Optional live capture requires your consent on a supported active page.</p></div></section><section class="exit-section section-space"><span class="eyebrow section-index">05 / Yours means you can leave</span><h2>Roots, without<br>the <em>strings.</em></h2><div><p>Compile a package for your next destination. See what’s preserved, what’s reconstructed, and what stays behind—before you download.</p><a class="text-link" href="#/migrate">Explore export & migration ${icon("arrow")}</a><div class="exit-tags"><span>Native</span><span>Reconstructed</span><span>Unsupported</span></div><p class="small muted">A real manifest. A calculated Continuity Score.<br>A package you install yourself.</p></div></section><section class="developer-strip"><span class="mono">FOR THE BUILDERS</span><p>The same context.<br><em>Through your own tools.</em></p><div><span class="mono">MCP / REST / Python / JavaScript</span><a class="text-link" href="https://github.com/chrisdten3/coletar#the-sdk" target="_blank" rel="noopener">Read the documentation ↗</a></div></section><section class="closing-section"><span class="eyebrow">Your next conversation starts here.</span><h2>Keep what matters.<br><em>Carry it forward.</em></h2><a class="btn" href="#/library">Open your workspace ${icon("arrow")}</a><span class="closing-orbit" aria-hidden="true">◎</span></section></main>${marketingFooter()}</div>`;
+}
+function showDemoSource(index) {
+  const f =
+    index === 4
+      ? {
+          source: "Let's set the Atlas launch for 10 October.",
+          provider: "Claude",
+          project: "Project Atlas",
+          date: "03 Sep 2026",
+        }
+      : demoFacts[index];
+  modal(
+    "A fact, with its source.",
+    `<span class="eyebrow">Source receipt / synthetic example</span><blockquote class="source-quote">“${f.source}”</blockquote><dl class="source-details"><dt>Origin</dt><dd>${f.provider} conversation</dd><dt>Scope</dt><dd>${f.project}</dd><dt>Recorded</dt><dd>${f.date}</dd><dt>Extraction</dt><dd>Explicit statement</dd><dt>Confidence</dt><dd>1.00 · directly stated in this example</dd></dl><p class="muted small">Illustrative data only. In your workspace, every object links to its recorded provenance and events.</p>`,
+    "",
+    () => {},
+  );
+}
+function bindDesign() {
+  const redrawDemo = () => {
+    const focused = document.activeElement;
+    const permission = focused?.dataset.demoPermission;
+    const selected = focused?.dataset.demoObject;
+    const wasProvider = focused?.id === "demo-provider";
+    $("#context-demo").innerHTML = demoPanel();
+    $("#atlas-cards").innerHTML = atlasCards();
+    document.querySelectorAll("[data-atlas-provider]").forEach((b) => {
+      const on = b.dataset.atlasProvider === demoProvider;
+      b.classList.toggle("active", on);
+      b.setAttribute("aria-pressed", String(on));
+    });
+    bindDesign();
+    if (permission) $(`[data-demo-permission="${permission}"]`)?.focus();
+    else if (selected) $(`[data-demo-object="${selected}"]`)?.focus();
+    else if (wasProvider) $("#demo-provider")?.focus();
+  };
+  $(".skip").onclick = (e) => {
+    e.preventDefault();
+    const main = $("#content");
+    main.setAttribute("tabindex", "-1");
+    main.focus({ preventScroll: true });
+    main.scrollIntoView({ block: "start" });
+  };
+  document
+    .querySelectorAll("[data-source]")
+    .forEach(
+      (b) => (b.onclick = () => showDemoSource(Number(b.dataset.source))),
+    );
+  document.querySelectorAll("[data-demo-object]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        demoSelected = Number(b.dataset.demoObject);
+        redrawDemo();
+      }),
+  );
+  document.querySelectorAll("[data-demo-permission]").forEach(
+    (b) =>
+      (b.onchange = () => {
+        const p = b.dataset.demoPermission;
+        demoReach[demoSelected] = b.checked
+          ? [...demoReach[demoSelected], p]
+          : demoReach[demoSelected].filter((x) => x !== p);
+        redrawDemo();
+      }),
+  );
+  document.querySelectorAll("[data-atlas-provider]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        demoProvider = b.dataset.atlasProvider;
+        redrawDemo();
+      }),
+  );
+  if ($("#demo-provider"))
+    $("#demo-provider").onchange = (e) => {
+      demoProvider = e.target.value;
+      redrawDemo();
+    };
+  if ($("#reset-demo"))
+    $("#reset-demo").onclick = () => {
+      demoReach = demoFacts.map((f) => [...f.reach]);
+      demoSelected = 1;
+      demoProvider = "claude";
+      redrawDemo();
+      toast("Example reset. Your workspace was not changed.");
+    };
+  document.querySelectorAll("[data-history-step]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        historyStep = Number(b.dataset.historyStep);
+        $("#history-example").innerHTML = historyExample();
+        bindDesign();
+        $(`[data-history-step="${historyStep}"]`).focus();
+      }),
+  );
+  document.querySelectorAll("[data-scroll]").forEach(
+    (a) =>
+      (a.onclick = (e) => {
+        if (!$("#" + a.dataset.scroll)) return;
+        e.preventDefault();
+        $("#" + a.dataset.scroll).scrollIntoView({
+          behavior: matchMedia("(prefers-reduced-motion: reduce)").matches
+            ? "instant"
+            : "smooth",
+        });
+        $(".site-nav")?.classList.remove("menu-open");
+        $(".menu-toggle")?.setAttribute("aria-expanded", "false");
+      }),
+  );
+  if ($(".site-nav"))
+    $(".site-nav").onkeydown = (e) => {
+      if (e.key === "Escape") {
+        $(".site-nav").classList.remove("menu-open");
+        $(".menu-toggle").setAttribute("aria-expanded", "false");
+        $(".menu-toggle").focus();
+      }
+    };
+  if ($(".menu-toggle"))
+    $(".menu-toggle").onclick = (e) => {
+      const open = $(".site-nav").classList.toggle("menu-open");
+      e.currentTarget.setAttribute("aria-expanded", String(open));
+    };
+  document.querySelectorAll("[data-library-view]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        libraryView = b.dataset.libraryView;
+        render();
+        $(`[data-library-view="${libraryView}"]`).focus();
+      }),
+  );
 }
 function pricing() {
   const plans = [
@@ -725,7 +936,7 @@ function pricing() {
   return `<div class="marketing">${marketingNav()}<main id="content" style="padding:0;max-width:none"><header class="pricing-header"><h1>Priced on context served,<br>not memories stored.</h1><p class="muted">Proposed plans from the product design. Billing and subscriptions are not available.</p></header><section class="pricing-grid">${plans.map(([name, price, tokens, desc, features]) => `<article class="panel"><span class="eyebrow">${name}</span><div class="price">${price}</div><p class="muted">${desc}</p><p><b>${tokens}</b> context tokens / month</p><ul>${features.map((f) => `<li>${f}</li>`).join("")}</ul><a href="#/library" class="btn ${name === "Free" ? "primary" : ""}">Explore prototype</a></article>`).join("")}</section><section class="features"><div><h2>What counts as context</h2><p>The context your graph retrieves and hands to a model. The prototype exposes recorded usage without charging for it.</p></div><div><h2>Why not per-memory</h2><p>A useful graph grows with your history. The proposed pricing model does not charge by the object.</p></div><div><h2>If you use a local model</h2><p>Your graph stays portable. Compare estimated input costs in the Settings scenario calculator.</p></div></section></main>${marketingFooter()}</div>`;
 }
 function security() {
-  return `<div class="marketing">${marketingNav()}<main id="content" class="privacy"><h1>Your context, under your control.</h1><h2>Only what you choose to share</h2><p>Import files you export yourself. Consented extension capture is limited to submitted user turns on the active page. coletar never signs in as you, replays provider sessions, or automates a provider UI.</p><h2 class="mt">A record for every change</h2><p>Memories carry provenance. Edits and retirements append events. Retirement preserves history; raw-turn erasure uses the separate crypto-shredding workflow.</p><h2 class="mt">${state.hosted ? "Hosted preview boundaries" : "Local prototype boundaries"}</h2><p>${state.hosted ? "This single-owner workspace runs on Vercel with Supabase Postgres. Workspace pages require a password; connectors use separate scoped bearer keys. Account signup and billing are not enabled. Imports run on the hosted server without third-party model calls. Captured turns require an opt-in client. When OpenAI extraction is enabled, only candidate turns are sent to OpenAI; stored memories and the rest of the graph are not sent. OpenAI is the extraction subprocessor. Batches run daily and on demand." : "This app runs on loopback and has no account/session system. Import uses the local pattern extractor and makes no model calls. Connection and API-key screens simulate setup; their saved values do not grant access."}</p><h2 class="mt">A real way out</h2><p>The three provider compilers produce downloadable native packages after review. Destination reach is enforced by the compiler. Markdown is an owner export and includes restricted context.</p><a class="btn primary mt" href="#/library">Explore your library</a></main>${marketingFooter()}</div>`;
+  return `<div class="marketing">${marketingNav()}<main id="content" class="privacy"><h1>Your context, under your control.</h1><h2>Only what you choose to share</h2><p>Import files you export yourself. Consented extension capture is limited to submitted user turns on the active page. coletar never signs in as you, replays provider sessions, or automates a provider UI.</p><h2 class="mt">A record for every change</h2><p>Memories carry provenance. Edits and retirements append events. Retirement preserves history; raw-turn erasure uses the separate crypto-shredding workflow.</p><h2 class="mt">${state.hosted ? "Hosted preview boundaries" : "Local prototype boundaries"}</h2><p>${state.hosted ? `This single-owner workspace runs on Vercel with Supabase Postgres. ${isPublic() ? "This workspace is public: anyone with its link can read and change it." : "This workspace uses the configured hosted access gate."} Connectors use separate scoped bearer keys. Account signup and billing are not enabled. Imports run on the hosted server without third-party model calls. Captured turns require an opt-in client. When OpenAI extraction is enabled, only candidate turns are sent to OpenAI; stored memories and the rest of the graph are not sent. OpenAI is the extraction subprocessor. Batches run daily and on demand.` : "This app runs on loopback and has no account/session system. Import uses the local pattern extractor and makes no model calls. Connection and API-key screens simulate setup; their saved values do not grant access."}</p><h2 class="mt">A real way out</h2><p>The three provider compilers produce downloadable native packages after review. Destination reach is enforced by the compiler. Markdown is an owner export and includes restricted context.</p><a class="btn primary mt" href="#/library">Explore your library</a></main>${marketingFooter()}</div>`;
 }
 function render() {
   if (!state) return;
@@ -749,10 +960,15 @@ function render() {
       : (pages[route] || library)();
   document.title = `${route === "home" ? "Your context, everywhere" : route.charAt(0).toUpperCase() + route.slice(1)} · coletar`;
   bind();
+  bindDesign();
+  if (route === "home" && parts[1])
+    requestAnimationFrame(() =>
+      document.getElementById(parts[1])?.scrollIntoView(),
+    );
 }
 function modal(title, body, submitText, onSubmit) {
   const d = $("#dialog");
-  d.innerHTML = `<form method="dialog" id="modal-form"><header><h2>${title}</h2><button type="button" class="quiet" data-close aria-label="Close dialog">${icon("close")}</button></header>${body}<div class="error-message" role="alert"></div><footer><button type="button" data-close>Cancel</button>${submitText ? `<button class="primary" type="submit">${submitText}</button>` : ""}</footer></form>`;
+  d.innerHTML = `<form method="dialog" id="modal-form"><header><h2 id="dialog-title">${title}</h2><button type="button" class="quiet" data-close aria-label="Close dialog">${icon("close")}</button></header>${body}<div class="error-message" role="alert"></div><footer><button type="button" data-close>${submitText ? "Cancel" : "Close"}</button>${submitText ? `<button class="primary" type="submit">${submitText}</button>` : ""}</footer></form>`;
   d.querySelectorAll("[data-close]").forEach(
     (b) => (b.onclick = () => d.close()),
   );
@@ -769,13 +985,14 @@ function modal(title, body, submitText, onSubmit) {
       if (button) button.disabled = false;
     }
   };
+  d.setAttribute("aria-labelledby", "dialog-title");
   d.showModal();
 }
 function memoryModal(id) {
   const o = id ? objById(id) : null;
   modal(
     o ? "Edit memory" : "Add memory",
-    `<label><span class="eyebrow">Your memory</span><textarea name="content" placeholder="A fact, preference or decision worth keeping" required maxlength="20000">${esc(o?.content || "")}</textarea></label>${o ? "" : `<label><span class="eyebrow">Kind</span><select name="kind">${["fact", "preference", "instruction", "goal", "correction"].map((k) => `<option>${k}</option>`).join("")}</select></label><label><span class="eyebrow">Project · optional</span><input name="project" placeholder="e.g. proj_ledger" maxlength="200"></label>`}<p class="small muted mt">${o ? "Editing preserves the previous version and records your review." : "Explicitly added by you, with provenance. Review before compiling."}</p>`,
+    `<label><span class="eyebrow">Your memory</span><textarea name="content" placeholder="A fact, preference or decision worth keeping" required maxlength="20000">${esc(o?.content || "")}</textarea></label>${o ? `<div class="edit-comparison"><div><span class="eyebrow">Before</span><p>${esc(o.content)}</p></div><div><span class="eyebrow">After</span><p id="edit-preview">${esc(o.content)}</p></div></div>` : `<label><span class="eyebrow">Kind</span><select name="kind">${["fact", "preference", "instruction", "goal", "correction"].map((k) => `<option>${k}</option>`).join("")}</select></label><label><span class="eyebrow">Project · optional</span><input name="project" placeholder="e.g. proj_ledger" maxlength="200"></label>`}<p class="small muted mt">${o ? "Editing preserves the previous version and records your review." : "Explicitly added by you, with provenance. Review before compiling."}</p>`,
     o ? "Save changes" : "Add memory",
     async (form) => {
       if (o)
@@ -807,6 +1024,10 @@ function memoryModal(id) {
       );
     },
   );
+  if (o)
+    $("textarea[name=content]", $("#dialog")).oninput = (e) => {
+      $("#edit-preview").textContent = e.target.value;
+    };
 }
 async function reviewOne(id) {
   const pair = conflictPairs().find((p) => p.includes(id));
@@ -1046,7 +1267,7 @@ function bind() {
         }
       }),
   );
-  document.querySelectorAll("[data-surface]").forEach(
+  document.querySelectorAll("button[data-surface]").forEach(
     (b) =>
       (b.onclick = () => {
         surface = b.dataset.surface;
@@ -1116,7 +1337,8 @@ function bind() {
               ? "—"
               : `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${Math.abs(delta)}%`;
           cell.className =
-            "mono " + (delta === null ? "muted" : delta <= 0 ? "green" : "amber");
+            "mono " +
+            (delta === null ? "muted" : delta <= 0 ? "green" : "amber");
         });
       }),
   );
@@ -1126,6 +1348,19 @@ function bind() {
       query = $("#search").value;
       render();
     };
+  if ($("#reach-form")) {
+    $("#reach-form").onchange = (e) => {
+      if (e.target.type !== "checkbox") return;
+      const row = e.target.closest(".reach-row");
+      row.classList.toggle("withheld", !e.target.checked);
+      const badge = $(".badge", row);
+      badge.className = "badge " + (e.target.checked ? "ok" : "reach-off");
+      badge.textContent = e.target.checked ? "may read" : "withheld";
+      const count = $("#reach-form").querySelectorAll("input:checked").length;
+      $(".notice", $("#reach-form")).textContent =
+        `Unsaved preview: ${count} of 3 provider policies may read this. Save reach to apply.`;
+    };
+  }
   if ($("#reach-form"))
     $("#reach-form").onsubmit = async (e) => {
       e.preventDefault();
@@ -1192,9 +1427,34 @@ function bind() {
     };
   }
 }
-window.addEventListener("hashchange", () => {
+let libraryScroll = 0,
+  libraryFocus = null;
+window.addEventListener("hashchange", (event) => {
+  const previous = new URL(event.oldURL).hash;
+  if (previous === "#/library") {
+    libraryScroll = window.scrollY;
+    libraryFocus = document.activeElement
+      ?.closest(".memory")
+      ?.getAttribute("href");
+  }
   render();
-  window.scrollTo(0, 0);
+  if (location.hash === "#/library" && previous.startsWith("#/object/")) {
+    requestAnimationFrame(() => {
+      if (libraryFocus)
+        document.querySelectorAll(".memory").forEach((a) => {
+          if (a.getAttribute("href") === libraryFocus)
+            a.focus({ preventScroll: true });
+        });
+      window.scrollTo(0, libraryScroll);
+    });
+  } else {
+    window.scrollTo(0, 0);
+    const main = $("#content");
+    if (main) {
+      main.setAttribute("tabindex", "-1");
+      main.focus({ preventScroll: true });
+    }
+  }
 });
 refresh()
   .then(render)

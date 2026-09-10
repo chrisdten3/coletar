@@ -141,7 +141,7 @@ def _app_html() -> str:
     without changing its URL is a deploy that reaches nobody.
     """
     digest = sha256()
-    for name in ("product.css", "product.js"):
+    for name in ("product.css", "product.js", "icons.svg"):
         digest.update((_STATIC / name).read_bytes())
     return (_STATIC / "product.html").read_text().replace("__ASSETS__", digest.hexdigest()[:12])
 
