@@ -133,17 +133,41 @@ async def safe_object(store: Store, obj: ContextObject) -> dict[str, Any]:
 _STATIC = Path(__file__).parent / "static"
 
 
-@lru_cache(maxsize=1)
+#: Files whose contents decide the cache-busting stamp.
+_ASSETS = ("product.css", "product.js", "icons.svg", "horizon.css", "horizon.js")
+
+
+def _asset_signature() -> tuple[tuple[str, int, int], ...]:
+    """A cheap stand-in for hashing every asset on every request."""
+    out = []
+    for name in _ASSETS:
+        stat = (_STATIC / name).stat()
+        out.append((name, stat.st_mtime_ns, stat.st_size))
+    return tuple(out)
+
+
+@lru_cache(maxsize=4)
+def _render_app_html(signature: tuple[tuple[str, int, int], ...]) -> str:
+    digest = sha256()
+    for name in _ASSETS:
+        digest.update((_STATIC / name).read_bytes())
+    return (_STATIC / "product.html").read_text().replace("__ASSETS__", digest.hexdigest()[:12])
+
+
 def _app_html() -> str:
     """The shell, stamped with a digest of its own assets.
 
     Browsers cache /static aggressively, and a deploy that changes the client
     without changing its URL is a deploy that reaches nobody.
+
+    Keyed on the assets' mtime and size rather than cached outright. Caching it
+    outright is correct in production, where a deploy restarts the process — but
+    locally the process outlives the edit, so the stamp froze at whatever the files
+    said on the first request and every later change was served under a URL the
+    browser already had. The symptom is the worst kind: the server *is* serving new
+    code, and the browser shows old.
     """
-    digest = sha256()
-    for name in ("product.css", "product.js", "icons.svg", "horizon.css", "horizon.js"):
-        digest.update((_STATIC / name).read_bytes())
-    return (_STATIC / "product.html").read_text().replace("__ASSETS__", digest.hexdigest()[:12])
+    return _render_app_html(_asset_signature())
 
 
 @router.get("/app", include_in_schema=False)
