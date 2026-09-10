@@ -181,3 +181,35 @@ def test_the_prompt_teaches_the_distinction_it_gets_wrong() -> None:
     ):
         assert regression in EXTRACTION_SYSTEM
     assert "TRANSIENT" in EXTRACTION_SYSTEM and "DURABLE" in EXTRACTION_SYSTEM
+
+
+def test_the_prompt_separates_standing_instructions_from_task_ones() -> None:
+    """The residual defect the measured run exposed.
+
+    ~5% of mined memories were per-task imperatives — "Do not use tailwind css",
+    "Keep it technical" — stored as standing preferences. A standing preference and
+    a one-off command are grammatically identical, so the prompt has to teach what
+    the instruction is *aimed at* rather than how it is phrased.
+    """
+    from coletar.extraction.prompt import EXTRACTION_SYSTEM
+
+    # The durable side must survive: this is a real standing instruction and
+    # over-correcting into "reject all imperatives" would lose it.
+    assert "Always give me the failing test output" in EXTRACTION_SYSTEM
+    for task_scoped in ("Do not use tailwind css", "Keep it technical"):
+        assert task_scoped in EXTRACTION_SYSTEM
+    assert "aimed at" in EXTRACTION_SYSTEM
+
+
+def test_the_prompt_routes_third_party_claims_away_from_memories() -> None:
+    """A memory is a first-person statement about the user.
+
+    The pasted-text rule already covered someone introducing themselves in an
+    email; it did not cover the user describing a third party in their own words,
+    so "He has prior experience in machine learning" landed as a memory about the
+    user.
+    """
+    from coletar.extraction.prompt import EXTRACTION_SYSTEM
+
+    assert "prior experience in machine learning" in EXTRACTION_SYSTEM
+    assert "never as a `memory`" in EXTRACTION_SYSTEM

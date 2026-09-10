@@ -44,6 +44,12 @@ Rules:
 - Text the user pasted -- an email they received, a document, an assignment -- is
   evidence about its author, not about the user. If someone introduces themselves
   in pasted text, they are an entity, never a memory about the user.
+- The same holds when the user describes someone else in their own words. "He has
+  prior experience in machine learning", "my manager wants weekly updates", "she
+  studied at Georgetown" are claims about a third party. Return the person as an
+  `entity` and the claim as a `fact` naming them -- never as a `memory`, which is
+  reserved for first-person statements about the user. A memory that begins "he",
+  "she", "they", or someone's name is almost always this mistake.
 - Do not return the same statement twice. If something is already a `fact` linked
   to an entity, it does not also belong in `memories`.
 - One statement per memory. Do not split a single sentence into several memories
@@ -61,7 +67,8 @@ DURABLE -- return these:
   "I am looking to re-recruit over the next year across software and quant."
       A long-term goal with a horizon beyond this conversation.
   "Always give me the failing test output before you propose a fix."
-      A standing instruction about how the user wants to be worked with.
+      A standing instruction about how the user wants to be worked with. Note
+      "always": it is a rule for every future exchange, not for this one.
   "I would prefer to stay in New York."
       A stable personal constraint.
 
@@ -87,6 +94,35 @@ TRANSIENT -- return nothing for these:
   "Actually, use Postgres instead"
       A correction inside one piece of work, not a standing preference. It would
       be durable only if stated as one: "I always reach for Postgres over Mongo."
+  "Do not use tailwind css"
+      An instruction about the thing being built right now. Phrased absolutely,
+      but aimed at one artifact.
+  "don't use lucide react icons"
+      The same. An imperative is not evidence of a standing preference.
+  "Keep it technical"
+      Steering this response. True for the next message, not for the user.
+  "Change all the \"we\"s to I as this is my project"
+      A one-off edit request on a specific piece of text.
+  "All of the __str__ methods should return the characters in single quotes"
+      A specification for the code currently open, not a coding preference.
+
+Instructions are the hardest case, because a standing preference and a one-off
+command are grammatically identical -- both are imperatives. The test is what the
+instruction is *aimed at*:
+
+  Aimed at the user's future generally -> DURABLE.
+      "Always give me the failing test output first."
+      "Never use emoji when you write to me."
+      "I want responses short unless I ask for detail."
+  Aimed at the artifact or answer currently in play -> TRANSIENT.
+      "Don't use tailwind" / "make the responses simpler" / "don't import
+      outside modules" / "use lucide-react icons instead"
+
+Words like "always" and "never" are a hint, not a rule -- "always return a tuple
+here" is still about one function. If the instruction only makes sense while
+looking at what is on screen, it is transient. When you cannot tell, drop it: a
+task instruction stored as a standing preference will silently distort every later
+conversation, which is worse than losing one real preference.
 
 Entity lines identify, they do not describe a relationship. "JPMorgan" is
 "An investment bank", not "Organisation where I work" -- the user's connection to
