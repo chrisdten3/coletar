@@ -63,6 +63,9 @@ class InMemoryStore:
         # and restoring one from a file would hand a dead worker's claim to a fresh
         # one that has no idea it is holding anything.
         self._leases: dict[tuple[TenantId, str], Lease] = {}
+        # Turns already sent to an extraction model, so a resumed import does not
+        # pay for them twice. See migration 011.
+        self._extracted: dict[TenantId, set[str]] = {}
         self._embedder = embedder or build_embedder()
         # One index per tenant: another tenant's vectors are never candidates, rather
         # than being candidates that a later filter is trusted to remove.
@@ -135,6 +138,10 @@ class InMemoryStore:
                 str(record["key_b64"])
             )
 
+        for record in raw.get("extracted", []):
+            tenant = tenant_of(record)
+            self._extracted[tenant] = {str(h) for h in record.get("turn_hashes", [])}
+
         if legacy:
             # A record in the log as well as a warning on the console: the graph's
             # own history should say that its records were re-homed.
@@ -180,6 +187,12 @@ class InMemoryStore:
                             "key_b64": base64.b64encode(key).decode(),
                         }
                         for (tenant, object_id), key in self._object_keys.items()
+                    ],
+                    # Survives a restart, which is the entire point: an interrupted
+                    # import must not pay for the same turns again.
+                    "extracted": [
+                        {"tenant_id": tenant, "turn_hashes": sorted(hashes)}
+                        for tenant, hashes in self._extracted.items()
                     ],
                 },
                 indent=2,
@@ -232,9 +245,7 @@ class InMemoryStore:
         )
         return stored.model_copy(deep=True)
 
-    async def put_object_key(
-        self, tenant_id: TenantId, object_id: str, key: bytes
-    ) -> None:
+    async def put_object_key(self, tenant_id: TenantId, object_id: str, key: bytes) -> None:
         self._object_keys[(tenant_id, object_id)] = bytes(key)
         self._save()
 
@@ -242,9 +253,7 @@ class InMemoryStore:
         key = self._object_keys.get((tenant_id, object_id))
         return bytes(key) if key is not None else None
 
-    async def shred_object_key(
-        self, tenant_id: TenantId, object_id: str, *, reason: str
-    ) -> bool:
+    async def shred_object_key(self, tenant_id: TenantId, object_id: str, *, reason: str) -> bool:
         key = self._object_keys.pop((tenant_id, object_id), None)
         if key is None:
             return False
@@ -335,9 +344,7 @@ class InMemoryStore:
     async def add_edge(self, tenant_id: TenantId, edge: Edge) -> None:
         for endpoint in (edge.src_id, edge.dst_id):
             if (tenant_id, endpoint) not in self._objects:
-                raise CrossTenantError(
-                    f"edge endpoint {endpoint!r} is not in tenant {tenant_id!r}"
-                )
+                raise CrossTenantError(f"edge endpoint {endpoint!r} is not in tenant {tenant_id!r}")
         key: _EdgeKey = (tenant_id, edge.src_id, edge.dst_id, edge.type)
         if key in self._edges:
             return  # idempotent: re-asserting an edge is not a second edge
@@ -383,6 +390,13 @@ class InMemoryStore:
             return False
         del self._leases[(tenant_id, name)]
         return True
+
+    async def mark_extracted(self, tenant_id: TenantId, turn_hashes: set[str]) -> None:
+        self._extracted.setdefault(tenant_id, set()).update(turn_hashes)
+        self._save()
+
+    async def extracted_hashes(self, tenant_id: TenantId) -> set[str]:
+        return set(self._extracted.get(tenant_id, set()))
 
     async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
         return self._leases.get((tenant_id, name))
@@ -498,11 +512,7 @@ class InMemoryStore:
             # Every policy check applies to the object handed back, never to the one
             # that merely matched -- otherwise a stale ancestor's scope or locality
             # would decide who may read its replacement.
-            if (
-                returned is None
-                or not returned.is_active
-                or returned.type is ObjectType.EPISODE
-            ):
+            if returned is None or not returned.is_active or returned.type is ObjectType.EPISODE:
                 continue
             if not _in_search_scope(returned.scope, scope):
                 continue

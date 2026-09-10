@@ -539,6 +539,8 @@ class BundleReport:
     instructions: int = 0
     conversations: int = 0
     conversation_turns: int = 0
+    #: Turns skipped because an earlier run already paid to extract them.
+    resumed: int = 0
     created: int = 0
     corroborated: int = 0
     #: Turns the model never examined — a timeout or an outage. Reported apart from
@@ -557,6 +559,7 @@ class BundleReport:
             "created": self.created,
             "corroborated": self.corroborated,
             "unavailable": self.unavailable,
+            "resumed": self.resumed,
         }
 
 
@@ -578,6 +581,7 @@ async def import_bundle(
     *,
     include_conversations: bool = True,
     areas_as_projects: bool = True,
+    reprocess: bool = False,
 ) -> BundleReport:
     """Import a downloaded Claude export: memories, projects, then conversations.
 
@@ -724,7 +728,7 @@ async def import_bundle(
     if include_conversations and conversations.exists():
         from coletar.config import get_settings
         from coletar.extraction import extract_memories
-        from coletar.extraction.batch import extract_in_order
+        from coletar.extraction.batch import extract_in_order, turn_hash
         from coletar.extraction.providers import ExtractionUnavailable
 
         # The regex path recovers about a third of durable statements from export
@@ -732,6 +736,8 @@ async def import_bundle(
         # the user at all. Telling those apart needs semantics, so this is the same
         # opt-in the ChatGPT importer already had; the Claude one simply lacked it.
         use_model = get_settings().extraction_mode == "model"
+        already = set() if reprocess else await store.extracted_hashes(tenant_id)
+        batch_size = max(1, get_settings().extraction_concurrency)
 
         for raw in json.loads(conversations.read_text(encoding="utf-8")):
             if not isinstance(raw, dict):
@@ -741,26 +747,43 @@ async def import_bundle(
                 continue
             report.conversations += 1
             if use_model:
-                turns = list(conversation.messages)
-                report.conversation_turns += len(turns)
-                async for index, extracted in extract_in_order(
-                    [m.text for m in turns],
-                    provider=Provider.CLAUDE,
-                    concurrency=get_settings().extraction_concurrency,
-                ):
-                    turn = turns[index]
-                    if isinstance(extracted, BaseException):
-                        if isinstance(extracted, ExtractionUnavailable):
-                            # Counted apart from the turns that genuinely held
-                            # nothing, so an outage cannot read as a quiet zero.
-                            report.unavailable += 1
-                            continue
-                        raise extracted
-                    for obj in extracted[0]:
-                        obj.provenance.source_object_ids = [
-                            p for p in (turn.conversation_id, turn.message_id) if p
-                        ]
-                        await _write(obj, "conversations", obj.scope)
+                all_turns = list(conversation.messages)
+                report.conversation_turns += len(all_turns)
+                # Skipped before the call: the cost is the round trip, not parsing.
+                turns = [m for m in all_turns if turn_hash(m.text) not in already]
+                report.resumed += len(all_turns) - len(turns)
+                done: set[str] = set()
+                # `finally`, not a flush at the end of the loop: the failure this
+                # exists for — a credit balance running out — lands *inside* a
+                # window, so the turns already paid for have to be banked on the
+                # way out rather than after a completion that never happens.
+                try:
+                    async for index, extracted in extract_in_order(
+                        [m.text for m in turns],
+                        provider=Provider.CLAUDE,
+                        concurrency=get_settings().extraction_concurrency,
+                    ):
+                        turn = turns[index]
+                        if isinstance(extracted, BaseException):
+                            if isinstance(extracted, ExtractionUnavailable):
+                                # Counted apart from the turns that genuinely held
+                                # nothing, so an outage cannot read as a quiet zero.
+                                report.unavailable += 1
+                                continue
+                            raise extracted
+                        done.add(turn_hash(turn.text))
+                        if len(done) >= batch_size:
+                            await store.mark_extracted(tenant_id, done)
+                            already.update(done)
+                            done.clear()
+                        for obj in extracted[0]:
+                            obj.provenance.source_object_ids = [
+                                p for p in (turn.conversation_id, turn.message_id) if p
+                            ]
+                            await _write(obj, "conversations", obj.scope)
+                finally:
+                    await store.mark_extracted(tenant_id, done)
+                    already.update(done)
                 continue
 
             for message in conversation.messages:

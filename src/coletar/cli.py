@@ -358,6 +358,11 @@ def compile(
 def import_chatgpt(
     archive: str,
     project: str | None = typer.Option(None, help="Scope everything to one project."),
+    reprocess: bool = typer.Option(
+        False,
+        "--reprocess",
+        help="Re-send turns an earlier run already extracted, and pay for them again.",
+    ),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
     """Import a ChatGPT export ZIP you downloaded yourself.
@@ -374,7 +379,11 @@ def import_chatgpt(
         resolved = _tenant(tenant)
         try:
             report = await import_export(
-                build_store(), resolved, Path(archive), scope=_scope(project)
+                build_store(),
+                resolved,
+                Path(archive),
+                scope=_scope(project),
+                reprocess=reprocess,
             )
         except ChatGPTExportError as exc:
             raise typer.BadParameter(str(exc)) from exc
@@ -441,6 +450,11 @@ def import_claude(
     memories_only: bool = typer.Option(
         False, "--memories-only", help="Skip conversation mining; import memories and projects."
     ),
+    reprocess: bool = typer.Option(
+        False,
+        "--reprocess",
+        help="Re-send turns an earlier run already extracted, and pay for them again.",
+    ),
     tenant: str | None = TENANT_OPTION,
 ) -> None:
     """Import a claude.ai export you downloaded yourself.
@@ -477,6 +491,7 @@ def import_claude(
                     resolved,
                     target,
                     include_conversations=not memories_only,
+                    reprocess=reprocess,
                 )
             else:
                 report = await import_export(build_store(), resolved, target, scope=_scope(project))

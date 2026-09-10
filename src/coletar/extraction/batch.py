@@ -15,10 +15,22 @@ corroboration, which is the redundancy the whole ingest path exists to avoid.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from coletar.extraction.providers import ExtractionConfigurationError
+
+
+def turn_hash(text: str) -> str:
+    """The checkpoint key for one turn.
+
+    Hashes the text rather than the archive's own ids: ids are stable within one
+    export but not guaranteed across a re-export, and hashing the text also means
+    the same turn appearing twice is extracted once — which is correct anyway,
+    since identical input yields identical output.
+    """
+    return hashlib.sha256(text.strip().encode("utf-8")).hexdigest()
 
 
 async def extract_in_order(

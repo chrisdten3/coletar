@@ -167,9 +167,7 @@ class Store(Protocol):
         """
         ...
 
-    async def put_object_key(
-        self, tenant_id: TenantId, object_id: str, key: bytes
-    ) -> None:
+    async def put_object_key(self, tenant_id: TenantId, object_id: str, key: bytes) -> None:
         """Store an opaque per-object content key outside the event-snapshotted graph.
 
         Used only for encrypted raw episodes. The key may be hard-deleted even though
@@ -180,9 +178,7 @@ class Store(Protocol):
 
     async def get_object_key(self, tenant_id: TenantId, object_id: str) -> bytes | None: ...
 
-    async def shred_object_key(
-        self, tenant_id: TenantId, object_id: str, *, reason: str
-    ) -> bool:
+    async def shred_object_key(self, tenant_id: TenantId, object_id: str, *, reason: str) -> bool:
         """Destroy one content key and append an `object.shredded` audit event."""
         ...
 
@@ -262,6 +258,29 @@ class Store(Protocol):
 
         Only the owner may release: a worker whose lease expired mid-pass must not
         be able to release the successor that has since taken it.
+        """
+        ...
+
+    async def mark_extracted(self, tenant_id: TenantId, turn_hashes: set[str]) -> None:
+        """Record that these turns have been through an extraction model.
+
+        Written for every turn *examined*, not every turn that produced something.
+        The large majority of an archive yields nothing, and recording only the
+        productive turns would leave the empty ones to be paid for again on every
+        later run.
+
+        Idempotent: re-marking a turn is not an error, because a resumed import
+        will legitimately re-mark whatever it processed before it was interrupted.
+        """
+        ...
+
+    async def extracted_hashes(self, tenant_id: TenantId) -> set[str]:
+        """Every turn already extracted for this tenant.
+
+        Read once at the start of an import rather than queried per turn: an
+        archive is tens of thousands of turns, and a round trip each to save one
+        API call is a poor trade. At sha256 hex that is ~64 bytes a turn, so a
+        very large archive is a few megabytes in memory.
         """
         ...
 

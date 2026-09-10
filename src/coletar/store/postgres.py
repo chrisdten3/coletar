@@ -150,8 +150,12 @@ class PostgresStore:
             # Supabase transaction pooling cannot retain prepared statements between
             # transactions. Keep each function instance's connection budget small.
             pool = AsyncConnectionPool(
-                self.dsn, open=False, configure=register_vector_async,
-                min_size=0, max_size=4, timeout=15,
+                self.dsn,
+                open=False,
+                configure=register_vector_async,
+                min_size=0,
+                max_size=4,
+                timeout=15,
                 kwargs={"prepare_threshold": None, "connect_timeout": 10},
             )
             await pool.open(wait=True)
@@ -192,8 +196,7 @@ class PostgresStore:
                 )
                 if await cur.fetchone() is None:
                     raise CrossTenantError(
-                        f"supersedes {obj.supersedes!r} is not an object in "
-                        f"tenant {tenant_id!r}"
+                        f"supersedes {obj.supersedes!r} is not an object in tenant {tenant_id!r}"
                     )
 
             dump = obj.model_dump(mode="json")
@@ -262,9 +265,7 @@ class PostgresStore:
             # The `async with` commits: object, embedding and event land together.
         return obj
 
-    async def put_object_key(
-        self, tenant_id: TenantId, object_id: str, key: bytes
-    ) -> None:
+    async def put_object_key(self, tenant_id: TenantId, object_id: str, key: bytes) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
@@ -282,16 +283,13 @@ class PostgresStore:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             await cur.execute(
-                "SELECT key_bytes FROM object_content_key "
-                "WHERE tenant_id = %s AND object_id = %s",
+                "SELECT key_bytes FROM object_content_key WHERE tenant_id = %s AND object_id = %s",
                 (tenant_id, object_id),
             )
             row = await cur.fetchone()
         return bytes(row["key_bytes"]) if row is not None else None
 
-    async def shred_object_key(
-        self, tenant_id: TenantId, object_id: str, *, reason: str
-    ) -> bool:
+    async def shred_object_key(self, tenant_id: TenantId, object_id: str, *, reason: str) -> bool:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
             # This is the sole intentional DELETE in the store: the key is not a
@@ -445,8 +443,14 @@ class PostgresStore:
                 VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (tenant_id, src_id, dst_id, type) DO NOTHING
                 """,
-                (tenant_id, edge.src_id, edge.dst_id, str(edge.type), edge.confidence,
-                 edge.created_at),
+                (
+                    tenant_id,
+                    edge.src_id,
+                    edge.dst_id,
+                    str(edge.type),
+                    edge.confidence,
+                    edge.created_at,
+                ),
             )
             if cur.rowcount == 0:
                 return  # already asserted; no second row and no second event
@@ -518,6 +522,28 @@ class PostgresStore:
             )
             deleted = cur.rowcount
         return bool(deleted)
+
+    async def mark_extracted(self, tenant_id: TenantId, turn_hashes: set[str]) -> None:
+        if not turn_hashes:
+            return
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            # ON CONFLICT DO NOTHING: a resumed import legitimately re-marks the
+            # turns it processed before it was interrupted.
+            await cur.executemany(
+                "INSERT INTO extraction_checkpoint (tenant_id, turn_hash) "
+                "VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                [(str(tenant_id), h) for h in sorted(turn_hashes)],
+            )
+
+    async def extracted_hashes(self, tenant_id: TenantId) -> set[str]:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "SELECT turn_hash FROM extraction_checkpoint WHERE tenant_id = %s",
+                (str(tenant_id),),
+            )
+            return {str(row[0]) for row in await cur.fetchall()}
 
     async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
         pool = await self._get_pool()
@@ -674,12 +700,17 @@ class PostgresStore:
           {scope_clause} {locality_clause} {sensitivity_clause}
         """
         params = [
-            tenant_id, query_array, fetch,
-            tenant_id, query, fetch,
+            tenant_id,
+            query_array,
+            fetch,
+            tenant_id,
+            query,
+            fetch,
             tenant_id,
             tenant_id,
             tenant_id,
-            *scope_params, *locality_params,
+            *scope_params,
+            *locality_params,
         ]
 
         pool = await self._get_pool()
@@ -721,9 +752,7 @@ class PostgresStore:
         return scored[:top_k]
 
 
-def _object_params(
-    tenant_id: TenantId, obj: ContextObject, dump: dict[str, Any]
-) -> dict[str, Any]:
+def _object_params(tenant_id: TenantId, obj: ContextObject, dump: dict[str, Any]) -> dict[str, Any]:
     return {
         "tenant_id": tenant_id,
         "id": obj.id,
