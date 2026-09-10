@@ -314,6 +314,7 @@ async def _store_graph(
     scope: Any,
     source_ids: list[str],
     known_entities: dict[str, str],
+    said_at: Any = None,
 ) -> None:
     """Persist one turn's objects and the edges between them.
 
@@ -337,7 +338,7 @@ async def _store_graph(
     """
     from coletar.ingest import remember
     from coletar.schema.events import Actor, Event, EventType
-    from coletar.schema.objects import ExtractionMethod, Memory, ObjectType, Provider
+    from coletar.schema.objects import Memory, ObjectType, Provider
 
     def _event(object_id: str) -> Event:
         return Event(
@@ -355,10 +356,24 @@ async def _store_graph(
 
     merged: dict[str, str] = {}
     for obj in objects:
-        obj.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
-        obj.confidence = 0.60
+        # The method and confidence are the *extractor's* to set, and it already
+        # did. This function runs only on the model path, so overwriting them with
+        # ACCOUNT_EXPORT_PARSE relabelled every model-extracted object as regex
+        # output — the same flattening the curated/mined split was introduced to
+        # end, recurring one layer down. It also silently undid the 0.75 rung, so
+        # ranking could not prefer a model reading over a pattern match.
         obj.provenance.provider = Provider.CHATGPT
-        obj.provenance.confidence = 0.60
+        obj.provenance.confidence = obj.confidence
+        # When the user actually said it, not when the archive was imported.
+        # Dropping this collapsed four years of history onto the import date, which
+        # takes the bitemporal model with it: "what did the graph believe on 3
+        # March" is unanswerable when everything was believed at once, supersession
+        # cannot tell which of two statements is newer, and retrieval cannot prefer
+        # a current answer over one the user outgrew in 2022.
+        if said_at is not None:
+            obj.created_at = said_at
+            obj.updated_at = said_at
+            obj.provenance.captured_at = said_at
         # Points back at the exact node, so the Inspector can show a user which line
         # of their own export a person or a fact came from.
         obj.provenance.source_object_ids = source_ids
@@ -525,6 +540,10 @@ async def import_export(
             source_ids = [part for part in (message.conversation_id, message.node_id) if part]
 
             for memory in await extract_memories(user_text=message.text, scope=scope):
+                if message.created_at is not None:
+                    memory.created_at = message.created_at
+                    memory.updated_at = message.created_at
+                    memory.provenance.captured_at = message.created_at
                 memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
                 memory.confidence = 0.60
                 memory.provenance.provider = Provider.CHATGPT

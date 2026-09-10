@@ -772,6 +772,13 @@ async def import_bundle(
                                 continue
                             raise extracted
                         done.add(turn_hash(turn.text))
+                        # When the user actually said it, not when the archive was imported.
+                        # Dropping this collapsed four years of history onto the import date, which
+                        # takes the bitemporal model with it: "what did the graph believe on 3
+                        # March" is unanswerable when everything was believed at once, supersession
+                        # cannot tell which of two statements is newer, and retrieval cannot prefer
+                        # a current answer over one the user outgrew in 2022.
+
                         if len(done) >= batch_size:
                             await store.mark_extracted(tenant_id, done)
                             already.update(done)
@@ -780,6 +787,10 @@ async def import_bundle(
                             obj.provenance.source_object_ids = [
                                 p for p in (turn.conversation_id, turn.message_id) if p
                             ]
+                            if turn.created_at is not None:
+                                obj.created_at = turn.created_at
+                                obj.updated_at = turn.created_at
+                                obj.provenance.captured_at = turn.created_at
                             await _write(obj, "conversations", obj.scope)
                 finally:
                     await store.mark_extracted(tenant_id, done)
@@ -791,6 +802,10 @@ async def import_bundle(
                 source_ids = [p for p in (message.conversation_id, message.message_id) if p]
 
                 for memory in await extract_memories(user_text=message.text):
+                    if message.created_at is not None:
+                        memory.created_at = message.created_at
+                        memory.updated_at = message.created_at
+                        memory.provenance.captured_at = message.created_at
                     memory.extraction_method = ExtractionMethod.ACCOUNT_EXPORT_PARSE
                     memory.confidence = 0.60
                     memory.provenance.provider = Provider.CLAUDE
