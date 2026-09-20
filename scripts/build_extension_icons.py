@@ -49,6 +49,12 @@ def _arc(start: tuple[float, float], end: tuple[float, float], radius: float, wi
     what opens the C to the right.
     """
     (x0, y0), (x1, y1) = start, end
+    # The derivation below puts the centre on a horizontal line through the chord's
+    # midpoint, which is only correct for a vertical chord. Both arcs in this mark
+    # have one. Asserted rather than assumed: an edited SVG with a tilted chord
+    # would otherwise render a subtly wrong icon and nothing would say so.
+    if not math.isclose(x0, x1):
+        raise ValueError(f"arc chord is not vertical: {start} -> {end}")
     midpoint_y = (y0 + y1) / 2
     half_chord = abs(y1 - y0) / 2
     offset = math.sqrt(max(radius * radius - half_chord * half_chord, 0.0))
