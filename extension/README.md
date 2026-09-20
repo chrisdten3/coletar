@@ -1,4 +1,4 @@
-# coletar composer bridge
+# coleta composer bridge
 
 *Portable memory in the prompt box, with no Project instructions.*
 

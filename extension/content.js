@@ -1,4 +1,4 @@
-// coletar composer bridge.
+// coleta composer bridge.
 //
 // THE BOUNDARY, and it is the reason this extension is defensible:
 //
@@ -23,7 +23,20 @@ const COMPOSERS = [
   "textarea",
 ];
 
-const MARKER = "— coletar —";
+const MARKER = "— coleta —";
+
+// Recognised but never written. An upgrade can land while an injected block is
+// still sitting in a composer, and MARKER is what keeps that block from being
+// captured back as though the user had typed it. Dropping the old spelling would
+// reopen exactly that for one message.
+const MARKERS = [MARKER, "— coletar —"];
+const marked = (text) => MARKERS.some((m) => text.includes(m));
+function stripMarked(text) {
+  for (const m of MARKERS) {
+    if (text.includes(m)) return text.split(m).pop().trim();
+  }
+  return text;
+}
 
 const settings = {
   endpoint: "",
@@ -80,12 +93,12 @@ async function call(path, body) {
       body: JSON.stringify({ ...body, surface: location.hostname }),
     });
     if (!response.ok) {
-      toast(response.status === 401 ? "coletar: key rejected" : `coletar: ${response.status}`);
+      toast(response.status === 401 ? "coleta: key rejected" : `coleta: ${response.status}`);
       return null;
     }
     return await response.json();
   } catch (err) {
-    toast("coletar: unreachable");
+    toast("coleta: unreachable");
     return null;
   }
 }
@@ -105,21 +118,21 @@ function toast(message) {
 // so you read it and send it yourself. Nothing is added to a message you did not see.
 async function recall() {
   if (!settings.endpoint || !settings.apiKey) {
-    toast("coletar: set the server and key in the extension options");
+    toast("coleta: set the server and key in the extension options");
     return;
   }
   const el = composer();
   if (!el) {
-    toast("coletar: could not find the prompt box on this page");
+    toast("coleta: could not find the prompt box on this page");
     return;
   }
   const text = readComposer(el);
   if (!text) {
-    toast("coletar: type something first, then press the button");
+    toast("coleta: type something first, then press the button");
     return;
   }
-  if (text.includes(MARKER)) {
-    toast("coletar: memory already added");
+  if (marked(text)) {
+    toast("coleta: memory already added");
     return;
   }
 
@@ -127,11 +140,11 @@ async function recall() {
   // confidence score is not something they can act on.
   const data = await call("/v1/search", { query: text, top_k: 6, style: "terse" });
   if (!data || !data.prompt_block) {
-    toast("coletar: nothing relevant");
+    toast("coleta: nothing relevant");
     return;
   }
   writeComposer(el, `${data.prompt_block}\n\n${MARKER}\n\n${text}`);
-  toast(`coletar: added ${data.results.length} memor${data.results.length === 1 ? "y" : "ies"}`);
+  toast(`coleta: added ${data.results.length} memor${data.results.length === 1 ? "y" : "ies"}`);
 }
 
 // CAPTURE. The server policy is off by default. In collect-then-batch mode this
@@ -146,13 +159,13 @@ async function capture() {
   let text = readComposer(el);
   if (!text || text === lastCaptured) return;
   // Never send back an injected block as though the user had typed it.
-  if (text.includes(MARKER)) text = text.split(MARKER).pop().trim();
+  if (marked(text)) text = stripMarked(text);
   if (!text) return;
   lastCaptured = text;
   const data = await call("/v1/capture", { text });
   if (!data) return;
-  if (data.count) toast(`coletar: remembered ${data.count}`);
-  else if (data.queued) toast("coletar: queued for extraction");
+  if (data.count) toast(`coleta: remembered ${data.count}`);
+  else if (data.queued) toast("coleta: queued for extraction");
   else if (data.capture_enabled === false) warnCaptureInert();
 }
 
@@ -164,7 +177,7 @@ let warnedCaptureInert = false;
 function warnCaptureInert() {
   if (warnedCaptureInert) return;
   warnedCaptureInert = true;
-  toast("coletar: capture is on here but off on the server — nothing is being saved");
+  toast("coleta: capture is on here but off on the server — nothing is being saved");
 }
 
 function matchesShortcut(event) {
@@ -200,12 +213,12 @@ document.addEventListener(
 // The button. A hidden shortcut is a feature nobody finds, and every modifier
 // combination worth having is already claimed by the browser or the page.
 function mountButton() {
-  if (document.getElementById("coletar-recall")) return;
+  if (document.getElementById("coleta-recall")) return;
   const button = document.createElement("button");
-  button.id = "coletar-recall";
+  button.id = "coleta-recall";
   button.type = "button";
   button.textContent = "✦ memory";
-  button.title = "Bring your portable memory into the box (coletar)";
+  button.title = "Bring your portable memory into the box (coleta)";
   button.style.cssText =
     "position:fixed;bottom:22px;right:22px;z-index:2147483646;padding:8px 14px;" +
     "border-radius:999px;background:#1c1c1c;color:#eee;font:13px system-ui;" +

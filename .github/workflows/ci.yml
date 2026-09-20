@@ -149,4 +149,45 @@ jobs:
         run: |
           node --check extension/content.js
           node --check extension/options.js
+          node --check extension/background.js
           node -e "JSON.parse(require('fs').readFileSync('extension/manifest.json','utf8'))"
+
+      # Every file the manifest names must exist. A missing icon is not a syntax
+      # error, so nothing above would catch it — the Chrome Web Store would, days
+      # later, by rejecting the listing.
+      - name: Manifest references resolve
+        run: |
+          node -e "
+          const fs = require('fs');
+          const m = JSON.parse(fs.readFileSync('extension/manifest.json', 'utf8'));
+          const refs = [
+            ...Object.values(m.icons || {}),
+            ...Object.values(m.action?.default_icon || {}),
+            m.options_page,
+            m.background?.service_worker,
+            ...(m.content_scripts || []).flatMap((c) => c.js || []),
+          ].filter(Boolean);
+          const missing = refs.filter((r) => !fs.existsSync('extension/' + r));
+          if (missing.length) {
+            console.error('manifest names files that do not exist: ' + missing.join(', '));
+            process.exit(1);
+          }
+          for (const size of ['16', '48', '128']) {
+            if (!m.icons?.[size]) {
+              console.error('the Chrome Web Store wants a ' + size + 'px icon');
+              process.exit(1);
+            }
+          }
+          console.log('manifest references resolve (' + refs.length + ' files)');
+          "
+
+      # The icons are generated, so they can drift from the script that draws them.
+      # Regenerating and diffing is what keeps the committed PNGs honest.
+      - name: Icons match their generator
+        run: |
+          python3 scripts/build_extension_icons.py
+          if ! git diff --quiet -- extension/icons; then
+            echo "::error::extension/icons differ from scripts/build_extension_icons.py output"
+            git diff --stat -- extension/icons
+            exit 1
+          fi
