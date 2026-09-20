@@ -173,7 +173,9 @@ const statusNotice = () =>
 async function api(path, body, method) {
   const response = await fetch("/web-api" + path, {
     method: method || (body === undefined ? "GET" : "POST"),
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    headers: await coletaAuth.authHeaders(
+      body === undefined ? {} : { "Content-Type": "application/json" },
+    ),
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) {
@@ -182,6 +184,12 @@ async function api(path, body, method) {
       problem = await response.json();
     } catch {
       problem = { detail: "Request failed. Please try again." };
+    }
+    // A session that expired mid-visit is not a failed form submission, and
+    // showing it as a toast over a workspace the server will no longer serve is
+    // worse than useless. `handleAuthFailure` paints the real state and takes over.
+    if (coletaAuth.handleAuthFailure(response.status, problem.detail)) {
+      throw new Error(problem.detail || "Sign in again.");
     }
     throw new Error(
       typeof problem.detail === "string"
@@ -214,6 +222,19 @@ function card(o) {
 }
 const brand =
   '<a class="brand" href="#/home">coleta</a>';
+function accountChip() {
+  const user = coletaAuth.session.user;
+  if (!user) {
+    // Local development, where there is no sign-in by design.
+    return `<a class="account" href="#/settings"><span class="avatar">${state.sample ? "DS" : state.hosted ? "PW" : "LW"}</span>${state.sample ? "Design sample workspace" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</a>`;
+  }
+  const email = user.primaryEmailAddress?.emailAddress || "";
+  const name = user.fullName || email || "Your workspace";
+  const initials =
+    (user.firstName?.[0] || email[0] || "?").toUpperCase() +
+    (user.lastName?.[0] || "").toUpperCase();
+  return `<div class="account-row"><a class="account" href="#/settings" title="${esc(email)}"><span class="avatar">${esc(initials)}</span>${esc(name)}</a><button type="button" class="quiet small" data-sign-out title="Sign out">${icon("migrate")}<span class="sr-only">Sign out</span></button></div>`;
+}
 function shell(title, body, actions = "") {
   const counts = {
     Library: activeObjects().length,
@@ -234,7 +255,7 @@ function shell(title, body, actions = "") {
       title
     ] || title;
   const total = Object.values(state.usage).reduce((a, b) => a + b, 0);
-  return `<aside class="sidebar">${brand}<div class="rail-label eyebrow">Your workspace</div><nav aria-label="Workspace">${links.map(([route, label]) => `<a class="nav-link ${title === label || (title === "Object" && label === "Library") || (title === "Get set up" && label === "Connections") ? "active" : ""}" ${title === label ? 'aria-current="page"' : ""} href="#/${route}">${icon(route)}<span>${label}</span>${counts[label] !== undefined ? `<span class="count">${counts[label]}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="row between"><span>Context served</span><span class="mono">${number(total)} tokens</span></div><div class="progress"><span style="width:${Math.min((total / 2000000) * 100, 100)}%"></span></div><a class="account" href="#/settings"><span class="avatar">${state.sample ? "DS" : state.hosted ? "PW" : "LW"}</span>${state.sample ? "Design sample workspace" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</a><span class="prototype-label">${isPublic() ? "Anyone with the link can read and change this" : state.hosted ? "Hosted preview" : "Local prototype"} · ${state.sample ? "synthetic examples" : "your configured store"}</span></div></aside><div class="workspace"><header class="topbar"><div class="workspace-breadcrumb">Workspace <span>/</span> ${title}</div><div class="top-actions">${actions}<button class="command-trigger" data-command aria-label="Quick search">${icon("search")}<span>Quick search</span><kbd>⌘ K</kbd></button></div></header><main id="content"><div class="workspace-heading"><div><span class="eyebrow">${state.sample ? "Design sample / synthetic data" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</span><h1>${title === "Library" ? "A place for what matters." : title === "Object" ? "Context inspector" : title}</h1></div><span class="heading-symbol" aria-hidden="true">${icon(title === "Library" ? "library" : "audit")}</span></div>${body}</main></div>`;
+  return `<aside class="sidebar">${brand}<div class="rail-label eyebrow">Your workspace</div><nav aria-label="Workspace">${links.map(([route, label]) => `<a class="nav-link ${title === label || (title === "Object" && label === "Library") || (title === "Get set up" && label === "Connections") ? "active" : ""}" ${title === label ? 'aria-current="page"' : ""} href="#/${route}">${icon(route)}<span>${label}</span>${counts[label] !== undefined ? `<span class="count">${counts[label]}</span>` : ""}</a>`).join("")}</nav><div class="sidebar-bottom"><div class="row between"><span>Context served</span><span class="mono">${number(total)} tokens</span></div><div class="progress"><span style="width:${Math.min((total / 2000000) * 100, 100)}%"></span></div>${accountChip()}<span class="prototype-label">${isPublic() ? "Anyone with the link can read and change this" : state.hosted ? "Hosted preview" : "Local prototype"} · ${state.sample ? "synthetic examples" : "your configured store"}</span></div></aside><div class="workspace"><header class="topbar"><div class="workspace-breadcrumb">Workspace <span>/</span> ${title}</div><div class="top-actions">${actions}<button class="command-trigger" data-command aria-label="Quick search">${icon("search")}<span>Quick search</span><kbd>⌘ K</kbd></button></div></header><main id="content"><div class="workspace-heading"><div><span class="eyebrow">${state.sample ? "Design sample / synthetic data" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</span><h1>${title === "Library" ? "A place for what matters." : title === "Object" ? "Context inspector" : title}</h1></div><span class="heading-symbol" aria-hidden="true">${icon(title === "Library" ? "library" : "audit")}</span></div>${body}</main></div>`;
 }
 /* The deployment reports this; the app does not infer it from being hosted. */
 const isPublic = () => Boolean(connections?.public_workspace);
@@ -1123,7 +1144,9 @@ async function runAction(action, id) {
   if (action === "download") {
     const response = await fetch("/web-api/compile/download", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // Not api(): the body is a ZIP, not JSON. Same authenticated route, so the
+      // session has to be attached by hand here.
+      headers: await coletaAuth.authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ destination }),
     });
     if (!response.ok) {
@@ -1218,6 +1241,9 @@ async function upload(file) {
   try {
     const response = await fetch("/web-api/import", {
       method: "POST",
+      // No Content-Type: the browser sets the multipart boundary itself, and
+      // naming it here produces a body the server cannot parse.
+      headers: await coletaAuth.authHeaders(),
       body: form,
     });
     const data = await response.json();
@@ -1238,6 +1264,17 @@ async function upload(file) {
   }
 }
 function bind() {
+  document.querySelectorAll("[data-sign-out]").forEach(
+    (b) =>
+      (b.onclick = async () => {
+        b.disabled = true;
+        // Reload rather than re-render: signing out invalidates every cached
+        // answer in `state`, and the cheapest way to be certain none of it is
+        // still on screen is to start the page over.
+        await coletaAuth.session.signOut();
+        location.reload();
+      }),
+  );
   document.querySelectorAll("[data-action]").forEach(
     (b) =>
       (b.onclick = async () => {
@@ -1459,8 +1496,17 @@ window.addEventListener("hashchange", (event) => {
     }
   }
 });
-refresh()
-  .then(render)
+// Sign-in first: there is no workspace to draw until we know whose it is, and
+// rendering before the answer is what shows a stranger someone else's shell for a
+// frame. `establishSession` returns false once it has painted the reason itself —
+// a sign-in form, or a misconfiguration — and we stop.
+coletaAuth
+  .establishSession()
+  .then(async (proceed) => {
+    if (!proceed) return;
+    await refresh();
+    render();
+  })
   .catch((error) => {
     $("#app").innerHTML =
       `<main class="loading"><h1>Couldn’t open your workspace.</h1><p>${esc(error.message)}</p><button onclick="location.reload()">Try again</button></main>`;

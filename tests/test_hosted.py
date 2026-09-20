@@ -350,3 +350,64 @@ def test_on_demand_batch_is_scoped_to_the_caller(hosted, monkeypatch):
     body = hosted.post("/web-api/process-captures", headers=as_("alice")).json()
     assert body["tenants"] == 1
     assert called == [alice_tenant]
+
+
+# -- the shell's sign-in config -------------------------------------------------
+def test_shell_tells_the_client_sign_in_is_required(hosted):
+    """The client cannot decide whether to render before it knows this.
+
+    Stamped into the HTML rather than fetched: a round trip here is one during
+    which the app does not know whether it may draw, which is how a stranger sees
+    someone else's workspace for a frame before being told to sign in.
+    """
+    import json
+    import re
+
+    html = hosted.get("/app").text
+    match = re.search(
+        r'<script id="sign-in-config" type="application/json">(.*?)</script>', html, re.S
+    )
+    assert match, "the shell did not stamp its sign-in config"
+    config = json.loads(match.group(1))
+    assert config["required"] is True
+    assert config["provider"] == "clerk"
+    # Publishable by definition. The assertion that matters is the absence of any
+    # *secret*: coleta reads no Clerk secret key, because verification is a
+    # signature check against a public JWKS.
+    assert "secret" not in html.lower().replace("secrets", "")
+
+
+def test_local_shell_asks_for_no_sign_in(monkeypatch, tmp_path):
+    """Local development has no login and must keep working with none."""
+    import json
+    import re
+
+    from fastapi.testclient import TestClient as _TestClient
+
+    import coletar.accounts
+    import coletar.store
+    from coletar.inspector.app import app as local_app
+
+    monkeypatch.delenv("COLETAR_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("COLETAR_IDENTITY_PROVIDER", "local")
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_STORE_PATH", str(tmp_path / "graph.json"))
+    get_settings.cache_clear()
+    monkeypatch.setattr(coletar.store, "_singleton", InMemoryStore())
+    coletar.accounts.reset_directory()
+    try:
+        with _TestClient(local_app) as client:
+            html = client.get("/app").text
+            # And the workspace itself still answers without any credential.
+            assert client.get("/web-api/state").status_code == 200
+    finally:
+        get_settings.cache_clear()
+        coletar.accounts.reset_directory()
+
+    config = json.loads(
+        re.search(
+            r'<script id="sign-in-config" type="application/json">(.*?)</script>', html, re.S
+        ).group(1)
+    )
+    assert config["required"] is False
+    assert config["provider"] == "local"

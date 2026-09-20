@@ -4011,3 +4011,61 @@ h2 {
     display: none;
   }
 }
+
+/* --- Sign-in ---------------------------------------------------------------
+   The states shown before there is a workspace to frame: the sign-in form, an
+   expired session, and the invite refusal. They reuse `.loading`'s centred
+   column, so this only adds what that does not cover. */
+.signin-screen {
+  max-width: 34rem;
+  margin-inline: auto;
+  padding: 4rem 1.5rem;
+  text-align: center;
+}
+.signin-screen p {
+  color: var(--muted, #6b7264);
+  margin-bottom: 1.5rem;
+}
+.signin-screen code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.06);
+}
+/* Clerk injects its own styled tree here; this only gives it somewhere to sit
+   and stops it inheriting the centred text of the screen around it. */
+.clerk-mount {
+  display: flex;
+  justify-content: center;
+  text-align: initial;
+  margin-top: 1rem;
+}
+.account-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.account-row .account {
+  flex: 1;
+  min-width: 0;
+}
+.account-row .account,
+.account-row button {
+  /* The name can be long and the chip cannot grow, so it truncates rather than
+     pushing the sign-out control out of the rail. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

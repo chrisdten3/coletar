@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from coletar.accounts.models import LOCAL_IDENTITY
 from coletar.acquisition import chatgpt_export, claude_export
 from coletar.capture import capture_turn, is_pending
 from coletar.compiler import ChatGPTCompiler, ClaudeCompiler, LocalModelCompiler
@@ -138,7 +139,17 @@ _STATIC = Path(__file__).parent / "static"
 
 
 #: Files whose contents decide the cache-busting stamp.
-_ASSETS = ("product.css", "product.js", "icons.svg", "horizon.css", "horizon.js")
+_ASSETS = (
+    "product.css",
+    "product.js",
+    "icons.svg",
+    "horizon.css",
+    "horizon.js",
+    # Served with the same cache stamp as the rest. Omitting it would mean a change
+    # to how sign-in works reaches nobody with the page already cached — which is
+    # the one asset where a stale copy is a lockout rather than a cosmetic bug.
+    "auth.js",
+)
 
 
 def _asset_signature() -> tuple[tuple[str, int, int], ...]:
@@ -150,12 +161,39 @@ def _asset_signature() -> tuple[tuple[str, int, int], ...]:
     return tuple(out)
 
 
+def _sign_in_config() -> dict[str, Any]:
+    """What the shell needs to know before it can decide whether to ask for a login.
+
+    Stamped into the HTML rather than fetched, because the alternative is a round
+    trip during which the app does not know whether it is allowed to render — which
+    is a flash of the workspace for someone who is about to be told to sign in.
+
+    The publishable key is the only Clerk value here and is meant to be public;
+    coleta reads no Clerk secret anywhere, because verification is a signature
+    check against a public JWKS.
+    """
+    settings = get_settings()
+    provider = settings.identity_provider
+    return {
+        "provider": provider if provider else LOCAL_IDENTITY,
+        "publishableKey": settings.clerk_publishable_key,
+        # Local development has no sign-in and must keep working with none; see
+        # `coletar.inspector.auth`. This is what the client branches on.
+        "required": provider not in {"", LOCAL_IDENTITY},
+    }
+
+
 @lru_cache(maxsize=4)
-def _render_app_html(signature: tuple[tuple[str, int, int], ...]) -> str:
+def _render_app_html(signature: tuple[tuple[str, int, int], ...], config: str) -> str:
     digest = sha256()
     for name in _ASSETS:
         digest.update((_STATIC / name).read_bytes())
-    return (_STATIC / "product.html").read_text().replace("__ASSETS__", digest.hexdigest()[:12])
+    return (
+        (_STATIC / "product.html")
+        .read_text()
+        .replace("__ASSETS__", digest.hexdigest()[:12])
+        .replace("__SIGN_IN__", config)
+    )
 
 
 def _app_html() -> str:
@@ -171,7 +209,9 @@ def _app_html() -> str:
     browser already had. The symptom is the worst kind: the server *is* serving new
     code, and the browser shows old.
     """
-    return _render_app_html(_asset_signature())
+    # The config is part of the cache key: a deployment that switches identity
+    # provider without restarting must not keep serving the old shell.
+    return _render_app_html(_asset_signature(), json.dumps(_sign_in_config()))
 
 
 @router.get("/app", include_in_schema=False)
