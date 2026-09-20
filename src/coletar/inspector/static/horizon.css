@@ -760,14 +760,36 @@ button:hover,
   border-color: #263829;
 }
 .flow-canvas {
+  overflow: hidden;
+  background-image: radial-gradient(#cbd8c8 0.7px, transparent 0.7px);
+  background-size: 18px 18px;
+  position: relative;
+}
+/* One strip, three widths of it. A step change only ever moves this by
+   translateX — the strip itself never re-renders, or the transition below
+   would have nothing to animate between. */
+.flow-track {
+  display: flex;
+  transition: transform 0.55s cubic-bezier(0.65, 0, 0.35, 1);
+}
+.flow-track.step-0 {
+  transform: translateX(0);
+}
+.flow-track.step-1 {
+  transform: translateX(-100%);
+}
+.flow-track.step-2 {
+  transform: translateX(-200%);
+}
+.flow-slide {
+  flex: 0 0 100%;
+  width: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0;
   padding: 50px 26px 65px;
-  background-image: radial-gradient(#cbd8c8 0.7px, transparent 0.7px);
-  background-size: 18px 18px;
-  position: relative;
 }
 .flow-sources,
 .flow-destinations {
@@ -776,6 +798,17 @@ button:hover,
   gap: 13px;
   z-index: 1;
   flex-shrink: 0;
+}
+/* Fades toward whichever edge the rest of the strip is waiting off-screen,
+   so even a fully visible slide reads as one segment of something longer. */
+.flow-lead {
+  flex: 1;
+  height: 1px;
+  min-width: 15px;
+  background: linear-gradient(to right, transparent, #9eb396 55%, #9eb396);
+}
+.flow-lead.flip {
+  background: linear-gradient(to left, transparent, #9eb396 55%, #9eb396);
 }
 .flow-token {
   display: flex;
@@ -797,24 +830,6 @@ button:hover,
   width: 15px;
   height: 15px;
   color: #5d7654;
-}
-.flow-connection {
-  height: 1px;
-  min-width: 15px;
-  flex: 1;
-  background: #9eb396;
-  position: relative;
-}
-.flow-connection:after {
-  content: "";
-  width: 5px;
-  height: 5px;
-  border: 1px solid #779466;
-  border-radius: 50%;
-  position: absolute;
-  right: 0;
-  top: -3px;
-  background: white;
 }
 .flow-core {
   min-width: 180px;
@@ -865,17 +880,6 @@ button:hover,
   text-align: center;
   font-size: 8px;
   color: #7c8b74;
-}
-.stage-0 .flow-sources .flow-token,
-.stage-2 .flow-destinations .flow-token {
-  border-color: #86a176;
-  box-shadow: 0 0 0 3px #a1b79322;
-}
-.stage-1 .flow-core {
-  box-shadow:
-    0 0 0 5px #a1b79322,
-    0 12px 25px #2d472111;
-  border-color: #86a176;
 }
 .horizon-features {
   padding-top: 100px;
@@ -2143,7 +2147,6 @@ dialog::backdrop {
   }
   .horizon-flow .flow-canvas {
     min-height: 325px;
-    padding-inline: 50px;
   }
   .flow-core {
     min-width: 230px;
@@ -2160,9 +2163,6 @@ dialog::backdrop {
   }
   .flow-footnote {
     font-size: 9px;
-  }
-  .flow-connection {
-    min-width: 30px;
   }
   .horizon-access .context-demo > div {
     padding: 24px 17px;
@@ -2525,18 +2525,10 @@ dialog::backdrop {
     min-height: 44px;
   }
   .horizon-flow .flow-canvas {
-    padding: 30px 16px 48px;
-    flex-direction: column;
-    min-height: 500px;
-    gap: 0;
+    min-height: 300px;
   }
-  .flow-sources,
-  .flow-destinations {
-    flex-direction: row;
-    gap: 5px;
-    justify-content: center;
-    flex-wrap: wrap;
-    flex-shrink: 1;
+  .flow-slide {
+    padding: 30px 16px 48px;
   }
   .flow-token {
     font-size: 8px;
@@ -2547,17 +2539,6 @@ dialog::backdrop {
   .flow-token .icon {
     width: 13px;
     height: 13px;
-  }
-  .flow-connection {
-    width: 1px;
-    min-width: 0;
-    height: 30px;
-    flex: none;
-  }
-  .flow-connection:after {
-    top: auto;
-    bottom: 0;
-    right: -3px;
   }
   .flow-core {
     min-width: 225px;

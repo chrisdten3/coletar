@@ -65,19 +65,28 @@ function heroReceipt() {
     horizonSlide === 1 ? ["local"] : ["claude", "chatgpt", "local"];
   return `<div class="receipt-top"><span class="receipt-orbit">${icon("library")}</span><span>YOUR CONTEXT, CONNECTED</span>${icon("external")}</div><h2>${story.receipt}</h2><button class="receipt-fact" data-source="${[0, 3, 2][horizonSlide]}"><span>${story.type} ${icon("external")}</span><p>${story.fact}</p><small>${icon("check")} Source attached · inspect this example</small></button><div class="receipt-bottom"><span>Available to</span><div>${providers.map((p) => `<span title="${providerName(p)}">${mark(p, providerName(p))}</span>`).join("")}</div></div>`;
 }
+const flowTitles = [
+  "Bring what matters.",
+  "Give every detail a place.",
+  "Carry it into the next conversation.",
+];
+const flowDescriptions = [
+  "Start with an export you choose. Useful details keep a link to the conversation they came from.",
+  "Facts, preferences, and decisions share one collection, with their own source, scope, and history.",
+  "Connected assistants can retrieve eligible context. Your access policy decides what stays private.",
+];
+/* One continuous strip — sources, then the coleta core, then destinations — behind a
+   window that only ever shows one third of it. Clicking a step doesn't swap the
+   diagram for a different one; it slides the same strip over, so the three stay
+   visibly one thing instead of three unrelated screens. The `.flow-lead` connectors
+   fade toward whichever edge holds the next or previous stage, so even the fully-
+   visible slide hints there's more strip just out of frame. */
 function flowPreview() {
-  const titles = [
-    "Bring what matters.",
-    "Give every detail a place.",
-    "Carry it into the next conversation.",
-  ];
-  const descriptions = [
-    "Start with an export you choose. Useful details keep a link to the conversation they came from.",
-    "Facts, preferences, and decisions share one collection, with their own source, scope, and history.",
-    "Connected assistants can retrieve eligible context. Your access policy decides what stays private.",
-  ];
-  return `<div class="flow-explainer"><span class="section-label">0${flowStep + 1} / THE CONTEXT LOOP</span><h3>${titles[flowStep]}</h3><p>${descriptions[flowStep]}</p><div class="flow-control" role="group" aria-label="Context workflow">${["Collect", "Organize", "Continue"].map((v, i) => `<button data-flow-step="${i}" aria-pressed="${flowStep === i}"><span>0${i + 1}</span>${v}</button>`).join("")}</div></div><div class="flow-canvas stage-${flowStep}" aria-label="Illustrative context flow">
-  <div class="flow-sources"><span class="flow-token">${mark("claude")} Claude export</span><span class="flow-token">${mark("chatgpt")} ChatGPT export</span><span class="flow-token">${icon("file")} Your own notes</span></div><div class="flow-connection" aria-hidden="true"></div><div class="flow-core"><div class="flow-core-brand">coleta</div><span class="flow-object">${icon("check")} Clear, concise writing</span><span class="flow-object">${icon("library")} Project Atlas</span><span class="flow-object">${icon("audit")} Launch: 24 October</span><span class="flow-core-caption">Context + source + your rules</span></div><div class="flow-connection" aria-hidden="true"></div><div class="flow-destinations">${["claude", "chatgpt", "local"].map((p) => `<span class="flow-token">${mark(p)}${providerName(p)}</span>`).join("")}</div><span class="flow-footnote">Illustrative flow · availability depends on the connection and access policy</span></div>`;
+  return `<div class="flow-explainer"><span class="section-label">0${flowStep + 1} / THE CONTEXT LOOP</span><h3 id="flow-title">${flowTitles[flowStep]}</h3><p id="flow-description">${flowDescriptions[flowStep]}</p><div class="flow-control" role="group" aria-label="Context workflow">${["Collect", "Organize", "Continue"].map((v, i) => `<button data-flow-step="${i}" aria-pressed="${flowStep === i}"><span>0${i + 1}</span>${v}</button>`).join("")}</div></div><div class="flow-canvas" aria-label="Illustrative context flow"><div class="flow-track step-${flowStep}">
+  <div class="flow-slide" aria-hidden="${flowStep !== 0}"><div class="flow-sources"><span class="flow-token">${mark("claude")} Claude export</span><span class="flow-token">${mark("chatgpt")} ChatGPT export</span><span class="flow-token">${icon("file")} Your own notes</span></div><div class="flow-lead" aria-hidden="true"></div></div>
+  <div class="flow-slide" aria-hidden="${flowStep !== 1}"><div class="flow-lead flip" aria-hidden="true"></div><div class="flow-core"><div class="flow-core-brand">coleta</div><span class="flow-object">${icon("check")} Clear, concise writing</span><span class="flow-object">${icon("library")} Project Atlas</span><span class="flow-object">${icon("audit")} Launch: 24 October</span><span class="flow-core-caption">Context + source + your rules</span></div><div class="flow-lead" aria-hidden="true"></div></div>
+  <div class="flow-slide" aria-hidden="${flowStep !== 2}"><div class="flow-lead flip" aria-hidden="true"></div><div class="flow-destinations">${["claude", "chatgpt", "local"].map((p) => `<span class="flow-token">${mark(p)}${providerName(p)}</span>`).join("")}</div></div>
+  </div><span class="flow-footnote">Illustrative flow · availability depends on the connection and access policy</span></div>`;
 }
 function horizonHome() {
   const story = horizonStories[horizonSlide];
@@ -265,13 +274,23 @@ function bindHorizon() {
           );
       }),
   );
+  // Targeted updates, not a re-render: the track has to stay the same DOM node
+  // across a step change or its CSS transition has nothing to animate from.
   document.querySelectorAll("[data-flow-step]").forEach(
     (b) =>
       (b.onclick = () => {
         flowStep = Number(b.dataset.flowStep);
-        $("#horizon-flow").innerHTML = flowPreview();
-        bindHorizon();
-        $(`[data-flow-step="${flowStep}"]`).focus({ preventScroll: true });
+        $("#flow-title").textContent = flowTitles[flowStep];
+        $("#flow-description").textContent = flowDescriptions[flowStep];
+        document.querySelectorAll("[data-flow-step]").forEach((x) =>
+          x.setAttribute("aria-pressed", String(Number(x.dataset.flowStep) === flowStep)),
+        );
+        const track = $(".flow-track");
+        track.className = "flow-track step-" + flowStep;
+        track.querySelectorAll(".flow-slide").forEach((slide, i) =>
+          slide.setAttribute("aria-hidden", String(i !== flowStep)),
+        );
+        b.focus({ preventScroll: true });
       }),
   );
   if ($(".horizon-menu"))
