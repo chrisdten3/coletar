@@ -15,3 +15,14 @@ From there, we move on to pitching businesses, minor development orgs, etc.
 5. **Amanda**
 6. **Matt**
 7. **Extraordinary** — pitch after the above, since my bro works there.
+
+## B2C call format
+
+1. Give them 3 min to look at the splash page.
+2. Ask them what they think the product does.
+3. Pitch the product with those same website slides.
+4. Questions.
+5. Workspace demo.
+6. Extension demo.
+7. Setup.
+8. Q&A.
