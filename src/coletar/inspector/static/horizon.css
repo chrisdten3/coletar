@@ -1549,56 +1549,26 @@ button:hover,
   color: #728167;
   margin: 0 22px 24px 0;
 }
+/* The mountain photo, eyebrow and headline this used to carry said nothing the
+   hero and footer weren't already saying. One more chance to click through,
+   nothing else. */
 .horizon-closing {
-  margin: 0 18px;
-  min-height: 470px;
-  border-radius: 18px;
-  position: relative;
-  overflow: hidden;
-  isolation: isolate;
   text-align: center;
-  padding: 75px 20px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: white;
-  background: #233d31;
-}
-.horizon-closing > img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: 50% 50%;
-  z-index: -3;
-}
-.closing-shade {
-  position: absolute;
-  inset: 0;
-  background: #142a247a;
-  z-index: -2;
-}
-.horizon-closing .section-label {
-  color: #cfe0c8;
-  font-size: 9px;
-  justify-content: center;
-  margin-bottom: 24px;
-}
-.horizon-closing h2 {
-  font-size: clamp(52px, 6.3vw, 90px);
-  letter-spacing: -0.06em;
-  line-height: 1.02;
-  margin-bottom: 30px;
+  padding: 70px 20px;
 }
 .horizon-closing .btn {
-  font-size: 11px;
+  display: inline-flex;
+  background: #202822;
+  border: 1px solid #202822;
+  color: white;
+  font-size: 12px;
   border-radius: 30px;
-  padding: 14px 21px;
-  gap: 28px;
-  border-color: white;
-  color: #2b3c2c;
+  padding: 14px 22px;
+  gap: 22px;
+  min-height: 48px;
+}
+.horizon-closing .btn:hover {
+  background: #354d3d;
 }
 .horizon-footer {
   padding: 60px 5% 0;
@@ -2810,24 +2780,7 @@ dialog::backdrop {
     line-height: 1.9;
   }
   .horizon-closing {
-    margin: 0 10px;
-    min-height: 390px;
-    border-radius: 14px;
-    padding: 55px 20px;
-  }
-  .horizon-closing .section-label {
-    font-size: 8px;
-  }
-  .horizon-closing h2 {
-    font-size: 44px;
-    line-height: 1.08;
-    letter-spacing: -0.055em;
-  }
-  .horizon-closing .btn {
-    font-size: 10px;
-    min-height: 45px;
-    padding: 12px 18px;
-    gap: 20px;
+    padding: 45px 20px;
   }
   .horizon-footer {
     padding: 45px 24px 0;
