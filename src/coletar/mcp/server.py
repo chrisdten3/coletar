@@ -77,10 +77,13 @@ MAX_CONTENT_CHARS = 4_000
 MAX_TOP_K = 50
 
 mcp = MCPServer(
-    "coletar",
+    # The product name a person reads in their client's connector list, and the one
+    # the model is told below. Both are user-facing, so both follow the rename;
+    # the package, the CLI and every COLETAR_* variable deliberately do not.
+    "coleta",
     version="0.1.0",
     instructions=(
-        "coletar is this user's portable memory — one graph shared across every AI "
+        "coleta is this user's portable memory — one graph shared across every AI "
         "tool they use, including ones you cannot see. It therefore holds things "
         "your own memory cannot: what they told a different assistant, what a local "
         "model learned, what an imported history contained.\n\n"

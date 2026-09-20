@@ -262,7 +262,10 @@ async def test_memory_file_is_exactly_the_documented_format(tmp_path: Path) -> N
     await compile_to(tmp_path, [fact])
     body = (tmp_path / "memory.txt").read_text()
     assert body == f"[{fact.created_at.date().isoformat()}] - Chris prefers tabs.\n"
-    assert "coletar" not in body
+    # "coleta" rather than the old "coletar": it is a substring of it, so this
+    # catches either spelling leaking into a file whose whole contract is that it
+    # carries memories and no branding.
+    assert "coleta" not in body
     assert "background" not in body
 
 
