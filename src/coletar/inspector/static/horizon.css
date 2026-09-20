@@ -53,10 +53,9 @@ button:hover,
   outline-offset: 4px;
 }
 .brand {
-  letter-spacing: -1.25px;
-}
-.coletar-symbol {
-  color: currentColor;
+  font-family: Boldonse, Manrope, Arial, sans-serif;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 .horizon {
   background: #fbfcf9;
@@ -144,11 +143,6 @@ button:hover,
 }
 .horizon-nav .brand:hover {
   text-decoration: none;
-}
-.horizon-nav .coletar-symbol {
-  width: 29px;
-  height: 29px;
-  color: inherit;
 }
 .horizon-links {
   display: flex;
@@ -836,17 +830,14 @@ button:hover,
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 16px;
-  font-weight: 600;
-  letter-spacing: -0.7px;
+  font-family: Boldonse, Manrope, Arial, sans-serif;
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #2d3b26;
   border-bottom: 1px solid #e4e9df;
   padding: 15px 0;
   margin-bottom: 12px;
-}
-.flow-core-brand .coletar-symbol {
-  width: 22px;
-  height: 22px;
-  color: #405d34;
 }
 .flow-object {
   display: flex;
@@ -1450,19 +1441,20 @@ button:hover,
   gap: 13px;
 }
 .export-core {
-  width: 65px;
   height: 65px;
+  padding: 0 16px;
   display: grid;
   place-items: center;
-  border-radius: 19px;
+  border-radius: 33px;
   background: #fff;
   border: 1px solid #c8d7b8;
   box-shadow: 0 8px 20px #2840190e;
-}
-.export-core .coletar-symbol {
-  width: 39px;
-  height: 39px;
-  color: #506a3c;
+  font-family: Boldonse, Manrope, Arial, sans-serif;
+  font-weight: 400;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: #405d34;
+  white-space: nowrap;
 }
 .export-line {
   height: 1px;
@@ -1654,9 +1646,10 @@ button:hover,
   background: transparent;
 }
 .horizon-wordmark {
-  font-size: clamp(130px, 21vw, 325px);
-  font-weight: 500;
-  letter-spacing: -0.09em;
+  font-family: Boldonse, Manrope, Arial, sans-serif;
+  font-size: clamp(100px, 17vw, 260px);
+  font-weight: 400;
+  letter-spacing: -0.01em;
   line-height: 0.95;
   margin: 50px 0 28px;
   color: #dce5d5;
@@ -1691,9 +1684,6 @@ button:hover,
 .sidebar .brand {
   color: #eff5ec;
   margin-bottom: 45px;
-}
-.sidebar .coletar-symbol {
-  color: #bed2b5;
 }
 .rail-label {
   color: #8ca186;
@@ -2263,10 +2253,6 @@ dialog::backdrop {
   .horizon-nav .brand {
     font-size: 23px;
   }
-  .horizon-nav .coletar-symbol {
-    width: 26px;
-    height: 26px;
-  }
   .horizon-links {
     display: none;
   }
@@ -2804,9 +2790,10 @@ dialog::backdrop {
     right: 8%;
   }
   .export-core {
-    width: 55px;
     height: 55px;
-    border-radius: 15px;
+    padding: 0 12px;
+    border-radius: 28px;
+    font-size: 10px;
   }
   .export-diagram > span {
     height: 35px;
@@ -2815,10 +2802,6 @@ dialog::backdrop {
   .export-diagram > span > .mark {
     height: 19px;
     width: 19px;
-  }
-  .export-core .coletar-symbol {
-    width: 33px;
-    height: 33px;
   }
   .horizon-faq {
     grid-template-columns: 1fr;
@@ -2889,9 +2872,9 @@ dialog::backdrop {
     font-size: 11px;
   }
   .horizon-wordmark {
-    font-size: 24vw;
+    font-size: 19vw;
     margin: 40px 0 22px;
-    letter-spacing: -0.09em;
+    letter-spacing: -0.01em;
   }
   .horizon-wordmark > span {
     font-size: 0.55em;
