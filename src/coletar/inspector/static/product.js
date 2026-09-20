@@ -128,6 +128,12 @@ let auditAt = "2026-03-03",
   auditValid = "2026-01-01",
   importReport = null,
   toastTimer;
+// The Library's sections, fetched alongside state. Null until the first load and
+// after any write, because a memory added or retired changes what belongs where.
+let libraryIndex = null;
+// Sections the reader has collapsed, and duplicate clusters they have opened.
+const collapsed = new Set();
+const expandedClusters = new Set();
 const savePrefs = () => {
   try {
     localStorage.setItem("coletar-design-prefs-v1", JSON.stringify(prefs));
@@ -203,6 +209,8 @@ async function refresh() {
   state = await api("/state");
   if (state.hosted) connections = await api("/connections");
   manifest = null;
+  libraryIndex = null;
+  graphData = null;
 }
 function toast(message, error = false) {
   const el = $("#toast");
@@ -272,6 +280,128 @@ function surfaceTabs() {
     )
     .join("")}</div>`;
 }
+/* --- The Library as sections ------------------------------------------------
+   A flat list sorted by when something landed is the right view of forty objects
+   and the wrong view of several thousand. Grouping is derived from edges the
+   extractor already wrote, never inferred: a heading with no provenance is a claim
+   the Context Inspector could not explain. */
+
+let libraryLoading = false;
+function loadLibraryIndex() {
+  if (libraryLoading) return;
+  libraryLoading = true;
+  api("/library")
+    .then((data) => {
+      libraryIndex = data;
+      render();
+    })
+    .catch(() => {
+      // A failed grouping must not cost the reader their Library. The flat list
+      // is the fallback, and it is the view that existed before sections did.
+      libraryIndex = { groups: [], loose: null, total: 0, failed: true };
+      render();
+    })
+    .finally(() => (libraryLoading = false));
+}
+
+/* Near-identical restatements are the single biggest reason the real corpus reads
+   as noise — one entity had thirty-nine facts that were mostly the same sentence.
+   Collapsing them is honest about what the graph holds rather than hiding it: the
+   cluster says how many, and opens. */
+const dupKey = (o) =>
+  o.content
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 8)
+    .join(" ");
+
+function cluster(objects) {
+  const seen = new Map();
+  for (const o of objects) {
+    const key = dupKey(o);
+    if (!seen.has(key)) seen.set(key, []);
+    seen.get(key).push(o);
+  }
+  return [...seen.values()];
+}
+
+/* One line per memory rather than a card. Roughly three times the density, which
+   is the difference between scanning a section and scrolling one. */
+function row(o) {
+  const marks = [
+    o.kind || o.type,
+    o.scope?.id || "",
+    isRestricted(o) ? "restricted" : "",
+    state.unreviewed.includes(o.id) ? "unreviewed" : "",
+  ].filter(Boolean);
+  return `<a class="lib-row ${isRestricted(o) ? "restricted" : ""}" href="#/object/${encodeURIComponent(o.id)}"><span class="lib-text">${esc(o.content)}</span><span class="lib-marks">${marks
+    .map((m) => `<span class="lib-mark">${esc(m)}</span>`)
+    .join("")}</span></a>`;
+}
+
+function clusterBlock(group) {
+  if (group.length === 1) return row(group[0]);
+  const key = group[0].id;
+  const open = expandedClusters.has(key);
+  const rest = group.length - 1;
+  return `<div class="lib-cluster ${open ? "open" : ""}">${row(group[0])}<button type="button" class="lib-more" data-cluster="${esc(key)}" aria-expanded="${open}">${open ? "Hide" : `${rest} similar`}</button>${open ? group.slice(1).map(row).join("") : ""}</div>`;
+}
+
+function section(label, kind, description, objects) {
+  const key = `${kind}:${label}`;
+  const shut = collapsed.has(key);
+  return `<section class="lib-section ${shut ? "shut" : ""}"><button type="button" class="lib-head" data-section="${esc(key)}" aria-expanded="${!shut}"><span class="lib-head-label">${esc(label)}</span>${description ? `<span class="lib-head-desc">${esc(description)}</span>` : ""}<span class="lib-head-count">${objects.length}</span></button>${
+    shut ? "" : `<div class="lib-rows">${cluster(objects).map(clusterBlock).join("")}</div>`
+  }</section>`;
+}
+
+/* The grouped body, or null when there is nothing to group by — a workspace with
+   no entities and no projects should not be given a single section called
+   "Everything". */
+function groupedLibrary(filtered) {
+  if (!libraryIndex || libraryIndex.failed) return null;
+  const visible = new Map(filtered.map((o) => [o.id, o]));
+  const sections = [];
+  for (const g of libraryIndex.groups) {
+    const members = g.object_ids.map((id) => visible.get(id)).filter(Boolean);
+    if (members.length) sections.push(section(g.label, g.kind, g.description, members));
+  }
+  const loose = (libraryIndex.loose || []).map((id) => visible.get(id)).filter(Boolean);
+  if (!sections.length && !loose.length) return null;
+  if (loose.length) {
+    sections.push(
+      section("Not connected to anything yet", "loose", "", loose),
+    );
+  }
+  return sections.join("");
+}
+
+/* Grouped view body: its own loading and empty states, because the sections
+   arrive on a second request and an empty screen while they do reads as a bug. */
+function groupedBody(filtered) {
+  if (!libraryIndex) {
+    loadLibraryIndex();
+    return '<p class="atlas-status">Sorting your context…</p>';
+  }
+  const grouped = groupedLibrary(filtered);
+  if (grouped) return grouped;
+  if (libraryIndex.failed) {
+    return (
+      '<p class="atlas-status">Sections could not be loaded; showing everything in order.</p>' +
+      filtered.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map(row).join("")
+    );
+  }
+  return empty(
+    filtered.length ? "Nothing to group yet" : "No matching context",
+    filtered.length
+      ? "These memories do not mention an entity or belong to a project yet. Import more history and sections appear."
+      : "Try a different search or filter.",
+    '<button data-library-view-set="list">Show them as a list</button>',
+  );
+}
+
 function library() {
   let objects = activeObjects();
   const restricted = objects.filter(isRestricted).length;
@@ -301,9 +431,11 @@ function library() {
   ];
   return shell(
     "Library",
-    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : ""}">${
+    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="grouped" aria-pressed="${libraryView === "grouped"}" class="${libraryView === "grouped" ? "active" : ""}">Grouped</button><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : ""}${libraryView === "grouped" ? " grouped-view" : ""}">${
       libraryView === "atlas"
         ? atlasGraph()
+        : libraryView === "grouped"
+        ? groupedBody(filtered)
         : filtered
         .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
         .map(card)
@@ -743,7 +875,7 @@ const demoFacts = [
 let demoSelected = 1,
   demoProvider = "claude",
   historyStep = 1,
-  libraryView = "list";
+  libraryView = "grouped";
 let demoReach = demoFacts.map((f) => [...f.reach]);
 const providerName = (s) =>
   ({ claude: "Claude", chatgpt: "ChatGPT", local: "Local model" })[s];
@@ -901,6 +1033,34 @@ function bindDesign() {
         libraryView = b.dataset.libraryView;
         render();
         $(`[data-library-view="${libraryView}"]`).focus();
+      }),
+  );
+  // Same switch, reached from inside an empty state rather than from the toolbar.
+  document.querySelectorAll("[data-library-view-set]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        libraryView = b.dataset.libraryViewSet;
+        render();
+      }),
+  );
+  document.querySelectorAll("[data-section]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const key = b.dataset.section;
+        if (collapsed.has(key)) collapsed.delete(key);
+        else collapsed.add(key);
+        render();
+        $(`[data-section="${CSS.escape(key)}"]`)?.focus();
+      }),
+  );
+  document.querySelectorAll("[data-cluster]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        const key = b.dataset.cluster;
+        if (expandedClusters.has(key)) expandedClusters.delete(key);
+        else expandedClusters.add(key);
+        render();
+        $(`[data-cluster="${CSS.escape(key)}"]`)?.focus();
       }),
   );
 }
@@ -1560,8 +1720,9 @@ function atlasGraph() {
     ? graphData.nodes.find((n) => n.id === graphFocus)
     : null;
   const omitted = graphData.omitted_entities;
+  const shown = Math.min(graphData.nodes.length - 1, 14);
   const caption = focused
-    ? `${esc(focused.label)} · ${graphData.nodes.length - 1} connected ${graphData.nodes.length - 1 === 1 ? "fact" : "facts"}`
+    ? `${esc(focused.label)} · ${graphData.nodes.length - 1} connected ${graphData.nodes.length - 1 === 1 ? "fact" : "facts"}${graphData.nodes.length - 1 > shown ? ` · showing ${shown}` : ""}`
     : `${graphData.nodes.filter((n) => n.type === "entity").length} of ${graphData.total_entities} entities${omitted ? ` · ${omitted} less-connected hidden` : ""}`;
 
   return `<div class="atlas-stage">
@@ -1574,7 +1735,7 @@ function atlasGraph() {
       </div>
     </div>
     <svg id="atlas-svg" role="img" aria-label="Context graph"><g id="atlas-root"></g></svg>
-    <div class="atlas-hint mono muted">${focused ? "Click a fact to open it · drag to pan" : "Click an entity to see what mentions it · drag to pan"}</div>
+    <div class="atlas-hint mono muted">${focused ? `Click a fact to open it · drag to pan${graphData.nodes.length - 1 > shown ? ' · <button type="button" class="linklike" data-library-view-set="grouped">see all in the list</button>' : ""}` : "Click an entity to see what mentions it · drag to pan"}</div>
   </div>`;
 }
 
@@ -1695,9 +1856,21 @@ function drawGraph() {
 
   // Focus mode draws every returned node; the constellation draws entities only,
   // because the facts are what you get *after* choosing one.
-  const nodes = graphFocus
-    ? graphData.nodes.map((n) => ({ ...n }))
-    : graphData.nodes.filter((n) => n.type === "entity").map((n) => ({ ...n }));
+  /* A hub with thirty-nine spokes is a list wearing a picture's clothes. Cap the
+     ring and say so: the remainder is one click away in the grouped Library,
+     which is the view that reads a long set properly. */
+  const RING_CAP = 14;
+  let nodes;
+  let hiddenSpokes = 0;
+  if (graphFocus) {
+    const hub = graphData.nodes.filter((n) => n.id === graphFocus);
+    const spokes = graphData.nodes.filter((n) => n.id !== graphFocus);
+    hiddenSpokes = Math.max(0, spokes.length - RING_CAP);
+    nodes = [...hub, ...spokes.slice(0, RING_CAP)].map((n) => ({ ...n }));
+  } else {
+    nodes = graphData.nodes.filter((n) => n.type === "entity").map((n) => ({ ...n }));
+  }
+  window.__atlasHidden = hiddenSpokes;
   const ids = new Set(nodes.map((n) => n.id));
   const edges = graphData.edges.filter((e) => ids.has(e.src) && ids.has(e.dst));
   layoutGraph(nodes, edges, width, height, graphFocus);
@@ -1718,12 +1891,41 @@ function drawGraph() {
     return `<line class="atlas-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"/>`;
   };
 
+  /* Labels are the whole readability problem. Facts are sentences, not names, so
+     thirty-nine of them centred on their own node produced the overlapping wall
+     the focused view used to be. Three things fix it, in order of how much they
+     matter:
+
+     1. Anchor outward. A label on the left half is right-aligned and sits to the
+        left of its node; the right half mirrors it. Nothing crosses the middle,
+        which is where every collision used to happen.
+     2. Give each one an opaque plate. Text drawn straight onto the canvas competes
+        with every edge passing under it; a rounded rect in the page's own colour
+        means the label occludes the line instead of fighting it.
+     3. Drop what still collides. After placement, any label whose box overlaps one
+        already drawn is omitted rather than layered — the node keeps its circle,
+        its tooltip and its click target, and the picture stays readable. */
+  const placed = [];
+  const CHAR = 6.1; // ~6px per character at the label's size; measured, not exact.
   const label = (n) => {
     const r = radiusOf(n);
-    const cap = n.type === "entity" ? 34 : 30;
+    const cap = n.type === "entity" ? 30 : 42;
     const text = n.label.length > cap ? n.label.slice(0, cap - 1) + "…" : n.label;
-    const dy = n.labelAbove ? -(r + 8) : r + 15;
-    return `<text class="atlas-label ${n.type}" x="${n.x.toFixed(1)}" y="${(n.y + dy).toFixed(1)}">${esc(text)}</text>`;
+    const width = text.length * CHAR + 10;
+    const hub = n.id === graphFocus;
+    // The hub keeps its label underneath: it is the one node the eye starts from.
+    const right = hub ? true : n.x >= width / 2 + 4;
+    const x = hub ? n.x : right ? n.x + r + 7 : n.x - r - 7;
+    const y = hub ? n.y + r + 16 : n.y;
+    const boxX = hub ? x - width / 2 : right ? x - 5 : x - width + 5;
+    const box = { x: boxX, y: y - 9, w: width, h: 18 };
+    const clash = placed.some(
+      (b) =>
+        box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y,
+    );
+    if (clash && !hub) return "";
+    placed.push(box);
+    return `<g class="atlas-label-group"><rect class="atlas-label-plate" x="${box.x.toFixed(1)}" y="${box.y.toFixed(1)}" width="${box.w.toFixed(1)}" height="${box.h}" rx="5"/><text class="atlas-label ${n.type}${hub ? " hub" : ""}" x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${hub ? "middle" : right ? "start" : "end"}">${esc(text)}</text></g>`;
   };
 
   root.innerHTML =
@@ -1734,7 +1936,8 @@ function drawGraph() {
           `<g class="atlas-node ${n.type} ${n.id === graphFocus ? "focused" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}"><circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${radiusOf(n).toFixed(1)}"/><title>${esc(n.description || n.label)}${n.type === "entity" ? ` — mentioned by ${n.degree} ${n.degree === 1 ? "fact" : "facts"}` : ""}</title></g>`,
       )
       .join("") +
-    nodes.map(label).join("");
+    // Hub first: it is the label that must never be the one dropped.
+    [...nodes].sort((a, b) => (b.id === graphFocus) - (a.id === graphFocus)).map(label).join("");
 }
 
 function bindGraph() {

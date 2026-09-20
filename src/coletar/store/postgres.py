@@ -27,6 +27,7 @@ from taste:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
@@ -469,6 +470,36 @@ class PostgresStore:
 
     async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]:
         return await self._edges(tenant_id, "dst_id", object_id)
+
+    async def edges_from_many(
+        self, tenant_id: TenantId, object_ids: Sequence[str]
+    ) -> dict[str, list[Edge]]:
+        ids = list(dict.fromkeys(object_ids))
+        if not ids:
+            return {}
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # ANY(%s) rather than an IN list built by string interpolation: the id
+            # set comes from a query result and can be thousands long, and a
+            # parameterised array is one plan instead of one per distinct length.
+            await cur.execute(
+                "SELECT src_id, dst_id, type, confidence, created_at "
+                "FROM context_edge WHERE tenant_id = %s AND src_id = ANY(%s)",
+                (tenant_id, ids),
+            )
+            rows = await cur.fetchall()
+        out: dict[str, list[Edge]] = {}
+        for row in rows:
+            out.setdefault(row["src_id"], []).append(
+                Edge(
+                    src_id=row["src_id"],
+                    dst_id=row["dst_id"],
+                    type=row["type"],
+                    confidence=row["confidence"],
+                    created_at=row["created_at"],
+                )
+            )
+        return out
 
     async def _edges(self, tenant_id: TenantId, column: str, object_id: str) -> list[Edge]:
         pool = await self._get_pool()

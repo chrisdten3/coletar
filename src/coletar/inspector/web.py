@@ -238,8 +238,9 @@ async def state(owner: Tenant) -> Snapshot:
             who = str(event.detail.get("provider") or event.detail.get("surface", "unknown"))
             usage[who] = usage.get(who, 0) + int(event.detail.get("token_estimate", 0))
     conflicts = []
-    for obj in objects:
-        for edge in await store.edges_from(owner, obj.id):
+    edges_by_src = await store.edges_from_many(owner, [o.id for o in objects])
+    for edge_list in edges_by_src.values():
+        for edge in edge_list:
             if edge.type is EdgeType.CONTRADICTS:
                 conflicts.append((edge.src_id, edge.dst_id))
     return Snapshot(
@@ -393,12 +394,12 @@ async def context_graph(owner: Tenant, limit: int = 60, focus: str | None = None
 
     # Facts point at entities, so the mention count per entity is a reverse lookup.
     mentions: list[tuple[str, str]] = []
-    for obj in objects:
-        if obj.type is not ObjectType.FACT:
-            continue
-        for edge in await store.edges_from(owner, obj.id):
+    facts = [o.id for o in objects if o.type is ObjectType.FACT]
+    edges_by_src = await store.edges_from_many(owner, facts)
+    for fact_id in facts:
+        for edge in edges_by_src.get(fact_id, ()):
             if edge.type is EdgeType.MENTIONS and edge.dst_id in by_id:
-                mentions.append((obj.id, edge.dst_id))
+                mentions.append((fact_id, edge.dst_id))
 
     degree: dict[str, int] = {}
     for _, entity_id in mentions:
@@ -462,6 +463,107 @@ async def context_graph(owner: Tenant, limit: int = 60, focus: str | None = None
         edges=graph_edges,
         total_entities=len(entities),
         omitted_entities=max(0, linked - sum(1 for n in nodes if n.type == "entity")),
+    )
+
+
+class LibraryGroup(BaseModel):
+    """One section of the Library, and what to call it."""
+
+    key: str
+    label: str
+    #: "entity" | "project" | "loose". The client styles them differently and a
+    #: person reads them differently: an entity is a thing the facts are *about*,
+    #: a project is a scope they were filed under.
+    kind: str
+    description: str = ""
+    #: Ids only. The browser already holds every object from `/web-api/state`, and
+    #: sending them again in a second shape would be sending the same corpus twice.
+    object_ids: list[str]
+
+
+class LibraryIndex(BaseModel):
+    groups: list[LibraryGroup]
+    #: Objects in no group at all. Kept separate rather than dropped into a
+    #: catch-all group so the client can decide whether to show them at the bottom
+    #: or behind a disclosure — and so "how much of my library is unconnected"
+    #: stays answerable.
+    loose: list[str]
+    total: int
+
+
+@router.get("/web-api/library", response_model=LibraryIndex)
+async def library_index(owner: Tenant) -> LibraryIndex:
+    """The Library's sections: what each memory is *about*, rather than when it landed.
+
+    A flat list sorted by `updated_at` is the right view of forty objects and the
+    wrong view of several thousand — on a real corpus it is an undifferentiated
+    wall in which the same fact restated eleven times looks like eleven facts.
+
+    Grouping is derived, never inferred. An entity group is the set of facts with a
+    `MENTIONS` edge to that entity, which the extractor already wrote and the Atlas
+    already draws; a project group is `scope.id`, which the object already carries.
+    Nothing here asks a model to invent a theme: a heading with no provenance is a
+    claim the Context Inspector could not explain, and §4 says such a thing should
+    not exist.
+
+    An object can appear in several groups, because a fact naming two people
+    genuinely belongs under both. The client shows it in each and the count is of
+    memberships, not of objects — `total` is the honest object count.
+    """
+    store = build_store()
+    objects = await store.list_objects(owner, limit=10000)
+    by_id = {o.id: o for o in objects}
+
+    facts = [o.id for o in objects if o.type is ObjectType.FACT]
+    edges_by_src = await store.edges_from_many(owner, facts)
+
+    members: dict[str, list[str]] = {}
+    for fact_id in facts:
+        for edge in edges_by_src.get(fact_id, ()):
+            if edge.type is EdgeType.MENTIONS and edge.dst_id in by_id:
+                members.setdefault(edge.dst_id, []).append(fact_id)
+
+    groups: list[LibraryGroup] = []
+    grouped: set[str] = set()
+    for entity_id, fact_ids in members.items():
+        entity = by_id[entity_id]
+        if entity.type is not ObjectType.ENTITY:
+            continue
+        groups.append(
+            LibraryGroup(
+                key=entity_id,
+                # An entity's identity is its name; `content` is the one-line
+                # description, which reads as "An investment bank." on a heading
+                # that should say "JPMorgan".
+                label=str(entity.payload.get("name") or entity.content),
+                kind="entity",
+                description=entity.content if entity.payload.get("name") else "",
+                object_ids=fact_ids,
+            )
+        )
+        grouped.update(fact_ids)
+
+    by_project: dict[str, list[str]] = {}
+    for obj in objects:
+        if obj.type is ObjectType.ENTITY or obj.id in grouped:
+            continue
+        if obj.scope.type is ScopeType.PROJECT and obj.scope.id:
+            by_project.setdefault(obj.scope.id, []).append(obj.id)
+    for project, ids in by_project.items():
+        groups.append(LibraryGroup(key=project, label=project, kind="project", object_ids=ids))
+        grouped.update(ids)
+
+    # Busiest first: the whole point is that the corpus is too large to scan, so
+    # the sections that carry the most of it belong at the top.
+    groups.sort(key=lambda g: (-len(g.object_ids), g.label.lower()))
+
+    loose = [
+        o.id for o in objects if o.type is not ObjectType.ENTITY and o.id not in grouped
+    ]
+    return LibraryIndex(
+        groups=groups,
+        loose=loose,
+        total=sum(1 for o in objects if o.type is not ObjectType.ENTITY),
     )
 
 

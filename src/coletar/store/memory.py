@@ -21,6 +21,7 @@ from __future__ import annotations
 import base64
 import json
 import warnings
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -363,6 +364,19 @@ class InMemoryStore:
 
     async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]:
         return [e for (t, _, d, _), e in self._edges.items() if t == tenant_id and d == object_id]
+
+    async def edges_from_many(
+        self, tenant_id: TenantId, object_ids: Sequence[str]
+    ) -> dict[str, list[Edge]]:
+        wanted = set(object_ids)
+        out: dict[str, list[Edge]] = {}
+        # One pass over the edge table rather than one pass per id: the caller is
+        # typically asking about every object there is, and the per-id form was
+        # quadratic in exactly that case.
+        for (t, src, _, _), edge in self._edges.items():
+            if t == tenant_id and src in wanted:
+                out.setdefault(src, []).append(edge)
+        return out
 
     # -- event log ----------------------------------------------------------
     async def acquire_lease(

@@ -2,10 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "coletar-workspace",
+      "name": "coleta-real-data",
       "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
       "runtimeArgs": ["-m", "uvicorn", "coletar.inspector.app:app", "--host", "127.0.0.1", "--port", "8789"],
-      "port": 8789
+      "port": 8789,
+      "env": {
+        "COLETAR_STORE_BACKEND": "postgres",
+        "COLETAR_DATABASE_URL": "postgresql://coletar@localhost:5434/coletar",
+        "COLETAR_DEFAULT_TENANT_ID": "tenant_v1"
+      }
     }
   ]
 }

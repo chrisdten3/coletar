@@ -58,6 +58,7 @@ connector always passes its surface; nothing in this protocol infers one.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -232,6 +233,22 @@ class Store(Protocol):
     async def edges_from(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
 
     async def edges_to(self, tenant_id: TenantId, object_id: str) -> list[Edge]: ...
+
+    async def edges_from_many(
+        self, tenant_id: TenantId, object_ids: Sequence[str]
+    ) -> dict[str, list[Edge]]:
+        """Outgoing edges for many objects at once, keyed by source id.
+
+        Exists because the callers that need edges need them for the *whole* graph:
+        the Library's grouping, the Atlas, and the conflict list in the workspace
+        snapshot. Each of those was looping over `edges_from`, which is one query
+        per object — 3,818 round trips to draw one screen on a real corpus.
+
+        Ids with no outgoing edges are absent from the result rather than mapped to
+        an empty list, so a caller must use `.get(id, [])`. That keeps the response
+        proportional to the edges that exist rather than to the objects asked about.
+        """
+        ...
 
     async def acquire_lease(
         self, tenant_id: TenantId, name: str, *, owner: str, ttl_seconds: float
