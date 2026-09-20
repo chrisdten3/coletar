@@ -11,4 +11,7 @@ From there, we move on to pitching businesses, minor development orgs, etc.
 1. **Musa (Cookt)** — friend, can try out the product first.
 2. **Ameen**
 3. **Bryan**
-4. **Extraordinary** — pitch after the above, since my bro works there.
+4. **Samad**
+5. **Amanda**
+6. **Matt**
+7. **Extraordinary** — pitch after the above, since my bro works there.
