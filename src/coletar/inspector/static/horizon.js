@@ -125,7 +125,7 @@ function horizonHome() {
           `<details><summary>${q}${icon("plus")}</summary><p>${a}</p></details>`,
       )
       .join("")}</div></section>
-    <section class="horizon-closing"><img src="/static/images/alpine-valley.webp" alt="" loading="lazy" width="2200" height="1375"><div class="closing-shade"></div><span class="section-label">THERE’S MORE AHEAD.</span><h2>Go further.<br>Bring your thinking.</h2><a class="btn" href="#/library">Try it out ${icon("arrow")}</a></section>
+    <section class="horizon-closing"><a class="btn" href="#/library">Try it out ${icon("arrow")}</a></section>
     </main><footer class="horizon-footer"><div class="horizon-footer-top"><div><a class="brand" href="#/home">coleta</a><p>Independent context.<br>Human control.</p></div><div><span>Product</span><a href="#/library">Workspace</a><a href="#/surfaces">Connections</a><a href="#/migrate">Export & migrate</a></div><div><span>Trust</span><a href="#/security">Privacy & boundaries</a><a href="#/audit">History</a><a href="https://github.com/chrisdten3/coletar/blob/main/docs/CONTINUITY_SCORE.md" target="_blank" rel="noopener">Continuity Score ${icon("external")}</a></div><div><span>For builders</span><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Source & docs ${icon("external")}</a><a href="/" target="_blank" rel="noopener">Developer Inspector ${icon("external")}</a><button class="photo-credits quiet">Media credits</button></div></div><div class="horizon-wordmark" aria-hidden="true">coleta<span>↗</span></div><div class="horizon-footer-bottom"><span>A portable AI workspace.</span><span>Your context. Your rules. Your next step.</span></div></footer></div>`;
 }
 function openWorkspaceSearch() {
@@ -340,7 +340,7 @@ function bindHorizon() {
     $(".photo-credits").onclick = () =>
       modal(
         "Media",
-        `<p>Alpine valley photograph by <a href="https://unsplash.com/photos/ahsuhZiBAAY" target="_blank" rel="noopener">Thierry Lemaitre / Unsplash</a>, used under the Unsplash License.</p><p>Misty valley photograph by <a href="https://www.pexels.com/photo/4542933/" target="_blank" rel="noopener">Quang Nguyen Vinh / Pexels</a>, used under the Pexels License.</p><p>Hero reel: five stock clips supplied for this design experiment. <b>Attribution is outstanding</b> — see <span class="mono">static/video/CREDITS.md</span>. They should not ship to a public deployment until each clip names its source and licence.</p><p class="muted small">Media is served locally. Nothing was taken from the design-reference websites.</p>`,
+        `<p>Misty valley photograph by <a href="https://www.pexels.com/photo/4542933/" target="_blank" rel="noopener">Quang Nguyen Vinh / Pexels</a>, used under the Pexels License.</p><p>Hero reel: five stock clips supplied for this design experiment. <b>Attribution is outstanding</b> — see <span class="mono">static/video/CREDITS.md</span>. They should not ship to a public deployment until each clip names its source and licence.</p><p class="muted small">Media is served locally. Nothing was taken from the design-reference websites.</p>`,
         "",
         () => {},
       );
