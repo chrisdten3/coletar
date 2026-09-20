@@ -69,6 +69,34 @@ class Settings(BaseSettings):
     # is set. Clerk and Supabase Auth plug in here; see `coletar.accounts.identity`
     # for the whole of what adopting one involves.
     identity_provider: str = "local"
+
+    # --- Clerk ------------------------------------------------------------
+    # The issuer URL Clerk prints on the API Keys screen, e.g.
+    # https://your-app.clerk.accounts.dev. Root of the JWKS URL and the `iss`
+    # every session token carries.
+    clerk_issuer: str = ""
+    # Only set to override the derived `{issuer}/.well-known/jwks.json`.
+    clerk_jwks_url: str = ""
+    # Origins allowed to present a Clerk token here, comma-separated. Empty is
+    # refused rather than treated as "any": a token minted for another site on the
+    # same Clerk instance must not be spendable here.
+    clerk_authorized_parties: str = ""
+    # Publishable, and therefore genuinely safe in the browser bundle -- it is the
+    # one Clerk value that is meant to be public. No secret key is read anywhere in
+    # coletar: verification is a signature check against a public JWKS, so the
+    # backend never needs Clerk's secret at all.
+    clerk_publishable_key: str = ""
+
+    # Invite-gated beta. Comma-separated email addresses that may provision a new
+    # account; an empty list means *closed*, not open. Someone who signs in through
+    # Clerk without being listed gets a clear "not yet" rather than a new empty
+    # workspace. Existing accounts are unaffected -- this gates provisioning, not
+    # sign-in, so removing an address never locks its owner out of their own graph.
+    invite_allowlist: str = ""
+    # Set true to open provisioning to anyone Clerk authenticates. This is the
+    # switch from invite-only beta to public signup, and it is deliberately one
+    # explicit setting rather than "leave the allowlist empty".
+    open_registration: bool = False
     cron_secret: str = Field(default="", validation_alias="CRON_SECRET")
 
     # Retrieval. "hashing" is the default because the in-process store has to work

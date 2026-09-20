@@ -28,6 +28,9 @@ from typing import Protocol, runtime_checkable
 
 from coletar.accounts.models import LOCAL_IDENTITY, ExternalIdentity
 
+#: Duplicated from `clerk.py` so this module can dispatch without importing it.
+CLERK_IDENTITY = "clerk"
+
 
 class IdentityError(RuntimeError):
     """The presented credential is not usable. Never raised for a *missing* one."""
@@ -83,7 +86,13 @@ def build_identity_provider(name: str, *, hosted: bool) -> IdentityProvider:
                 "putting accounts behind a hosted deployment."
             )
         return LocalIdentityProvider()
-    # Clerk and Supabase land here. Kept as an explicit refusal rather than a
+    if name == CLERK_IDENTITY:
+        # Imported here rather than at module scope so the seam keeps its promise:
+        # nothing in coletar depends on a provider's library until one is chosen.
+        from coletar.accounts.clerk import build_clerk_provider
+
+        return build_clerk_provider()
+    # Supabase Auth lands here next. Kept as an explicit refusal rather than a
     # silent fallback to `local`: a typo in this setting must not be the thing
     # that opens a hosted workspace.
     raise IdentityError(

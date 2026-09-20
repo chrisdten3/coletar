@@ -30,6 +30,7 @@ from coletar.config import get_settings
 from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
 from coletar.extraction import extract_memories
 from coletar.ingest import remember
+from coletar.inspector.auth import Tenant
 from coletar.inspector.review import edit, mark_reviewed, review_status
 from coletar.retrieval.trace import ComponentVersions, RetrievalTrace, query_digest
 from coletar.schema.events import Actor, Event, EventType
@@ -49,7 +50,7 @@ from coletar.schema.objects import (
     Scope,
     ScopeType,
 )
-from coletar.schema.tenancy import TenantId, tenant_id
+from coletar.schema.tenancy import TenantId
 from coletar.store import build_store
 from coletar.store.base import Store
 from coletar.temporal import graph_as_of
@@ -67,8 +68,11 @@ router = APIRouter(dependencies=[Depends(same_origin)])
 Destination = Literal["chatgpt", "claude", "local", "markdown"]
 
 
-def tenant() -> TenantId:
-    return tenant_id(get_settings().default_tenant_id)
+#: Deliberately absent: a module-level `tenant()` reading
+#: `COLETAR_DEFAULT_TENANT_ID`. Every route below takes `owner: Tenant` instead, so
+#: the graph a request reaches is decided by who signed in and by nothing else. See
+#: `coletar.inspector.auth` for why, and for how local development keeps working
+#: without a sign-in.
 
 
 class MemoryInput(BaseModel):
@@ -112,18 +116,18 @@ class Snapshot(BaseModel):
     conflicts: list[tuple[str, str]]
 
 
-async def load_object(object_id: str) -> ContextObject:
-    obj = await build_store().get_object(tenant(), object_id)
+async def load_object(owner: TenantId, object_id: str) -> ContextObject:
+    obj = await build_store().get_object(owner, object_id)
     if obj is None:
         raise HTTPException(404, "Object not found in this workspace")
     return obj
 
 
-async def safe_object(store: Store, obj: ContextObject) -> dict[str, Any]:
+async def safe_object(store: Store, owner: TenantId, obj: ContextObject) -> dict[str, Any]:
     result = obj.model_dump(mode="json")
     if obj.type is ObjectType.EPISODE:
         try:
-            result["content"] = await decrypt_episode(store, tenant(), obj)
+            result["content"] = await decrypt_episode(store, owner, obj)
         except EpisodeKeyUnavailable:
             result["content"] = "This captured turn has been erased."
         result["pending"] = is_pending(obj)
@@ -176,13 +180,13 @@ async def product_app() -> HTMLResponse:
 
 
 @router.get("/web-api/state", response_model=Snapshot)
-async def state() -> Snapshot:
+async def state(owner: Tenant) -> Snapshot:
     store = build_store()
-    status = await review_status(store, tenant())
+    status = await review_status(store, owner)
     objects = await store.list_objects(
-        tenant(), include_retired=True, include_superseded=True, limit=10000
+        owner, include_retired=True, include_superseded=True, limit=10000
     )
-    events = await store.list_events(tenant(), limit=2000)
+    events = await store.list_events(owner, limit=2000)
     usage: dict[str, int] = {}
     for event in events:
         if event.type is EventType.RETRIEVAL_TRACE:
@@ -195,14 +199,14 @@ async def state() -> Snapshot:
             usage[who] = usage.get(who, 0) + int(event.detail.get("token_estimate", 0))
     conflicts = []
     for obj in objects:
-        for edge in await store.edges_from(tenant(), obj.id):
+        for edge in await store.edges_from(owner, obj.id):
             if edge.type is EdgeType.CONTRADICTS:
                 conflicts.append((edge.src_id, edge.dst_id))
     return Snapshot(
         hosted=bool(get_settings().public_url),
         conflicts=conflicts,
-        tenant=str(tenant()),
-        objects=[await safe_object(store, o) for o in objects],
+        tenant=str(owner),
+        objects=[await safe_object(store, owner, o) for o in objects],
         unreviewed=[o.id for o in status.unreviewed],
         can_compile=status.can_compile,
         # Events can contain encrypted raw turns, but never their content keys.
@@ -213,7 +217,7 @@ async def state() -> Snapshot:
 
 
 @router.post("/web-api/memories")
-async def add_memory(body: MemoryInput) -> dict[str, str]:
+async def add_memory(body: MemoryInput, owner: Tenant) -> dict[str, str]:
     if not body.content.strip():
         raise HTTPException(422, "Write a memory before saving.")
     obj = Memory.from_write(
@@ -229,7 +233,7 @@ async def add_memory(body: MemoryInput) -> dict[str, str]:
     )
     result = await remember(
         build_store(),
-        tenant(),
+        owner,
         obj,
         event=Event(
             type=EventType.OBJECT_CREATED,
@@ -242,27 +246,27 @@ async def add_memory(body: MemoryInput) -> dict[str, str]:
 
 
 @router.post("/web-api/objects/{object_id}")
-async def object_action(object_id: str, body: ActionInput) -> dict[str, str]:
-    obj = await load_object(object_id)
+async def object_action(object_id: str, body: ActionInput, owner: Tenant) -> dict[str, str]:
+    obj = await load_object(owner, object_id)
     if obj.type is ObjectType.EPISODE:
         raise HTTPException(422, "Raw captured turns are source evidence, not editable memories.")
     if obj.retired_at is not None:
         raise HTTPException(409, "This object is retired. Its history remains readable.")
     store = build_store()
     if body.action == "review":
-        await mark_reviewed(store, tenant(), object_id)
+        await mark_reviewed(store, owner, object_id)
     elif body.action == "retire":
-        await store.retire_object(tenant(), object_id, reason="Retired by user in web app")
+        await store.retire_object(owner, object_id, reason="Retired by user in web app")
     elif body.action == "edit":
         if not body.content.strip():
             raise HTTPException(422, "Content cannot be empty. Retire the object instead.")
-        await edit(store, tenant(), object_id, content=body.content)
+        await edit(store, owner, object_id, content=body.content)
     else:
         if body.locality != obj.locality:
             before = str(obj.locality)
             obj.locality = body.locality
             await store.put_object(
-                tenant(),
+                owner,
                 obj,
                 event=Event(
                     type=EventType.OBJECT_UPDATED,
@@ -276,26 +280,26 @@ async def object_action(object_id: str, body: ActionInput) -> dict[str, str]:
 
 
 @router.post("/web-api/review")
-async def review_many(body: ReviewInput) -> dict[str, int]:
-    status = await review_status(build_store(), tenant())
+async def review_many(body: ReviewInput, owner: Tenant) -> dict[str, int]:
+    status = await review_status(build_store(), owner)
     eligible = {o.id for o in status.unreviewed}
     if not set(body.ids).issubset(eligible):
         raise HTTPException(409, "The review queue changed. Refresh it and try again.")
     for object_id in set(body.ids):
-        await mark_reviewed(build_store(), tenant(), object_id)
+        await mark_reviewed(build_store(), owner, object_id)
     return {"reviewed": len(set(body.ids))}
 
 
 @router.get("/web-api/objects/{object_id}/reads")
-async def object_reads(object_id: str) -> dict[str, Any]:
+async def object_reads(object_id: str, owner: Tenant) -> dict[str, Any]:
     """Which surfaces have been served this object.
 
     The counterpart to the object's lineage, which answers who wrote it. Loading
     the object first is not redundant: it is what keeps the tenant filter on this
     path identical to every other one.
     """
-    obj = await load_object(object_id)
-    receipts = await build_store().reads_of(tenant(), obj.id, limit=50)
+    obj = await load_object(owner, object_id)
+    receipts = await build_store().reads_of(owner, obj.id, limit=50)
     return {
         "object_id": obj.id,
         "restricted": obj.locality.mode is LocalityMode.LOCAL_ONLY,
@@ -331,7 +335,7 @@ class ContextGraph(BaseModel):
 
 
 @router.get("/web-api/graph", response_model=ContextGraph)
-async def context_graph(limit: int = 60, focus: str | None = None) -> ContextGraph:
+async def context_graph(owner: Tenant, limit: int = 60, focus: str | None = None) -> ContextGraph:
     """Entities and the facts that mention them, small enough to draw.
 
     A separate endpoint rather than more fields on `/web-api/state`: the snapshot
@@ -344,7 +348,6 @@ async def context_graph(limit: int = 60, focus: str | None = None) -> ContextGra
     the drill-down the hub-and-spoke layout is for.
     """
     store = build_store()
-    owner = tenant()
     objects = await store.list_objects(owner, limit=10000)
     by_id = {o.id: o for o in objects}
 
@@ -423,11 +426,11 @@ async def context_graph(limit: int = 60, focus: str | None = None) -> ContextGra
 
 
 @router.get("/web-api/audit")
-async def audit(at: datetime, valid: datetime | None = None) -> dict[str, Any]:
+async def audit(owner: Tenant, at: datetime, valid: datetime | None = None) -> dict[str, Any]:
     at = at.replace(tzinfo=UTC) if at.tzinfo is None else at
     if valid is not None and valid.tzinfo is None:
         valid = valid.replace(tzinfo=UTC)
-    objects = await graph_as_of(build_store(), tenant(), at, in_force_at=valid)
+    objects = await graph_as_of(build_store(), owner, at, in_force_at=valid)
     return {
         "at": at.isoformat(),
         "valid": valid.isoformat() if valid else None,
@@ -436,9 +439,11 @@ async def audit(at: datetime, valid: datetime | None = None) -> dict[str, Any]:
     }
 
 
-async def compile_package(destination: Destination) -> tuple[dict[str, Any], bytes]:
+async def compile_package(
+    owner: TenantId, destination: Destination
+) -> tuple[dict[str, Any], bytes]:
     store = build_store()
-    status = await review_status(store, tenant())
+    status = await review_status(store, owner)
     if not status.can_compile:
         raise HTTPException(409, "Review every new or changed object before compiling.")
     if not status.eligible:
@@ -487,16 +492,16 @@ async def compile_package(destination: Destination) -> tuple[dict[str, Any], byt
 
 
 @router.post("/web-api/compile/preview")
-async def compile_preview(body: CompileInput) -> dict[str, Any]:
-    report, _ = await compile_package(body.destination)
+async def compile_preview(body: CompileInput, owner: Tenant) -> dict[str, Any]:
+    report, _ = await compile_package(owner, body.destination)
     return report
 
 
 @router.post("/web-api/compile/download")
-async def compile_download(body: CompileInput) -> Response:
-    report, archive = await compile_package(body.destination)
+async def compile_download(body: CompileInput, owner: Tenant) -> Response:
+    report, archive = await compile_package(owner, body.destination)
     await build_store().append_event(
-        tenant(),
+        owner,
         Event(
             type=EventType.COMPILE_RUN,
             actor=Actor.USER,
@@ -515,7 +520,7 @@ async def compile_download(body: CompileInput) -> Response:
 
 
 @router.post("/web-api/import", response_model=ImportResult)
-async def import_file(file: Annotated[UploadFile, File()]) -> ImportResult:
+async def import_file(file: Annotated[UploadFile, File()], *, owner: Tenant) -> ImportResult:
     """Local-only extraction, irrespective of globally configured model backends.
 
     The upload text never becomes an instruction to a model or an account request.
@@ -596,7 +601,7 @@ async def import_file(file: Annotated[UploadFile, File()]) -> ImportResult:
                     ]
                     result = await remember(
                         build_store(),
-                        tenant(),
+                        owner,
                         memory,
                         event=Event(
                             type=EventType.CONNECTOR_WRITE,
@@ -614,7 +619,7 @@ async def import_file(file: Annotated[UploadFile, File()]) -> ImportResult:
 
 
 @router.post("/web-api/sample")
-async def sample() -> dict[str, bool]:
+async def sample(owner: Tenant) -> dict[str, bool]:
     """Explicit opt-in design data, only where it cannot be mistaken for context.
 
     The gate is on *live* objects, not on the log. A workspace whose objects have
@@ -623,13 +628,13 @@ async def sample() -> dict[str, bool]:
     workspace the examples exist for.
     """
     store = build_store()
-    if await store.list_objects(tenant(), limit=1):
+    if await store.list_objects(owner, limit=1):
         raise HTTPException(
             409,
             "Design examples only load into a workspace with no live context. "
             "Retire or remove what is there first.",
         )
-    await seed_design(store, tenant())
+    await seed_design(store, owner)
     return {"loaded": True}
 
 
@@ -844,11 +849,11 @@ class ResolveInput(BaseModel):
 
 
 @router.post("/web-api/resolve")
-async def resolve_conflict(body: ResolveInput) -> dict[str, str]:
-    kept = await load_object(body.keep)
-    rejected = await load_object(body.retire)
-    edges = await build_store().edges_from(tenant(), kept.id)
-    edges += await build_store().edges_from(tenant(), rejected.id)
+async def resolve_conflict(body: ResolveInput, owner: Tenant) -> dict[str, str]:
+    kept = await load_object(owner, body.keep)
+    rejected = await load_object(owner, body.retire)
+    edges = await build_store().edges_from(owner, kept.id)
+    edges += await build_store().edges_from(owner, rejected.id)
     if kept.id == rejected.id or not any(
         e.type is EdgeType.CONTRADICTS and {e.src_id, e.dst_id} == {kept.id, rejected.id}
         for e in edges
@@ -857,7 +862,7 @@ async def resolve_conflict(body: ResolveInput) -> dict[str, str]:
     if kept.retired_at or rejected.retired_at:
         raise HTTPException(409, "This conflict has already changed. Refresh the queue.")
     await build_store().retire_object(
-        tenant(), rejected.id, reason=f"User resolved conflict in favour of {kept.id}"
+        owner, rejected.id, reason=f"User resolved conflict in favour of {kept.id}"
     )
-    await mark_reviewed(build_store(), tenant(), kept.id)
+    await mark_reviewed(build_store(), owner, kept.id)
     return {"kept": kept.id, "retired": rejected.id}

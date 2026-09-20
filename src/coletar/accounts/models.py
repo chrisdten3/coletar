@@ -68,6 +68,12 @@ class ExternalIdentity(BaseModel):
     subject: str
     email: str = ""
     display_name: str = ""
+    #: Whether the provider says it *verified* this address, not merely that it
+    #: holds one. Load-bearing: claiming an existing account by email is how a
+    #: workspace built under `local` survives the move to a real provider, and an
+    #: unverified address would make that path "type someone's email, take their
+    #: graph". See `coletar.accounts.session.resolve_account`.
+    email_verified: bool = False
 
 
 class Account(BaseModel):

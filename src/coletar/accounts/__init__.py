@@ -16,8 +16,10 @@ from coletar.accounts.identity import (
     build_identity_provider,
 )
 from coletar.accounts.models import Account, ApiKey, ExternalIdentity, IssuedKey
+from coletar.accounts.session import NotInvited, may_provision, resolve_account
 
 _singleton: Directory | None = None
+_identity: IdentityProvider | None = None
 
 
 def build_directory() -> Directory:
@@ -49,10 +51,29 @@ def build_directory() -> Directory:
     return _singleton
 
 
+def build_identity() -> IdentityProvider:
+    """The configured identity provider, built once.
+
+    Built lazily and cached because `ClerkIdentityProvider` holds a JWKS cache: a
+    per-request instance would re-fetch Clerk's signing keys on every call, which
+    is both slow and a good way to get rate-limited by them.
+    """
+    global _identity
+    if _identity is None:
+        from coletar.config import get_settings
+
+        settings = get_settings()
+        _identity = build_identity_provider(
+            settings.identity_provider, hosted=bool(settings.public_url)
+        )
+    return _identity
+
+
 def reset_directory() -> None:
-    """Drop the process-wide directory. For tests and for settings changes."""
-    global _singleton
+    """Drop the process-wide directory and identity. For tests and settings changes."""
+    global _singleton, _identity
     _singleton = None
+    _identity = None
 
 
 __all__ = [
@@ -65,7 +86,11 @@ __all__ = [
     "IdentityProvider",
     "IssuedKey",
     "LocalIdentityProvider",
+    "NotInvited",
     "build_directory",
+    "build_identity",
     "build_identity_provider",
+    "may_provision",
     "reset_directory",
+    "resolve_account",
 ]

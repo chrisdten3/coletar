@@ -29,6 +29,12 @@ dependencies = [
     # Raw captured episodes must be crypto-shreddable while their event-chain
     # ciphertext and provenance remain append-only.
     "cryptography>=44.0.0",
+    # Clerk (and Supabase Auth) hand the browser an RS256 JWT; verifying one means
+    # fetching a rotating JWKS, picking the key named by `kid`, and checking a
+    # signature. Hand-rolling that is how signature-verification bugs are written --
+    # accepting `alg: none`, trusting an unverified header, caching a revoked key
+    # forever. PyJWT's PyJWKClient does exactly this and nothing else.
+    "pyjwt>=2.10",
 ]
 
 [project.optional-dependencies]

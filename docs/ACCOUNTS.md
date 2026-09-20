@@ -123,10 +123,35 @@ Fixed with a separate `_execute` for statements that return nothing, and guarded
 the call site: refusing a valid credential because a last-used stamp could not be
 written would turn a bookkeeping problem into an outage.
 
+## Clerk, as actually adopted — 2026-09-18
+
+The three steps above were taken. `coletar/accounts/clerk.py` implements `verify`
+against Clerk's JWKS; `build_identity_provider` dispatches on `clerk`; the hosted
+deployment sets `COLETAR_IDENTITY_PROVIDER=clerk`. Nothing else in the account model
+moved, which is what the seam was for.
+
+Two things the adoption added that the plan above did not anticipate:
+
+**The email-claim path needed a verification gate.** Claiming an existing account by
+address is what lets a workspace built under `local` survive the move to Clerk. But
+Clerk will hold an *unverified* address on a user, and without checking that claim
+the path reads "type someone else's email into a sign-up form, receive their graph".
+`resolve_account` now requires `email_verified` before claiming, and refuses outright
+when the address is already linked to a different subject. See
+`coletar/accounts/session.py`.
+
+**Resolving a tenant per request was the bulk of the work, not the token check.**
+`inspector/web.py` had a module-level `tenant()` returning
+`COLETAR_DEFAULT_TENANT_ID`, called from about twenty routes — a correct answer on a
+laptop and the wrong one for any deployment with two users. Every route now takes
+`owner: Tenant`. Local development keeps the old behaviour, and cannot keep it in a
+hosted deployment, because `local` is refused once `COLETAR_PUBLIC_URL` is set.
+
+The scheduled capture job was single-tenant for the same reason and now runs across
+every active account, under one shared time budget.
+
 ## Not built
 
-Sign-up and sign-in flows, sessions, and a key-management UI. The web app still
-resolves its tenant from `COLETAR_DEFAULT_TENANT_ID`; wiring it to the directory is
-the next step and needs the identity provider chosen first. Settings' API-key panel
-remains the labelled simulation it has always been — it does not yet show issued
-keys.
+A key-management UI. Settings' API-key panel remains the labelled simulation it has
+always been — it does not yet show issued keys. Billing is not built, and
+registration is invite-gated (`COLETAR_INVITE_ALLOWLIST`) rather than public.

@@ -2,26 +2,46 @@
 
 Production: <https://coletar-five.vercel.app/app>. Vercel project `coletar` in
 `christopher-tengeys-projects`; Supabase project `dyfagpnjijccwirimmhd` in us-east-1.
-This is a single-owner deployment, not a public multi-user launch. The former
-container-host instructions are preserved in [DEPLOYMENT_FLY.md](DEPLOYMENT_FLY.md).
+Invite-only multi-user beta since 2026-09-18; it was a single-owner deployment
+before that. The former container-host instructions are preserved in
+[DEPLOYMENT_FLY.md](DEPLOYMENT_FLY.md).
 
 ## Access and configuration
 
-**The workspace is served with no credential at all.** Anyone with the URL can read
-every object in the tenant — including objects marked restricted, whose locality
-governs what a *compiled destination* receives and was never a gate on the owner
-view — and can add, edit, retire, import and compile. This was chosen deliberately
-on 8 September 2026, replacing an HTTP Basic gate; it is not an oversight. The
-consequence is a rule about what may live here: **keep private context out of this
-tenant.** Full account/session auth remains deferred.
+**The workspace requires a signed-in account.** Superseded 2026-09-18: this section
+previously documented a deliberately open workspace, where anyone with the URL could
+read every object in the tenant — restricted ones included — and add, edit, retire,
+import and compile. That is no longer true, and the old text is not kept here as
+though it were.
 
-Two authorities did not follow the workspace and are still required:
+`/web-api` now requires a verified Clerk session, and every route resolves its tenant
+from the signed-in account rather than from `COLETAR_DEFAULT_TENANT_ID`. One account
+owns one tenant; two signed-in accounts cannot reach each other's graphs. See
+[ACCOUNTS.md](ACCOUNTS.md) and `coletar.inspector.auth`.
+
+Registration is **invite-gated**: `COLETAR_INVITE_ALLOWLIST` names the addresses that
+may provision a new account, and an empty list means closed rather than open.
+`COLETAR_OPEN_REGISTRATION=true` is the explicit switch to public signup.
+
+The consequence for what may live here has changed with it. The old rule — *keep
+private context out of this tenant* — existed because there was no owner check. There
+is one now.
+
+Three authorities, still separate:
 
 | Surface | Credential |
 |---|---|
-| `/web-api`, `/app` | none |
+| `/web-api`, `/app` | Clerk session (bearer token or `__session` cookie) |
 | `/mcp`, `/v1` | connector bearer key, scoped per surface |
 | `/api/jobs/capture` | `CRON_SECRET` |
+
+A connector key is **not** a workspace session. Both arrive as `Authorization: Bearer`
+and only one of them signs anybody in; `test_hosted.py` pins that a connector key gets
+401 from `/web-api`, because that confusion is how the workspace would quietly reopen.
+
+coletar reads no Clerk *secret* key. Verification is a signature check against Clerk's
+public JWKS, so the only Clerk value in the deployment is the publishable one, plus the
+issuer and the authorized-party allowlist.
 
 Connector keys are in `data/hosted-access.md`; deployment configuration is in
 `.env.vercel`. Both are Git-ignored, upload-excluded, mode 0600. Do not share either
@@ -30,9 +50,8 @@ stored as sensitive variables and never embedded in JavaScript.
 
 The local Inspector still binds loopback. The hosted entrypoint is `app.py`, backed
 by `coletar.hosted.create_app`. It exposes only the new web router, not the old
-Inspector forms. Web writes still enforce same-origin browser requests — that stops
-another site's page from POSTing here in a visitor's browser, and it is not
-authentication: it does not stop anyone who asks directly.
+Inspector forms. Web writes still enforce same-origin browser requests, which survives
+as defence in depth alongside the bearer token rather than as the only check.
 
 The startup refuses an in-memory store.
 Supabase is the canonical Postgres store. Its eight migrations were checked against
