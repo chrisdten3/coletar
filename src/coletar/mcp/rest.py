@@ -296,6 +296,13 @@ async def capture(request: Request) -> JSONResponse:
             "extracted": [],
             "count": 0,
             "queued": episode is not None,
+            # Tells a client the difference between "nothing in that turn was worth
+            # keeping" and "nothing here is switched on". Both used to be a bare
+            # count of zero, so the extension's own capture toggle could be enabled
+            # against a server that would never act on it, and the only symptom was
+            # silence on every send. A client cannot warn about a state it cannot
+            # observe.
+            "capture_enabled": settings.capture_turns,
         }
         if episode is not None:
             response["episode_id"] = episode.id

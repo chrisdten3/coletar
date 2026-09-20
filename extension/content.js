@@ -150,8 +150,21 @@ async function capture() {
   if (!text) return;
   lastCaptured = text;
   const data = await call("/v1/capture", { text });
-  if (data && data.count) toast(`coletar: remembered ${data.count}`);
-  else if (data && data.queued) toast("coletar: queued for extraction");
+  if (!data) return;
+  if (data.count) toast(`coletar: remembered ${data.count}`);
+  else if (data.queued) toast("coletar: queued for extraction");
+  else if (data.capture_enabled === false) warnCaptureInert();
+}
+
+// Capture can be switched on here and off on the server, and until the server
+// started saying so the only symptom was silence on every send — the toggle looked
+// broken rather than unconfigured. Warned once per page, because the alternative is
+// a toast on every message the setting fails to capture.
+let warnedCaptureInert = false;
+function warnCaptureInert() {
+  if (warnedCaptureInert) return;
+  warnedCaptureInert = true;
+  toast("coletar: capture is on here but off on the server — nothing is being saved");
 }
 
 function matchesShortcut(event) {

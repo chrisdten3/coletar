@@ -296,8 +296,48 @@ async def test_default_passive_capture_makes_no_inferred_write(client, store):
         response = await c.post(
             "/v1/capture", json={"text": "I prefer tabs."}, headers=AUTH
         )
-    assert response.json() == {"extracted": [], "count": 0, "queued": False}
+    assert response.json() == {
+        "extracted": [],
+        "count": 0,
+        "queued": False,
+        "capture_enabled": False,
+    }
     assert await store.list_objects(TENANT) == []
+
+
+async def test_capture_says_when_it_is_switched_off(client, store, monkeypatch):
+    """A zero count must distinguish "nothing durable in that turn" from "nothing
+    here is enabled".
+
+    Both used to be a bare `count: 0`, so a client with its own capture toggle on
+    could talk to a server that would never act on it and show the user nothing at
+    all. The extension's only symptom was silence on every send, which reads as a
+    broken feature rather than an unconfigured one. A client cannot warn about a
+    state it cannot observe.
+    """
+    from coletar.config import get_settings
+
+    # One client for both halves: the fixture's httpx client cannot be reopened
+    # once its context has exited.
+    try:
+        async with client as c:
+            off = await c.post(
+                "/v1/capture", json={"text": "I prefer tabs."}, headers=AUTH
+            )
+            assert off.json()["capture_enabled"] is False
+
+            monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
+            get_settings.cache_clear()
+            on = await c.post(
+                "/v1/capture", json={"text": "I prefer tabs."}, headers=AUTH
+            )
+        body = on.json()
+        assert body["capture_enabled"] is True
+        # With capture on and live extraction off, the turn is kept for the batch
+        # pass rather than guessed at now.
+        assert body["queued"] is True
+    finally:
+        get_settings.cache_clear()
 
 
 async def test_collect_then_batch_queues_without_a_regex_memory(
