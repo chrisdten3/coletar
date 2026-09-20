@@ -393,13 +393,9 @@ function groupedBody(filtered) {
       filtered.sort((a, b) => b.updated_at.localeCompare(a.updated_at)).map(row).join("")
     );
   }
-  return empty(
-    filtered.length ? "Nothing to group yet" : "No matching context",
-    filtered.length
-      ? "These memories do not mention an entity or belong to a project yet. Import more history and sections appear."
-      : "Try a different search or filter.",
-    '<button data-library-view-set="list">Show them as a list</button>',
-  );
+  // "" rather than an empty state of its own: the caller already has the richer
+  // one, with "load design examples" and "import your history" on it.
+  return "";
 }
 
 function library() {
@@ -431,15 +427,10 @@ function library() {
   ];
   return shell(
     "Library",
-    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="grouped" aria-pressed="${libraryView === "grouped"}" class="${libraryView === "grouped" ? "active" : ""}">Grouped</button><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>sorted by last written</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : ""}${libraryView === "grouped" ? " grouped-view" : ""}">${
+    `<form id="search-form" class="search-row"><div class="search-box">${icon("search")}<input id="search" name="q" type="search" aria-label="Search your context" placeholder="Search your context" value="${esc(query)}"></div><button class="quiet" type="submit">Search</button><button type="button" data-action="add">${icon("plus")} Add memory</button></form><div class="chips">${chips.map(([v, l]) => `<button class="chip ${filter === v ? "active" : ""}" data-filter="${esc(v)}" aria-pressed="${filter === v}">${esc(l)}</button>`).join("")}</div><div class="library-view-switch"><div class="view-buttons" role="group" aria-label="Library view"><button data-library-view="list" aria-pressed="${libraryView === "list"}" class="${libraryView === "list" ? "active" : ""}">List</button><button data-library-view="atlas" aria-pressed="${libraryView === "atlas"}" class="${libraryView === "atlas" ? "active" : ""}">Atlas</button></div><span class="small muted">Your knowledge, connected.</span></div><div class="list-summary"><span>${filtered.length} objects · ${restricted} restricted · ${state.unreviewed.length} awaiting review${surface !== "all" ? ` · ${objects.filter((o) => !canRead(o, surface)).length} withheld from this preview` : ""}</span><span>${libraryView === "atlas" ? "most-connected first" : "grouped by subject"}</span></div><div class="library-collection ${libraryView === "atlas" ? "atlas-view" : " grouped-view"}">${
       libraryView === "atlas"
         ? atlasGraph()
-        : libraryView === "grouped"
-        ? groupedBody(filtered)
-        : filtered
-        .sort((a, b) => b.updated_at.localeCompare(a.updated_at))
-        .map(card)
-        .join("") ||
+        : groupedBody(filtered) ||
       empty(
         objects.length ? "No matching context" : "Your library starts here",
         objects.length
@@ -875,7 +866,7 @@ const demoFacts = [
 let demoSelected = 1,
   demoProvider = "claude",
   historyStep = 1,
-  libraryView = "grouped";
+  libraryView = "list";
 let demoReach = demoFacts.map((f) => [...f.reach]);
 const providerName = (s) =>
   ({ claude: "Claude", chatgpt: "ChatGPT", local: "Local model" })[s];
@@ -1691,7 +1682,7 @@ let graphLoading = false;
 function loadGraph(focus = null) {
   if (graphLoading) return;
   graphLoading = true;
-  const q = focus ? `?focus=${encodeURIComponent(focus)}` : "?limit=48";
+  const q = focus ? `?focus=${encodeURIComponent(focus)}` : "?limit=32";
   api("/graph" + q)
     .then((data) => {
       graphData = data;
@@ -1735,7 +1726,7 @@ function atlasGraph() {
       </div>
     </div>
     <svg id="atlas-svg" role="img" aria-label="Context graph"><g id="atlas-root"></g></svg>
-    <div class="atlas-hint mono muted">${focused ? `Click a fact to open it · drag to pan${graphData.nodes.length - 1 > shown ? ' · <button type="button" class="linklike" data-library-view-set="grouped">see all in the list</button>' : ""}` : "Click an entity to see what mentions it · drag to pan"}</div>
+    <div class="atlas-hint mono muted">${focused ? `Click a fact to open it · drag to pan${graphData.nodes.length - 1 > shown ? ' · <button type="button" class="linklike" data-library-view-set="list">see all in the list</button>' : ""}` : "Click an entity to see what mentions it · drag to pan"}</div>
   </div>`;
 }
 
@@ -1793,7 +1784,7 @@ function layoutGraph(nodes, edges, width, height, focus) {
   // Labels sit under their node and are wider than it, so spacing is driven by
   // the text, not the circle. Without this the constellation reads as a pile of
   // overlapping names however far apart the dots are.
-  const spacing = (n) => 46 + Math.min(150, n.label.length * 5.5);
+  const spacing = (n) => 64 + Math.min(210, n.label.length * 7.2);
 
   for (let step = 0; step < 220; step++) {
     const cool = 1 - step / 260;
@@ -1814,7 +1805,10 @@ function layoutGraph(nodes, edges, width, height, focus) {
           fy += dy * push;
         }
       }
-      fx += (centre.x - nodes[i].x) * 0.03;
+      // Weak, and weaker horizontally: the stage is much wider than it is tall,
+      // so an equal pull in both axes is what produced a tight ball in the middle
+      // with empty margins either side.
+      fx += (centre.x - nodes[i].x) * 0.012;
       fy += (centre.y - nodes[i].y) * 0.03;
       nodes[i].vx = fx;
       nodes[i].vy = fy;
@@ -1825,7 +1819,7 @@ function layoutGraph(nodes, edges, width, height, focus) {
       const dx = nodes[b].x - nodes[a].x;
       const dy = nodes[b].y - nodes[a].y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const pull = ((dist - 190) / dist) * 0.06;
+      const pull = ((dist - 230) / dist) * 0.045;
       nodes[a].vx += dx * pull;
       nodes[a].vy += dy * pull;
       nodes[b].vx -= dx * pull;
@@ -1836,8 +1830,8 @@ function layoutGraph(nodes, edges, width, height, focus) {
       n.y += Math.max(-18, Math.min(18, n.vy)) * cool;
     });
   }
-  const padX = 90;
-  const padY = 60;
+  const padX = 120;
+  const padY = 50;
   nodes.forEach((n) => {
     n.x = Math.max(padX, Math.min(width - padX, n.x));
     n.y = Math.max(padY, Math.min(height - padY, n.y));
@@ -1891,41 +1885,49 @@ function drawGraph() {
     return `<line class="atlas-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}"/>`;
   };
 
-  /* Labels are the whole readability problem. Facts are sentences, not names, so
-     thirty-nine of them centred on their own node produced the overlapping wall
-     the focused view used to be. Three things fix it, in order of how much they
-     matter:
+  /* Labels are the whole readability problem, and the first attempt solved it
+     badly: an opaque plate behind every label turned the graph into a wall of
+     sticky notes, and because the plate width was guessed from character count it
+     both overshot the text and still let boxes overlap.
 
-     1. Anchor outward. A label on the left half is right-aligned and sits to the
-        left of its node; the right half mirrors it. Nothing crosses the middle,
-        which is where every collision used to happen.
-     2. Give each one an opaque plate. Text drawn straight onto the canvas competes
-        with every edge passing under it; a rounded rect in the page's own colour
-        means the label occludes the line instead of fighting it.
-     3. Drop what still collides. After placement, any label whose box overlaps one
-        already drawn is omitted rather than layered — the node keeps its circle,
-        its tooltip and its click target, and the picture stays readable. */
+     The halo is the standard answer and looks like nothing at all — the text is
+     painted twice, a thick stroke in the page's own colour underneath and the
+     glyphs over it, so a label knocks a clean gap in whatever edge runs beneath
+     without drawing a shape of its own. `paint-order` in the stylesheet does it.
+
+     What remains here is placement:
+       - anchor outward, so nothing crosses the crowded middle
+       - measure the text properly rather than guessing, so the collision test is
+         about the box that actually gets drawn
+       - label the significant nodes first and drop, rather than layer, anything
+         that still collides */
   const placed = [];
-  const CHAR = 6.1; // ~6px per character at the label's size; measured, not exact.
+  const measure = (() => {
+    // One canvas, reused. Character-count arithmetic was what made the boxes wrong.
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.font = "600 12px Manrope, Arial, sans-serif";
+    return (t) => ctx.measureText(t).width;
+  })();
+
   const label = (n) => {
     const r = radiusOf(n);
-    const cap = n.type === "entity" ? 30 : 42;
+    const cap = n.type === "entity" ? 26 : 38;
     const text = n.label.length > cap ? n.label.slice(0, cap - 1) + "…" : n.label;
-    const width = text.length * CHAR + 10;
+    const width = measure(text);
     const hub = n.id === graphFocus;
-    // The hub keeps its label underneath: it is the one node the eye starts from.
-    const right = hub ? true : n.x >= width / 2 + 4;
-    const x = hub ? n.x : right ? n.x + r + 7 : n.x - r - 7;
-    const y = hub ? n.y + r + 16 : n.y;
-    const boxX = hub ? x - width / 2 : right ? x - 5 : x - width + 5;
-    const box = { x: boxX, y: y - 9, w: width, h: 18 };
+    const right = hub ? true : n.x >= width + r + 20;
+    const gap = r + 6;
+    const x = hub ? n.x : right ? n.x + gap : n.x - gap;
+    const y = hub ? n.y + r + 18 : n.y + 4;
+    const boxX = hub ? x - width / 2 : right ? x : x - width;
+    const box = { x: boxX - 3, y: y - 12, w: width + 6, h: 16 };
     const clash = placed.some(
       (b) =>
         box.x < b.x + b.w && box.x + box.w > b.x && box.y < b.y + b.h && box.y + box.h > b.y,
     );
     if (clash && !hub) return "";
     placed.push(box);
-    return `<g class="atlas-label-group"><rect class="atlas-label-plate" x="${box.x.toFixed(1)}" y="${box.y.toFixed(1)}" width="${box.w.toFixed(1)}" height="${box.h}" rx="5"/><text class="atlas-label ${n.type}${hub ? " hub" : ""}" x="${x.toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="${hub ? "middle" : right ? "start" : "end"}">${esc(text)}</text></g>`;
+    return `<text class="atlas-label ${n.type}${hub ? " hub" : ""}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${hub ? "middle" : right ? "start" : "end"}">${esc(text)}</text>`;
   };
 
   root.innerHTML =
@@ -1936,8 +1938,15 @@ function drawGraph() {
           `<g class="atlas-node ${n.type} ${n.id === graphFocus ? "focused" : ""}" data-node="${esc(n.id)}" tabindex="0" role="button" aria-label="${esc(n.label)}"><circle cx="${n.x.toFixed(1)}" cy="${n.y.toFixed(1)}" r="${radiusOf(n).toFixed(1)}"/><title>${esc(n.description || n.label)}${n.type === "entity" ? ` — mentioned by ${n.degree} ${n.degree === 1 ? "fact" : "facts"}` : ""}</title></g>`,
       )
       .join("") +
-    // Hub first: it is the label that must never be the one dropped.
-    [...nodes].sort((a, b) => (b.id === graphFocus) - (a.id === graphFocus)).map(label).join("");
+    // Hub first, then by how much each node carries: whatever the collision pass
+    // has to drop should be the least significant label, not an arbitrary one.
+    [...nodes]
+      .sort(
+        (a, b) =>
+          (b.id === graphFocus) - (a.id === graphFocus) || (b.degree || 0) - (a.degree || 0),
+      )
+      .map(label)
+      .join("");
 }
 
 function bindGraph() {
