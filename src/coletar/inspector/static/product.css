@@ -1648,6 +1648,14 @@ h2 {
   font-weight: 200 800;
   font-display: swap;
 }
+/* Wordmark only — the display face is too heavy to set body copy in. */
+@font-face {
+  font-family: Boldonse;
+  src: url("/static/fonts/boldonse.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
 :root {
   --bg: #f4f1e9;
   --paper: #fffdf7;
@@ -1728,11 +1736,6 @@ h2 {
   color: var(--green);
   font-size: 38px;
   font-weight: 400;
-}
-.coletar-symbol {
-  height: 33px;
-  width: 33px;
-  color: var(--green);
 }
 .brand-period {
   font-size: 11px;
@@ -3337,10 +3340,6 @@ h2 {
   }
   .site-nav .brand {
     font-size: 24px;
-  }
-  .coletar-symbol {
-    height: 28px;
-    width: 28px;
   }
   .site-nav .brand-period {
     font-size: 8px;
