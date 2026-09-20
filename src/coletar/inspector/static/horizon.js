@@ -6,14 +6,13 @@ let horizonObserver;
 const horizonStories = [
   {
     label: "Your context",
-    title: "Your thinking.<br>Without boundaries.",
+    title: "Your context,<br>anywhere and everywhere.",
     description:
-      "The facts, preferences, and decisions that make AI yours.\nOne workspace. Ready for wherever you go next.",
+      "Stay in context no matter the model.\nSecure, audited, and compliant wherever it goes.",
     kicker: "A portable workspace for your AI context",
     receipt: "A little more you.<br>In every conversation.",
     fact: "Use plain language. Keep explanations concise.",
     type: "Writing preference",
-    image: "alpine-valley.webp",
   },
   {
     label: "Your rules",
@@ -24,7 +23,6 @@ const horizonStories = [
     receipt: "The right context.<br>Only in the right hands.",
     fact: "Keep my personal journal on my local model.",
     type: "Personal context",
-    image: "misty-valley.jpg",
   },
   {
     label: "Your next step",
@@ -35,9 +33,23 @@ const horizonStories = [
     receipt: "Everything changes.<br>Keep what matters.",
     fact: "The Atlas launch is now 24 October.",
     type: "Project decision",
-    image: "alpine-valley.webp",
   },
 ];
+/* The hero background is a looping reel rather than one still. Clips are held at
+   720p because the shade gradients sit on top of them and nothing in the frame is
+   ever read for detail; the weight saved matters more than the resolution lost.
+   Only the first clip is fetched up front — the rest are given a src as they come
+   up in the rotation, so opening the page costs one clip, not the whole reel. */
+const heroClips = [
+  "drift.mp4",
+  "current.mp4",
+  "ridge.mp4",
+  "tide.mp4",
+  "canopy.mp4",
+];
+let heroClip = 0;
+// Longest a single clip holds the hero before the reel moves on, in seconds.
+const HERO_DWELL = 12;
 function horizonNav(onHero = false) {
   return `<header class="horizon-nav site-nav ${onHero ? "on-hero" : ""}">
     <a class="brand" href="#/home">${wordmark}coletar</a>
@@ -73,7 +85,7 @@ function flowPreview() {
 function horizonHome() {
   const story = horizonStories[horizonSlide];
   return `<div class="horizon">${horizonNav(true)}<main id="content" class="horizon-main">
-    <section class="horizon-hero" aria-label="Introduction"><img id="horizon-landscape" class="horizon-landscape" src="/static/images/${story.image}" alt="" width="2200" height="1375" fetchpriority="high"><div class="hero-shade"></div><div class="horizon-hero-grid"><div class="horizon-hero-copy"><span id="horizon-kicker" class="hero-overline">${icon("dot")} ${story.kicker}</span><h1 id="horizon-title">${story.title}</h1><p id="horizon-description">${story.description.replace("\n", "<br>")}</p><div class="horizon-hero-actions"><a class="btn horizon-primary" href="#/library">Find your continuity ${icon("arrow")}</a><a class="hero-secondary" href="#/home/how-it-works" data-scroll="how-it-works">See how it works ${icon("external")}</a></div></div><div id="hero-receipt" class="hero-receipt">${heroReceipt()}</div></div><div class="hero-story-nav" role="group" aria-label="Explore coletar"><span class="hero-story-intro">A place for your thinking.<br>A way to take it further.</span>${horizonStories.map((s, i) => `<button data-horizon-slide="${i}" aria-pressed="${horizonSlide === i}"><span>0${i + 1}</span><strong>${s.label}</strong>${icon("external")}</button>`).join("")}</div></section>
+    <section class="horizon-hero" aria-label="Introduction"><div class="horizon-reel" aria-hidden="true"><video class="horizon-clip is-active" data-hero-clip="0" src="/static/video/${heroClips[0]}" poster="/static/images/hero-poster.jpg" muted playsinline preload="auto" disablepictureinpicture disableremoteplayback></video><video class="horizon-clip" data-hero-clip="1" poster="/static/images/hero-poster.jpg" muted playsinline preload="none" disablepictureinpicture disableremoteplayback></video></div><div class="hero-shade"></div><div class="horizon-hero-grid"><div class="horizon-hero-copy"><span id="horizon-kicker" class="hero-overline">${icon("dot")} ${story.kicker}</span><h1 id="horizon-title">${story.title}</h1><p id="horizon-description">${story.description.replace("\n", "<br>")}</p><div class="horizon-hero-actions"><a class="btn horizon-primary" href="#/library">Find your continuity ${icon("arrow")}</a><a class="hero-secondary" href="#/home/how-it-works" data-scroll="how-it-works">See how it works ${icon("external")}</a></div></div><div id="hero-receipt" class="hero-receipt">${heroReceipt()}</div></div><div class="hero-story-nav" role="group" aria-label="Explore coletar"><span class="hero-story-intro">A place for your thinking.<br>A way to take it further.</span>${horizonStories.map((s, i) => `<button data-horizon-slide="${i}" aria-pressed="${horizonSlide === i}"><span>0${i + 1}</span><strong>${s.label}</strong>${icon("external")}</button>`).join("")}</div></section>
     <section class="horizon-intro"><div class="horizon-platforms"><span>Keep working where you think best.</span><div>${mark("claude")}Claude</div><div>${mark("chatgpt")}ChatGPT</div><div>${mark("ollama")}Ollama</div><a href="#/surfaces">Explore connections ${icon("external")}</a></div><div class="horizon-statement"><span class="section-label">${icon("dot")} BUILT AROUND YOU</span><h2>Great work doesn’t<br>start from zero.</h2><p>Your preferences. The decisions behind your project. The details you’ve already explained. Keep them connected, so every next conversation starts a little further ahead.</p></div></section>
     <section id="how-it-works" class="horizon-section flow-section"><div class="horizon-section-head"><span class="section-label">01 / COLLECT. CONNECT. CONTINUE.</span><h2>One workspace.<br>Every next step.</h2></div><div id="horizon-flow" class="horizon-flow">${flowPreview()}</div></section>
     <section class="horizon-features horizon-section"><div class="horizon-section-head centered"><span class="section-label">${icon("sparkles")} A LITTLE MORE CONTINUITY</span><h2>The things that make<br>your AI <span>yours.</span></h2></div><div class="horizon-feature-grid"><a class="horizon-feature" href="#/library"><div class="feature-visual collection-visual"><span class="mini-context ctx-one">${icon("file")} A preference worth keeping</span><span class="mini-context ctx-two">${icon("library")} The thinking behind Project Atlas</span><span class="mini-context ctx-three">${icon("check")} A decision with a source</span><div class="collection-grid" aria-hidden="true"></div></div><div class="feature-copy"><span>01 / YOUR COLLECTION</span><h3>A home for useful context. ${icon("external")}</h3><p>Keep facts, preferences, and decisions together, with a source you can always inspect.</p></div></a><a class="horizon-feature" href="#/home/product" data-scroll="product"><div class="feature-visual reach-visual"><div class="reach-orbit orbit-one"></div><div class="reach-orbit orbit-two"></div><div class="reach-lock">${icon("shield")}</div><span class="floating-brand fb-one">${mark("claude")}</span><span class="floating-brand fb-two">${mark("chatgpt")}</span><span class="floating-brand fb-three">${mark("local")}</span><span class="mini-policy">Your context. Your boundaries.</span></div><div class="feature-copy"><span>02 / YOUR CONTROL</span><h3>Selective by nature. ${icon("external")}</h3><p>Set access for each detail. Your personal context doesn’t need to go everywhere.</p></div></a><a class="horizon-feature" href="#/audit"><div class="feature-visual time-visual"><div class="time-line"></div><div class="time-point"><span></span><small>03 SEP</small><p>Launch: <del>10 October</del></p></div><div class="time-point current"><span></span><small>08 SEP</small><p>Launch: 24 October</p><b>${icon("check")} Current version</b></div></div><div class="feature-copy"><span>03 / YOUR HISTORY</span><h3>Room to change your mind. ${icon("external")}</h3><p>A correction moves you forward. The previous version remains part of the story.</p></div></a></div></section>
@@ -108,7 +120,7 @@ function horizonHome() {
       )
       .join("")}</div></section>
     <section class="horizon-closing"><img src="/static/images/alpine-valley.webp" alt="" loading="lazy" width="2200" height="1375"><div class="closing-shade"></div><span class="section-label">THERE’S MORE AHEAD.</span><h2>Go further.<br>Bring your thinking.</h2><a class="btn" href="#/library">Open your workspace ${icon("arrow")}</a></section>
-    </main><footer class="horizon-footer"><div class="horizon-footer-top"><div><a class="brand" href="#/home">${wordmark}coletar</a><p>Independent context.<br>Human control.</p></div><div><span>Product</span><a href="#/library">Workspace</a><a href="#/surfaces">Connections</a><a href="#/migrate">Export & migrate</a></div><div><span>Trust</span><a href="#/security">Privacy & boundaries</a><a href="#/audit">History</a><a href="https://github.com/chrisdten3/coletar/blob/main/docs/CONTINUITY_SCORE.md" target="_blank" rel="noopener">Continuity Score ${icon("external")}</a></div><div><span>For builders</span><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Source & docs ${icon("external")}</a><a href="/" target="_blank" rel="noopener">Developer Inspector ${icon("external")}</a><button class="photo-credits quiet">Photography credits</button></div></div><div class="horizon-wordmark" aria-hidden="true">coletar<span>↗</span></div><div class="horizon-footer-bottom"><span>A portable AI workspace.</span><span>Your context. Your rules. Your next step.</span></div></footer></div>`;
+    </main><footer class="horizon-footer"><div class="horizon-footer-top"><div><a class="brand" href="#/home">${wordmark}coletar</a><p>Independent context.<br>Human control.</p></div><div><span>Product</span><a href="#/library">Workspace</a><a href="#/surfaces">Connections</a><a href="#/migrate">Export & migrate</a></div><div><span>Trust</span><a href="#/security">Privacy & boundaries</a><a href="#/audit">History</a><a href="https://github.com/chrisdten3/coletar/blob/main/docs/CONTINUITY_SCORE.md" target="_blank" rel="noopener">Continuity Score ${icon("external")}</a></div><div><span>For builders</span><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Source & docs ${icon("external")}</a><a href="/" target="_blank" rel="noopener">Developer Inspector ${icon("external")}</a><button class="photo-credits quiet">Media credits</button></div></div><div class="horizon-wordmark" aria-hidden="true">coletar<span>↗</span></div><div class="horizon-footer-bottom"><span>A portable AI workspace.</span><span>Your context. Your rules. Your next step.</span></div></footer></div>`;
 }
 function openWorkspaceSearch() {
   modal(
@@ -161,7 +173,74 @@ function openWorkspaceSearch() {
   update();
   $("#command-search").focus();
 }
+/* The reel plays one clip at a time across two stacked <video> elements: while one
+   is on screen the other already holds the next clip, so the handover is a fade
+   instead of a stall. Motion here is decoration. If it cannot run — autoplay
+   refused, reduced motion asked for, the fetch failed — the poster frame is the
+   design rather than a broken state, so every failure path ends quietly. */
+function bindHeroReel() {
+  const reel = $(".horizon-reel");
+  if (!reel || reel.dataset.heroBound) return;
+  reel.dataset.heroBound = "true";
+  const clips = [...reel.querySelectorAll(".horizon-clip")];
+  heroClip = 0;
+  clips[0].dataset.clipIndex = "0";
+
+  const load = (el, index) => {
+    const src = "/static/video/" + heroClips[index];
+    el.dataset.clipIndex = String(index);
+    if (el.getAttribute("src") === src) return;
+    el.setAttribute("src", src);
+    el.preload = "auto";
+    el.load();
+  };
+
+  // Returns false when the next clip has not buffered enough to cut to yet.
+  const advance = () => {
+    const current = clips.find((c) => c.classList.contains("is-active"));
+    const next = clips.find((c) => c !== current);
+    if (!current || next.readyState < 2) return false;
+    next.currentTime = 0;
+    next.play().catch(() => {});
+    next.classList.add("is-active");
+    current.classList.remove("is-active");
+    current.pause();
+    heroClip = Number(next.dataset.clipIndex);
+    load(current, (heroClip + 1) % heroClips.length);
+    return true;
+  };
+
+  clips.forEach((clip) => {
+    clip.addEventListener("timeupdate", () => {
+      if (!clip.classList.contains("is-active")) return;
+      const left = clip.duration - clip.currentTime;
+      // The clips run from 8 to 42 seconds. Left alone, the long one would hold
+      // the hero five times longer than its neighbours and read as a stall
+      // rather than a reel, so a clip is cut short once it has had its turn.
+      if (
+        clip.currentTime >= HERO_DWELL ||
+        (Number.isFinite(left) && left <= 0.9)
+      )
+        advance();
+    });
+    clip.addEventListener("ended", () => {
+      // Whatever is next is not ready; replaying beats holding a frozen frame.
+      if (clip.classList.contains("is-active") && !advance()) {
+        clip.currentTime = 0;
+        clip.play().catch(() => {});
+      }
+    });
+  });
+
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    clips.forEach((c) => c.pause());
+    return;
+  }
+  load(clips[1], 1);
+  clips[0].play().catch(() => {});
+}
 function bindHorizon() {
+  bindHeroReel();
   document.querySelectorAll("[data-horizon-slide]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -173,7 +252,7 @@ function bindHorizon() {
           "<br>",
         );
         $("#horizon-kicker").innerHTML = icon("dot") + " " + s.kicker;
-        $("#horizon-landscape").src = "/static/images/" + s.image;
+        // The reel runs on its own clock; changing the story does not cut the clip.
         $("#hero-receipt").innerHTML = heroReceipt();
         document
           .querySelectorAll("[data-horizon-slide]")
@@ -245,8 +324,8 @@ function bindHorizon() {
   if ($(".photo-credits"))
     $(".photo-credits").onclick = () =>
       modal(
-        "Photography",
-        `<p>Alpine valley photograph by <a href="https://unsplash.com/photos/ahsuhZiBAAY" target="_blank" rel="noopener">Thierry Lemaitre / Unsplash</a>, used under the Unsplash License.</p><p>Misty valley photograph by <a href="https://www.pexels.com/photo/4542933/" target="_blank" rel="noopener">Quang Nguyen Vinh / Pexels</a>, used under the Pexels License.</p><p class="muted small">Images are served locally. No photographs were taken from the design-reference websites.</p>`,
+        "Media",
+        `<p>Alpine valley photograph by <a href="https://unsplash.com/photos/ahsuhZiBAAY" target="_blank" rel="noopener">Thierry Lemaitre / Unsplash</a>, used under the Unsplash License.</p><p>Misty valley photograph by <a href="https://www.pexels.com/photo/4542933/" target="_blank" rel="noopener">Quang Nguyen Vinh / Pexels</a>, used under the Pexels License.</p><p>Hero reel: five stock clips supplied for this design experiment. <b>Attribution is outstanding</b> — see <span class="mono">static/video/CREDITS.md</span>. They should not ship to a public deployment until each clip names its source and licence.</p><p class="muted small">Media is served locally. Nothing was taken from the design-reference websites.</p>`,
         "",
         () => {},
       );
