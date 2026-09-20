@@ -9,6 +9,21 @@ on:
   pull_request:
   push:
     branches: [main]
+  # Run the full suite on any branch, on demand, without opening a PR first.
+  #
+  # This exists for a hardware reason, not a convenience one. The development
+  # machine is an 8 GB laptop, and the full suite in one pytest process beside
+  # Postgres has repeatedly driven it into swap and been OOM-killed (exit 137)
+  # rather than failing cleanly. CI is where the full run belongs; before this
+  # trigger, reaching it meant opening a pull request, so the practical choice was
+  # "run it locally and hope" — which is the thing that keeps taking the machine
+  # down. See CONTRIBUTING-style notes in docs/TESTING.md.
+  workflow_dispatch:
+    inputs:
+      heavy:
+        description: "Include the heavy scale tests (10k-object corpora)"
+        type: boolean
+        default: true
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,7 +95,17 @@ jobs:
         # so an 8 GB laptop is not asked to hold a ten-thousand-object corpus in
         # memory beside Postgres and a model server. CI has the headroom and is
         # where those measurements are supposed to run.
-        run: uv run --extra dev pytest -m ""
+        #
+        # A manual run may opt out of the heavy set; every automatic run includes
+        # it. The default must stay "everything", or the expensive half quietly
+        # stops being covered on the one machine that can afford to cover it.
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+             && [ "${{ inputs.heavy }}" != "true" ]; then
+            uv run --extra dev pytest
+          else
+            uv run --extra dev pytest -m ""
+          fi
 
       # The full run above already covers these. Re-running them alone asserts
       # they were not silently skipped, which is the failure mode that matters.

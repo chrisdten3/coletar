@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "coletar-workspace",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "coletar.inspector.app:app", "--host", "127.0.0.1", "--port", "8789"],
+      "port": 8789
+    }
+  ]
+}
