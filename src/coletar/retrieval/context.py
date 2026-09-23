@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 from coletar.retrieval.embedding import tokenize
 from coletar.retrieval.ranking import RANKING_VERSION, ScoreComponents, Scored
 from coletar.retrieval.strategy import PublishedOrder, Reranker
-from coletar.schema.objects import ContextObject, Provider, Scope
+from coletar.schema.objects import ContextObject, ObjectType, Provider, Scope
 from coletar.schema.tenancy import TenantId
 
 if TYPE_CHECKING:  # `Store` is needed for annotations only, and importing it at
@@ -229,11 +229,27 @@ async def retrieve(
     a caller that asks for nothing gets exactly what every published baseline was
     measured with. A strategy can reorder and drop; it cannot add, because it only
     ever sees what the store already policy-filtered.
+
+    **Entities are excluded here, and only here.** An entity's `content` is a generic
+    one-line description of a node — "A domain.", "A Greek island.", "Cast maker
+    referenced by the user." — so by construction it says nothing about the person.
+    Rendered into the block this function produces, which is headed "Known context
+    about this user", those lines are not merely noise: on the real corpus the
+    retrieved set for "what are my coding preferences" was three-fifths entity
+    descriptions, and one entity read "A 65-year-old Black man presenting for a
+    preventive visit", which asserts something false about the reader.
+
+    The filter is not in `Store.search`, deliberately. Entities are real graph
+    objects and the workspace's own search and Atlas need them; what must not happen
+    is an entity being handed to a model as a fact about its user. The boundary is
+    prompt assembly, so that is where it lives.
     """
     started = time.perf_counter()
+    # Over-fetch so dropping entities below cannot leave the block short.
     hits = await store.search(
-        tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k
+        tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k * 3
     )
+    hits = [hit for hit in hits if hit.obj.type is not ObjectType.ENTITY][:top_k]
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     rerank_started = time.perf_counter()
