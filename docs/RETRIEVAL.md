@@ -305,3 +305,68 @@ this corpus the correct answer is often a weak hit that barely made the top five
 The budget *is* honoured — a tight budget truncates, reports `truncated`, and skips
 an oversized hit rather than terminating the pack — and that is pinned by tests. What
 is not shipped is a lossy default dressed up as an efficiency win.
+
+## The embedding-space mismatch — 2026-09-22
+
+**A corpus and its queries must be embedded by the same model.** This is now
+enforced in SQL; it was not, and the failure was silent and severe.
+
+The 3,818-object corpus was embedded with `nomic-embed-text` during ingest.
+`COLETAR_EMBEDDING_BACKEND` was later left at its `hashing` default, so queries
+were embedded in a different space entirely. The vector candidate join did not
+filter on `object_embedding.model`, so cosine was computed across two unrelated
+spaces — which still *sorts*, and so produced confident nonsense:
+
+| query | vector score of the correct hit |
+|---|---|
+| `JP Morgan internship` → "I work at JP Morgan." | **0.004** |
+| `tell me about Georgetown` → "I go to Georgetown" | **0.000** |
+| `i like chelsea` → unrelated rows | **0.067** |
+
+The vector half was not weak; it was anti-correlated. Unrelated rows outscored
+exact matches, and everything that appeared to work was running on the lexical 45%
+alone. The user-visible symptom was a prompt block headed "Known context about this
+user" containing a classmate's email address and a professor's name in response to
+"i like chelsea".
+
+**The fix** is `AND e.model = %s` on the vector candidate query and on the two
+joins that feed the rerank. A mismatch now finds no vector candidates, so retrieval
+degrades to lexical-only — wrong-but-honest instead of wrong-and-confident.
+`tests/test_retrieval_index.py` pins it with two embedders of identical dimension
+that differ only by name.
+
+With the embedders matched, the same queries score as they should:
+
+| query | top score | vector |
+|---|---|---|
+| `JP Morgan internship` | 0.751 | 0.76 |
+| `tell me about Georgetown` | 0.533 | 0.85 |
+| `what are my coding preferences` | 0.505 | 0.65 |
+
+## The relevance floor
+
+Retrieval returned `top_k` regardless of score, so a query with nothing to match
+still produced its five least-bad rows — and those rows are rendered into a prompt
+as background about the user. That is worse than returning nothing: it spends the
+token budget on noise and invites the model to explain a connection that is not
+there. It is the same instinct as extraction's precision-over-recall rule.
+
+`COLETAR_RETRIEVAL_MIN_SCORE` drops hits below a blended score. **It defaults to
+0.0 — off — deliberately.** A floor of 0.15 was tried and broke four published
+baselines in `test_retrieval_eval.py`: with `hashing`, correct hits routinely score
+below it. A measured, published number must not be invalidated by a constant
+somebody guessed.
+
+Measured separation on the real corpus with `nomic-embed-text`, seven real queries
+against six nonsense ones:
+
+```
+real  queries: min 0.505   median 0.687
+noise queries: max 0.433   median 0.342
+```
+
+**0.45 sits in that gap and is the recommended value for a `nomic-embed-text`
+deployment.** It is not a default because the right number is a property of the
+embedder: `hashing`'s correct lexical-only hits land near 0.26, and 0.45 there
+would return nothing at all. Measure against
+`tests/fixtures/relevance_set.json` before changing it.

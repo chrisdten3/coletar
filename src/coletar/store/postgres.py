@@ -38,7 +38,12 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from coletar.retrieval.embedding import Embedder, build_embedder, cosine, tokenize
-from coletar.retrieval.ranking import Scored, lexical_score, rank_score
+from coletar.retrieval.ranking import (
+    Scored,
+    lexical_score,
+    min_relevance,
+    rank_score,
+)
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     ContextObject,
@@ -688,6 +693,16 @@ class PostgresStore:
                 SELECT o.id FROM context_object o
                 JOIN object_embedding e
                   ON e.tenant_id = o.tenant_id AND e.object_id = o.id
+                 -- Only vectors from the *same* model. Two embedders produce two
+                 -- unrelated spaces, and a cosine across them is arithmetic on
+                 -- noise that still sorts, so it returns confident nonsense. This
+                 -- was not hypothetical: a corpus embedded with nomic-embed-text
+                 -- was being queried with the `hashing` fallback, and the exact
+                 -- match for "JP Morgan internship" scored 0.004 on the vector
+                 -- axis while unrelated rows scored 0.067. Filtering here makes the
+                 -- mismatch degrade to lexical-only, which is wrong-but-honest
+                 -- rather than wrong-and-confident.
+                  AND e.model = %s
                 WHERE o.tenant_id = %s AND o.retired_at IS NULL
                   AND o.type <> 'episode'
                 ORDER BY e.embedding <=> %s
@@ -724,13 +739,15 @@ class PostgresStore:
         JOIN context_object o ON o.tenant_id = %s AND o.id = h.cur_id
         JOIN context_object m ON m.tenant_id = %s AND m.id = h.cand_id
         LEFT JOIN object_embedding e
-          ON e.tenant_id = o.tenant_id AND e.object_id = o.id
+          ON e.tenant_id = o.tenant_id AND e.object_id = o.id AND e.model = %s
         LEFT JOIN object_embedding me
-          ON me.tenant_id = m.tenant_id AND me.object_id = m.id
+          ON me.tenant_id = m.tenant_id AND me.object_id = m.id AND me.model = %s
         WHERE o.retired_at IS NULL AND o.type <> 'episode'
           {scope_clause} {locality_clause} {sensitivity_clause}
         """
+        model = self._embedder.model
         params = [
+            model,
             tenant_id,
             query_array,
             fetch,
@@ -740,6 +757,8 @@ class PostgresStore:
             tenant_id,
             tenant_id,
             tenant_id,
+            model,
+            model,
             *scope_params,
             *locality_params,
         ]
@@ -780,7 +799,9 @@ class PostgresStore:
                 best[obj.id] = hit
 
         scored = sorted(best.values(), key=lambda hit: (hit.score, hit.obj.id), reverse=True)
-        return scored[:top_k]
+        # Nothing relevant returns nothing, rather than the least-bad rows.
+        floor = min_relevance()
+        return [hit for hit in scored[:top_k] if hit.score >= floor]
 
 
 def _object_params(tenant_id: TenantId, obj: ContextObject, dump: dict[str, Any]) -> dict[str, Any]:

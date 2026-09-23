@@ -107,6 +107,28 @@ class Settings(BaseSettings):
     embedding_dim: int = 768
     retrieval_token_budget: int = 1500
     retrieval_top_k: int = 12
+    # Below this blended score, a hit is not returned at all — "nothing relevant"
+    # beats the five least-bad rows, which get rendered into a prompt under the
+    # heading "Known context about this user".
+    #
+    # The right value depends on the embedder, which is why this is a setting and
+    # not a constant. Embedding models have a high baseline similarity: measured on
+    # a 3,818-object corpus with `nomic-embed-text`, nonsense queries topped out at
+    # 0.433 while real ones bottomed out at 0.505, so 0.45 sits in the gap. The
+    # `hashing` backend scores far lower — correct lexical-only hits land near 0.26
+    # — and the same 0.45 would return nothing at all.
+    #
+    # **Off by default, and that is deliberate.** A floor of 0.15 was tried and it
+    # broke four of the published baselines in `tests/test_retrieval_eval.py`: with
+    # the `hashing` backend, genuinely correct hits routinely score below it. A
+    # measured, published number must not be invalidated by a constant somebody
+    # guessed, so the default changes nothing and raising it is an explicit,
+    # per-deployment decision.
+    #
+    # Recommended with `nomic-embed-text`: **0.45**. Measured above, and confirmed
+    # to leave the baselines alone because they run on `hashing`. See
+    # docs/RETRIEVAL.md before changing it.
+    retrieval_min_score: float = 0.0
 
     # Whether imports use the deterministic pattern recogniser or model-assisted
     # extraction. This must be separate from provider selection: the old code made

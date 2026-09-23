@@ -222,3 +222,105 @@ async def test_search_p95_stays_under_the_latency_ceiling_at_ten_thousand_object
     assert p95 < PERF_CEILING_MS, (
         f"p95 {p95:.0f}ms over 10,000 objects (ceiling {PERF_CEILING_MS:.0f}ms)"
     )
+
+
+# -- the embedding-space mismatch ----------------------------------------------
+async def test_vector_candidates_require_the_same_embedding_model(postgres_dsn):
+    """Two embedders are two unrelated vector spaces, and a cosine across them is
+    arithmetic on noise that still sorts.
+
+    The observed failure: a corpus embedded with `nomic-embed-text` was queried
+    with the `hashing` fallback. The exact match for "JP Morgan internship" scored
+    0.004 on the vector axis while unrelated rows scored 0.067 — the vector half
+    was not weak, it was anti-correlated, and the results looked confident and were
+    nonsense. Filtering candidates by model makes a mismatch degrade to
+    lexical-only, which is wrong-but-honest.
+    """
+    import uuid
+
+    import psycopg
+
+    from coletar.retrieval.embedding import HashingEmbedder
+    from coletar.schema.tenancy import tenant_id as make_tenant
+    from coletar.store.migrate import run_migrations
+    from coletar.store.postgres import PostgresStore
+
+    name = f"coletar_mix_{uuid.uuid4().hex[:10]}"
+    async with await psycopg.AsyncConnection.connect(postgres_dsn, autocommit=True) as conn:
+        await conn.execute(f'CREATE DATABASE "{name}"')
+    from urllib.parse import urlparse, urlunparse
+
+    parts = urlparse(postgres_dsn)
+    dsn = urlunparse(parts._replace(path=f"/{name}"))
+    tenant = make_tenant("tenant_mix")
+
+    try:
+        await run_migrations(dsn)
+        written = PostgresStore(dsn, embedder=HashingEmbedder(768))
+        try:
+            await written.put_object(tenant, Memory.from_write("Ledger deploys to Fly.io."))
+            await written.put_object(tenant, Memory.from_write("Prefers tabs over spaces."))
+        finally:
+            await written.close()
+
+        # A second embedder with the same dimension and a different name: the shape
+        # matches, so nothing but the model column can tell the spaces apart.
+        class OtherSpace(HashingEmbedder):
+            def __init__(self) -> None:
+                super().__init__(768)
+                self.model = "some-other-embedder-768"
+
+        reading = PostgresStore(dsn, embedder=OtherSpace())
+        try:
+            # A query with no lexical overlap has only the vector half to work
+            # with, and that half must now find nothing rather than sort noise.
+            hits = await reading.search(tenant, "unrelated gibberish zzzz", top_k=5)
+            assert hits == []
+            # Lexical still works, so the mismatch degrades rather than breaks.
+            lexical = await reading.search(tenant, "Ledger deploys", top_k=5)
+            assert any("Fly.io" in h.obj.content for h in lexical)
+        finally:
+            await reading.close()
+    finally:
+        async with await psycopg.AsyncConnection.connect(postgres_dsn, autocommit=True) as conn:
+            await conn.execute(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = %s",
+                (name,),
+            )
+            await conn.execute(f'DROP DATABASE IF EXISTS "{name}"')
+
+
+async def test_the_relevance_floor_is_off_by_default(monkeypatch):
+    """It must stay off unless someone opts in.
+
+    A floor of 0.15 was tried and broke four published baselines: with `hashing`,
+    correct hits routinely score below it. A measured number must not be
+    invalidated by a guessed constant.
+    """
+    from coletar.config import get_settings
+    from coletar.retrieval.ranking import min_relevance
+
+    get_settings.cache_clear()
+    try:
+        assert min_relevance() == 0.0
+    finally:
+        get_settings.cache_clear()
+
+
+async def test_the_relevance_floor_drops_weak_hits_when_enabled(monkeypatch):
+    """And when it is on, it removes what falls under it."""
+    from coletar.config import get_settings
+    from coletar.retrieval.embedding import HashingEmbedder
+    from coletar.store.memory import InMemoryStore
+
+    store = InMemoryStore(embedder=HashingEmbedder(768))
+    await store.put_object(TENANT, Memory.from_write("Ledger deploys to Fly.io."))
+    baseline = await store.search(TENANT, "Ledger deploys", top_k=5)
+    assert baseline, "the fixture query should match something with no floor"
+
+    monkeypatch.setenv("COLETAR_RETRIEVAL_MIN_SCORE", "0.99")
+    get_settings.cache_clear()
+    try:
+        assert await store.search(TENANT, "Ledger deploys", top_k=5) == []
+    finally:
+        get_settings.cache_clear()

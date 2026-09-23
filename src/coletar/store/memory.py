@@ -27,7 +27,12 @@ from pathlib import Path
 
 from coletar.retrieval.embedding import Embedder, build_embedder, tokenize
 from coletar.retrieval.index import VectorIndex
-from coletar.retrieval.ranking import Scored, lexical_score, rank_score
+from coletar.retrieval.ranking import (
+    Scored,
+    lexical_score,
+    min_relevance,
+    rank_score,
+)
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     ContextObject,
@@ -560,9 +565,13 @@ class InMemoryStore:
         scored = sorted(best.values(), key=lambda hit: (hit.score, hit.obj.id), reverse=True)
         # Only the returned slice is copied, so the cost is bounded by top_k rather
         # than by the size of the corpus.
+        # Nothing relevant returns nothing, rather than the least-bad rows. Both
+        # backends must agree here or the parity contract is a lie.
+        floor = min_relevance()
         return [
             Scored(obj=hit.obj.model_copy(deep=True), components=hit.components)
             for hit in scored[:top_k]
+            if hit.score >= floor
         ]
 
 

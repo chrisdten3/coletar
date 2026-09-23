@@ -41,6 +41,33 @@ CONFIDENCE_FLOOR = 0.5
 RECENCY_FLOOR = 0.85
 RECENCY_HALF_LIFE_DAYS = 90.0
 
+#: Below this, a hit is not returned at all.
+#:
+#: Retrieval used to return `top_k` whatever the scores were, so a query with
+#: nothing to match still produced its five least-bad rows — and those rows are
+#: rendered into a prompt under the heading "Known context about this user". The
+#: observed case: "i like chelsea" returned a classmate's email address, a
+#: professor's name and "I go to Georgetown", none of which have anything to do
+#: with the question.
+#:
+#: That is worse than returning nothing, and not only cosmetically. §7 has the
+#: model treat retrieved context as background about the user; filling it with
+#: unrelated facts spends the token budget on noise and invites the model to
+#: explain a connection that is not there.
+#:
+#: The same instinct as extraction's precision-over-recall rule: when unsure,
+#: don't. The value is deliberately low — it removes the obviously-unrelated, not
+#: the merely-imperfect — because a floor tuned tight enough to be clever is one
+#: that silently hides a memory the user knows they saved.
+DEFAULT_MIN_RELEVANCE = 0.0
+
+
+def min_relevance() -> float:
+    """The configured floor, read per call so a settings change takes effect."""
+    from coletar.config import get_settings
+
+    return get_settings().retrieval_min_score
+
 
 class CandidateSource(StrEnum):
     """Which half of the hybrid surfaced this object.
