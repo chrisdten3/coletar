@@ -2948,7 +2948,7 @@ dialog::backdrop {
   }
 }
 
-/* Product overview: one story, three offerings, one complete context diagram. */
+/* Product overview and an illustrative memory's source and revision history. */
 .horizon .horizon-hero-grid {
   grid-template-columns: minmax(0, 1fr);
   padding-bottom: 85px;
@@ -3010,8 +3010,35 @@ dialog::backdrop {
 .access-note { border-top: 1px solid #edf0e8; padding-top: 10px; }
 .offering-example { position: absolute; bottom: 12px; font-size: 8px; letter-spacing: .02em; color: #5d7054; }
 .migration-visual .offering-example { color: #bdceb3; }
-.truth-section { padding-top: 0; padding-bottom: 80px; }
-.truth-diagram { display: block; width: 100%; height: auto; border: 1px solid #dce5d4; border-radius: 24px; }
+.truth-section { padding-top: 35px; padding-bottom: 80px; }
+.truth-heading { display: flex; justify-content: space-between; align-items: flex-end; gap: 40px; border-top: 1px solid var(--line); padding-top: 65px; margin-bottom: 48px; }
+.truth-heading .section-label { margin-bottom: 22px; }
+.truth-heading > p { color: var(--muted); font-size: 15px; margin: 0 0 5px; }
+.truth-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px; list-style: none; padding: 0; margin: 0; }
+.truth-steps > li { min-width: 0; }
+.truth-step-label { display: block; color: var(--muted); font-size: 10px; letter-spacing: .1em; }
+.truth-steps h3 { font-size: clamp(19px, 1.8vw, 27px); letter-spacing: -.04em; margin: 14px 0 24px; }
+.truth-card { min-height: 205px; display: flex; flex-direction: column; padding: 22px; border: 1px solid var(--line); border-radius: 12px; background: #fffffc; box-shadow: 0 12px 30px #23372006; }
+.truth-card-top, .truth-card-bottom { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.truth-card-top .icon { width: 16px; height: 16px; flex-shrink: 0; }
+.truth-card-bottom { justify-content: space-between; border-top: 1px solid var(--line); padding-top: 14px; margin-top: auto; gap: 12px; font-size: 10px; }
+.truth-card blockquote { font-size: clamp(18px, 1.8vw, 26px); letter-spacing: -.04em; line-height: 1.45; margin: 25px 0; }
+.truth-revision { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 24px 0; font-size: clamp(16px, 1.6vw, 23px); letter-spacing: -.04em; }
+.truth-revision small { display: block; color: var(--muted); font-size: 10px; letter-spacing: 0; margin-bottom: 8px; }
+.truth-revision s { color: var(--muted); text-decoration-thickness: 1px; }
+.truth-revision strong { font-weight: 500; color: var(--green); }
+.truth-card-current { background: #edf2e9; border-color: #d6e0d0; }
+.truth-current-label { margin-left: auto; color: #3c5844; font-size: 10px; }
+.truth-card .truth-memory { font-size: clamp(18px, 1.8vw, 26px); letter-spacing: -.04em; line-height: 1.45; margin: 23px 0; }
+.truth-memory strong { font-weight: 500; color: #3c5844; }
+.truth-steps > li > p { max-width: 330px; color: var(--muted); font-size: 13px; margin: 20px 0 0; }
+.truth-section .truth-caption { margin: 30px 0 0; color: var(--muted); font-size: 11px; }
+@media (min-width: 761px) and (max-width: 1000px) {
+  .truth-steps { gap: 18px; }
+  .truth-card { padding: 16px; min-height: 215px; }
+  .truth-card-bottom { flex-wrap: wrap; gap: 4px 12px; }
+  .truth-steps h3 { min-height: 48px; }
+}
 @media (min-width: 761px) and (max-width: 1000px) {
   .offering-visual { padding-inline: 12px; }
   .offering-window { padding: 12px; }
@@ -3021,8 +3048,16 @@ dialog::backdrop {
   .horizon .horizon-hero-grid { padding: 140px 6% 70px; }
   .horizon .horizon-hero h1 { font-size: clamp(48px, 10vw, 72px); }
   .offering-visual { height: 300px; }
-  .truth-section { padding-bottom: 45px; }
-  .truth-diagram { border-radius: 12px; }
+  .truth-section { padding-top: 0; padding-bottom: 45px; }
+  .truth-heading { display: block; padding-top: 40px; margin-bottom: 35px; }
+  .truth-heading > p { margin-top: 24px; font-size: 14px; }
+  .truth-heading > p br { display: none; }
+  .truth-steps { grid-template-columns: 1fr; gap: 34px; }
+  .truth-steps h3 { font-size: 24px; margin-bottom: 18px; }
+  .truth-card { min-height: 205px; }
+  .truth-card blockquote, .truth-card .truth-memory { font-size: 25px; }
+  .truth-revision { font-size: 22px; }
+  .truth-steps > li > p { max-width: none; margin-top: 14px; }
 }
 @media (max-width: 760px) {
   .horizon .horizon-hero { min-height: 650px; min-height: max(650px, 88svh); }
