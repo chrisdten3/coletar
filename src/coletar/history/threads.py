@@ -532,6 +532,30 @@ class Suggestion:
         }
 
 
+def _endpoints(chain: list[Switch]) -> tuple[str, str]:
+    """What this chain moved *from* and *to*.
+
+    Shared by the label and by the names shown beneath it, because they were
+    computed separately and disagreed: a one-sided switch produced the question
+    "How has ChatGPT → Mistral changed over time?" above a single chip reading
+    "Mistral". The heading and its own evidence have to name the same things.
+    """
+    if not chain:
+        return "", ""
+    adopted = {n for sw in chain for n in sw.adopted}
+    first = next((n for s in chain for n in s.dropped), "")
+    if not first:
+        # A one-sided switch: the new statement adopted something without the
+        # old name disappearing ("Events go through Kafka; RabbitMQ is retired
+        # once the cutover completes"). The position it moved *from* is still
+        # the first thing the chain named, so read it off the opening statement
+        # rather than labelling the thread with only its destination.
+        opening = sorted(candidate_names(chain[0].before))
+        first = next((n for n in opening if n not in adopted), "")
+    last = next((n for s in reversed(chain) for n in s.adopted), "")
+    return first, last
+
+
 def _subject_for(chain: list[Switch], content: str) -> str:
     """A short label for what a chain is about.
 
@@ -541,17 +565,7 @@ def _subject_for(chain: list[Switch], content: str) -> str:
     may -- but the label has to be defensible without it, because the default
     backend is `none` and a demo is not allowed to be the only thing that works.
     """
-    first = next((n for s in chain for n in s.dropped), "")
-    if not first and chain:
-        # A one-sided switch: the new statement adopted something without the
-        # old name disappearing ("Events go through Kafka; RabbitMQ is retired
-        # once the cutover completes"). The position it moved *from* is still
-        # the first thing the chain named, so read it off the opening statement
-        # rather than labelling the thread with only its destination.
-        opening = sorted(candidate_names(chain[0].before))
-        adopted = {n for sw in chain for n in sw.adopted}
-        first = next((n for n in opening if n not in adopted), "")
-    last = next((n for s in reversed(chain) for n in s.adopted), "")
+    first, last = _endpoints(chain)
     if first and last and first != last:
         return f"{first} → {last}"
     if last or first:
@@ -598,7 +612,10 @@ async def suggest_threads(
     suggestions: list[Suggestion] = []
     for root, chain in chains.items():
         chain.sort(key=lambda s: s.at)
-        names: list[str] = []
+        # Lead with the endpoints the question names, so the chips underneath
+        # are the evidence for the heading rather than a different list.
+        opening, destination = _endpoints(chain)
+        names: list[str] = [n for n in (opening, destination) if n]
         for switch in chain:
             for name in switch.dropped + switch.adopted:
                 if name not in names:

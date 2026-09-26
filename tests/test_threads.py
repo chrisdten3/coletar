@@ -350,3 +350,22 @@ async def test_following_a_thread_appends_nothing():
     await run_thread(store, TENANT, subject="ledger database", anchor_ids=[third.id], now=NOW)
 
     assert len(await store.list_events(TENANT, limit=1000)) == before
+
+
+async def test_the_names_shown_match_the_names_in_the_question():
+    """Regression: the label and the chips beneath it were computed separately,
+    so a one-sided switch produced "How has ChatGPT → Mistral changed over
+    time?" above a single chip reading "Mistral"."""
+    store = InMemoryStore()
+    first = await _write(store, "Model work runs through ChatGPT on the team plan.", days_ago=120)
+    await _write(
+        store,
+        "Live deals run on the local Mistral instance only; ChatGPT is for public comps.",
+        days_ago=30,
+        supersedes=first.id,
+        kind=MemoryKind.CORRECTION,
+    )
+    suggestion = (await suggest_threads(store, TENANT))[0]
+    assert suggestion.subject == "ChatGPT → Mistral"
+    for endpoint in suggestion.subject.split(" → "):
+        assert endpoint in suggestion.names
