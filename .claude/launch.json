@@ -73,9 +73,31 @@
       "name": "coleta-history-demo",
       "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
       "runtimeArgs": [
-        "scripts/serve_history_demo.py"
+        "scripts/serve_history_demo.py",
+        "engineer",
+        "8795"
       ],
       "port": 8795
+    },
+    {
+      "name": "coleta-history-demo-lawyer",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": [
+        "scripts/serve_history_demo.py",
+        "lawyer",
+        "8796"
+      ],
+      "port": 8796
+    },
+    {
+      "name": "coleta-history-demo-banker",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": [
+        "scripts/serve_history_demo.py",
+        "banker",
+        "8797"
+      ],
+      "port": 8797
     }
   ]
 }

@@ -41,6 +41,7 @@ from coletar.history.query import (
     QueryResult,
 )
 from coletar.history.rollup import object_lifetime, reach_report, run_query
+from coletar.history.threads import DEFAULT_MAX_OBJECTS, run_thread, suggest_threads
 from coletar.ingest import remember
 from coletar.inspector.auth import Tenant
 from coletar.inspector.review import edit, mark_reviewed, review_status
@@ -685,6 +686,15 @@ async def history_dashboard(owner: Tenant, window_days: int = 90) -> dict[str, A
         "confidence": HistoryQuery(
             metric=Metric.MEAN_CONFIDENCE, bucket=bucket, window_days=window
         ),
+        # The cost view prices this series client-side against the rates in
+        # Settings. The rates are the user's own and live in browser prefs, so
+        # the server ships tokens and stays out of the arithmetic.
+        "tokens_by_provider": HistoryQuery(
+            metric=Metric.TOKENS_SERVED,
+            group_by=GroupBy.PROVIDER,
+            bucket=bucket,
+            window_days=window,
+        ),
     }
     return {
         "window_days": window,
@@ -694,6 +704,11 @@ async def history_dashboard(owner: Tenant, window_days: int = 90) -> dict[str, A
             for name, query in panels.items()
         },
         "examples": EXAMPLE_QUESTIONS,
+        # Whether a model backend is configured for thread narration. The UI
+        # hides the free-text ask bar when nothing can parse an arbitrary
+        # question, rather than offering a box that quietly falls back to
+        # keyword matching (AGENTS.md §1, amended 2026-09-26).
+        "thread_provider": get_settings().history_thread_provider,
     }
 
 
@@ -728,6 +743,56 @@ async def history_ideas(
         window_days=max(28, min(window_days, MAX_WINDOW_DAYS)),
     )
     payload["movers"] = movers(payload)
+    return payload
+
+
+@router.get("/web-api/history/threads")
+async def history_thread_suggestions(owner: Tenant) -> dict[str, Any]:
+    """Subjects this workspace has recorded a change of position on.
+
+    Derived, not curated. Every suggestion is backed by at least one switch, so
+    clicking one cannot land on an empty chart, and a workspace with no recorded
+    changes gets an empty list rather than four questions it cannot answer.
+    """
+    suggestions = await suggest_threads(build_store(), owner)
+    return {
+        "suggestions": [s.as_dict() for s in suggestions],
+        "provider": get_settings().history_thread_provider,
+        "max_objects": get_settings().history_thread_max_objects,
+    }
+
+
+class ThreadInput(BaseModel):
+    subject: str = Field(default="", max_length=200)
+    anchor_ids: list[str] = Field(default_factory=list, max_length=40)
+    bucket: str = "month"
+    window_days: int = Field(default=365, ge=7, le=MAX_WINDOW_DAYS)
+
+
+@router.post("/web-api/history/thread")
+async def history_thread(owner: Tenant, body: ThreadInput) -> dict[str, Any]:
+    """Follow one subject through the graph.
+
+    Read-only and, with the default `none` backend, entirely deterministic:
+    switches come from supersession chains and alternative mass is counted, so
+    nothing on the response was asserted by a model. When a backend is
+    configured it narrates this payload rather than replacing it.
+    """
+    if not body.subject and not body.anchor_ids:
+        raise HTTPException(400, "Give a subject or the objects to start from.")
+    settings = get_settings()
+    report = await run_thread(
+        build_store(),
+        owner,
+        subject=body.subject,
+        anchor_ids=body.anchor_ids,
+        bucket=Bucket(body.bucket) if body.bucket in {b.value for b in Bucket} else Bucket.MONTH,
+        window_days=body.window_days,
+        max_objects=min(settings.history_thread_max_objects, DEFAULT_MAX_OBJECTS * 4),
+    )
+    payload = report.as_dict()
+    payload["provider"] = settings.history_thread_provider
+    payload["narrated"] = False
     return payload
 
 

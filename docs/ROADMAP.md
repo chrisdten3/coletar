@@ -953,8 +953,59 @@ series. `coletar.history` replays it.
       spread over four seconds, so any question about history answered "it all
       happened just now".
 
+- [x] **Threads: following one subject through the graph** (`history/threads.py`).
+      The other half of the question. `rollup` answers "what is happening to my
+      context"; this answers "what does my context *say*, and when did it change
+      its mind" — "how has my choice of database changed over time". Three tiers
+      of evidence, and only the first two ship: a **switch** is a supersession
+      chain where the named alternatives differ, which is a change the user
+      *recorded as a correction* and therefore evidence rather than inference;
+      **alternative mass** counts live objects naming each competing option per
+      bucket, which shows a position fading before it was formally replaced.
+      Model-narrated "how your thinking evolved" is deliberately not tier three
+      of the same feature — see below.
+      Alternatives are recognised by *shape*, not from a dictionary: a fixed
+      list of products is wrong the week someone adopts one that is not on it,
+      and this has to work for a legal research provider as readily as for a
+      database. Two regressions are in the tests because both produced confident
+      nonsense: a lowercase compound ("per-service", "two-week") read as a
+      product someone had switched between, and a one-sided switch ("Events go
+      through Kafka; RabbitMQ is retired") labelled the thread "How has Kafka
+      changed over time".
+- [x] **Suggestions are derived, not curated.** A per-persona list of demo
+      questions is a demo script; deriving them from the graph is a feature. Every
+      suggestion is backed by at least one substantive switch, so clicking one
+      cannot land on an empty chart, and a workspace with no recorded changes gets
+      an empty list rather than four questions it cannot answer. Swaps rank above
+      one-sided changes — without that, the lawyer persona led with "how has
+      Gerald Roe changed over time", which is a real recorded correction and not
+      a question anyone would ask.
+- [x] **Cost over time** (`Metric.TOKENS_SERVED`). The only view here whose
+      inputs are not all in the graph, so the split is explicit: tokens are
+      *measured* — every retrieval trace carries `token_estimate`, the same figure
+      the plan meter reports — and rates are the user's own, from the Settings
+      scenario calculator, multiplied in the browser. The server ships tokens and
+      stays out of the arithmetic, so this cannot drift from the sidebar. The
+      counterfactual row ("all of it at claude-opus-5") is the point of the view.
+- [x] **The ask bar is hidden when nothing can parse a question.** With
+      `history_thread_provider` at its `none` default, the page offers derived
+      suggestions instead of a text box that quietly degrades to keyword
+      matching. A deterministic feature that says what it is beats a smart one
+      that is occasionally lying about what it did.
+
 Deferred, and named here so the stubs have somewhere to point:
 
+- [ ] **Model narration of a thread.** AGENTS.md §1 was amended on 2026-09-26 to
+      permit it: a history question is *about* the graph, so the objects that
+      answer it are exactly the ones the user has already accepted, and reading
+      them is a different act from mining a transcript. The boundary is narrower
+      in what it may send (one subject's objects, capped) and wider in what it
+      may see. Two rules hold whatever the backend: **the model narrates and the
+      engine counts** — no model does arithmetic a loop can do exactly — and
+      every cited object id is **re-checked against the graph before it renders**.
+      The shape-matching limit this lifts is real and visible in the demo: a
+      switch phrased in ordinary words ("privileged material goes only to the
+      local model") is invisible to a name extractor and obvious to a model.
 - [ ] **Model-assisted compilation.** `QuestionCompiler` is the seam;
       `nl.model_compiler_unavailable` raises rather than silently falling back,
       because a user who enabled a model backend and got keyword matching would

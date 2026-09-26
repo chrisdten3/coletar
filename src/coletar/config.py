@@ -212,6 +212,22 @@ class Settings(BaseSettings):
     # 30 days is a placeholder for a product decision, not a researched figure.
     capture_ttl_days: int = 30
 
+    # Answering a history question about a subject sends that subject's stored
+    # memories to a model (AGENTS.md §1, amended 2026-09-26). Deliberately a
+    # separate setting from `extraction_provider`: "mine my conversations with a
+    # third party" and "show my accepted memories to a third party" are two
+    # consents, and one must not silently grant the other. `none` keeps the
+    # deterministic analysis and sends nothing anywhere -- it is what the demo
+    # runs on, and it is a complete feature rather than a degraded one.
+    history_thread_provider: Literal["none", "ollama", "anthropic", "openai"] = "none"
+    ollama_thread_model: str = "llama3.1"
+    anthropic_thread_model: str = "claude-sonnet-5"
+    openai_thread_model: str = "gpt-5.6-terra"
+    #: Ceiling on how many objects one thread question may send to that backend.
+    #: The boundary says "one subject's objects, never the whole graph"; this is
+    #: the number that makes it true rather than aspirational.
+    history_thread_max_objects: int = 120
+
     extraction_batch_size: int = 100
 
     # Scheduled batch worker. The interval is a latency choice, not a throughput

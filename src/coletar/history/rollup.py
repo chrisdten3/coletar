@@ -303,12 +303,16 @@ def _stock_value(metric: Metric, members: list[_ObjectState]) -> float:
 def _counts_for(metric: Metric, event: Event) -> float:
     """How much one matching event contributes.
 
-    Every flow metric is one-per-event except `objects_served`, which is the
-    question "how much context was actually handed over" and is therefore counted
-    in objects, not in searches.
+    Every flow metric is one-per-event except the two that measure how much
+    context was actually handed over, which are counted in objects and in
+    tokens rather than in searches. `tokens_served` is the one the cost view
+    multiplies: it is the same figure the plan meter already reports, so a
+    price drawn from it agrees with the number in the sidebar.
     """
     if metric is Metric.OBJECTS_SERVED:
         return float(len(_dig(event.detail, "returned_ids") or []))
+    if metric is Metric.TOKENS_SERVED:
+        return float(_dig(event.detail, "token_estimate") or 0)
     return 1.0
 
 

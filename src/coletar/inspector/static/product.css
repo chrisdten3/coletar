@@ -4572,3 +4572,93 @@ h2 {
   gap: 8px;
   align-items: center;
 }
+
+/* --- Choices and cost ----------------------------------------------------- */
+.suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.suggestion-q {
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  line-height: 1.35;
+}
+.suggestion-q:hover {
+  color: var(--green);
+}
+.name-chip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 2px 7px;
+  color: var(--muted);
+  background: var(--paper);
+}
+.name-chip.dropped {
+  border-color: var(--amber);
+  color: var(--amber);
+  text-decoration: line-through;
+}
+.name-chip.adopted {
+  border-color: var(--green);
+  color: var(--green);
+}
+.thread h3 {
+  margin: 2px 0 0;
+}
+.switch-list {
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+  border-left: 2px solid var(--line);
+}
+.switch-row {
+  padding: 0 0 18px 16px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.switch-row::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+}
+.switch-names {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.switch-names .arrow {
+  color: var(--muted);
+}
+.thread-timeline {
+  margin-top: 14px;
+  font-size: 12px;
+}
+.thread-timeline summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.thread h4 {
+  margin: 18px 0 0;
+  font-size: 13px;
+}
+tr.counterfactual td {
+  border-top: 1px solid var(--line);
+  font-style: italic;
+}

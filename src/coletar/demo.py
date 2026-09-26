@@ -645,6 +645,217 @@ def _fragment(rng: random.Random, sentence: str) -> str:
     return sentence.rstrip(".")
 
 
+@dataclass(frozen=True)
+class Choice:
+    """A decision slot whose value changed, written as a supersession chain.
+
+    This is the shape the thread view exists to find, so a demo graph has to
+    contain some. It is also the shape a real graph is *least* reliable about:
+    a switch is only visible if somebody recorded the new position as replacing
+    the old one rather than as an unrelated new fact. Seeding it here is not
+    cheating -- these are the writes the product asks users to make -- but the
+    gap between this and a mined archive is real and belongs in the demo script.
+    """
+
+    slot: str
+    #: The question this chain is the answer to. Surfaced as a suggestion, so
+    #: it has to read like something a person would actually type.
+    question: str
+    scope: Scope
+    #: (statement, days ago), oldest first. Each supersedes the one before it.
+    steps: list[tuple[str, float]]
+    locality: Locality | None = None
+    sensitivity: Sensitivity = Sensitivity.NORMAL
+
+
+async def build_choices(w: Workspace, key: str, choices: list[Choice]) -> list[str]:
+    """Write each choice as a chain of corrections over the window."""
+    rng = _rng_for(key + ":choices")
+    roles: list[str] = []
+    for index, choice in enumerate(choices):
+        previous: str | None = None
+        for step, (statement, days_ago) in enumerate(choice.steps):
+            role = f"ch_{key}_{index:02d}_{step}"
+            stored = await w.memory(
+                role,
+                statement,
+                # The first statement of a position is a fact; every later one
+                # is the user correcting the record, which is what makes the
+                # switch legible as a switch rather than as two opinions.
+                kind=MemoryKind.FACT if previous is None else MemoryKind.CORRECTION,
+                scope=choice.scope,
+                locality=choice.locality,
+                sensitivity=choice.sensitivity,
+                method=ExtractionMethod.EXPLICIT_STATEMENT,
+                origin=OriginType.USER,
+                provider=_pick(
+                    rng, {Provider.CLAUDE: 3.0, Provider.CHATGPT: 2.0, Provider.LOCAL: 1.0}
+                ),
+                confidence=round(rng.uniform(0.88, 0.98), 2),
+                supersedes=previous,
+                days_ago=days_ago,
+            )
+            previous = stored.id
+            roles.append(role)
+    return roles
+
+
+ENGINEER_CHOICES: list[Choice] = [
+    Choice(
+        slot="extraction model",
+        question="how has my choice of model changed over time?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("We run memory extraction on GPT-4 through the OpenAI API.", 172),
+            (
+                "Extraction moved to Claude Sonnet — the judgement on ambiguous "
+                "turns is better and the cost per conversation is lower.",
+                108,
+            ),
+            (
+                "Extraction runs on local qwen2.5 for anything touching customer "
+                "data, and Claude Sonnet for everything else.",
+                34,
+            ),
+        ],
+    ),
+    Choice(
+        slot="ledger database",
+        question="how has my choice of backend infrastructure changed over time?",
+        scope=_project("proj_ledger_rewrite"),
+        steps=[
+            ("The ledger runs on Postgres 15 on RDS.", 178),
+            (
+                "The ledger targets Postgres 16 after the partitioning work; "
+                "the 15 pin was a staging artefact.",
+                96,
+            ),
+            (
+                "Ledger reads move to a Neon read replica and writes stay on the "
+                "RDS primary until the cutover finishes.",
+                26,
+            ),
+        ],
+    ),
+    Choice(
+        slot="deploy target",
+        question="where do we deploy the settlement service?",
+        scope=_project("proj_ledger_rewrite"),
+        steps=[
+            ("The settlement service deploys to ECS behind the shared ALB.", 164),
+            (
+                "Settlement deploys to Fly.io; ECS keeps the nightly batch jobs "
+                "until someone has time to move them.",
+                68,
+            ),
+        ],
+    ),
+    Choice(
+        slot="event transport",
+        question="what are we using for the event queue?",
+        scope=_project("proj_ledger_rewrite"),
+        steps=[
+            ("Events go through RabbitMQ with a per-service exchange.", 183),
+            (
+                "Events go through Kafka; RabbitMQ is retired once the ledger "
+                "cutover completes.",
+                84,
+            ),
+        ],
+    ),
+]
+
+LAWYER_CHOICES: list[Choice] = [
+    Choice(
+        slot="assistant for privileged work",
+        question="how has my choice of model changed over time?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Research drafting goes through Claude on the hosted plan.", 152),
+            (
+                "Privileged material goes only to the local Llama 3.1 instance; "
+                "Claude is for unprivileged research and general drafting.",
+                58,
+            ),
+        ],
+    ),
+    Choice(
+        slot="research provider",
+        question="how has my choice of research provider changed over time?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Case research runs on Westlaw under the old firm subscription.", 168),
+            (
+                "Case research moved to Lexis after the firm renegotiated; Westlaw "
+                "stays for the legacy citator links.",
+                74,
+            ),
+        ],
+    ),
+    Choice(
+        slot="document management",
+        question="where do drafts live?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Drafts live in Word on the shared drive, named by matter number.", 175),
+            (
+                "Drafts live in the DMS with version history; the shared drive is "
+                "read-only from the start of this quarter.",
+                52,
+            ),
+        ],
+    ),
+]
+
+BANKER_CHOICES: list[Choice] = [
+    Choice(
+        slot="assistant for deal work",
+        question="how has my choice of model changed over time?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Model work runs through ChatGPT on the team plan.", 158),
+            (
+                "Anything naming a live deal runs on the local Mistral instance only; "
+                "ChatGPT is for sector reading and public comps.",
+                62,
+            ),
+        ],
+    ),
+    Choice(
+        slot="comps data provider",
+        question="how has my choice of data provider changed over time?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Comps come from CapIQ.", 176),
+            (
+                "Comps come from FactSet after the desk switched; CapIQ stays for "
+                "ownership and shareholder data.",
+                79,
+            ),
+        ],
+    ),
+    Choice(
+        slot="deck tooling",
+        question="how do we build client decks?",
+        scope=GLOBAL_SCOPE,
+        steps=[
+            ("Decks are built in PowerPoint from the 2024 template pack.", 162),
+            (
+                "Decks build from the shared Figma component library; the 2024 "
+                "template pack is deprecated and should not be copied forward.",
+                48,
+            ),
+        ],
+    ),
+]
+
+CHOICES_BY_KEY: dict[str, list[Choice]] = {
+    "engineer": ENGINEER_CHOICES,
+    "lawyer": LAWYER_CHOICES,
+    "banker": BANKER_CHOICES,
+}
+
+
 async def import_burst(w: Workspace, profile: TrafficProfile) -> list[str]:
     """The day the user imported their provider export.
 
@@ -2322,6 +2533,9 @@ async def build_persona(
         # six months, and the reads run across the whole span.
         imported = await import_burst(workspace, profile)
         generated = await backfill_topics(workspace, profile)
-        await simulate_traffic(workspace, profile, curated + imported + generated)
+        chosen = await build_choices(workspace, persona.key, CHOICES_BY_KEY.get(persona.key, []))
+        await simulate_traffic(
+            workspace, profile, curated + imported + generated + chosen
+        )
 
     return workspace.result

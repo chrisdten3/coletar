@@ -750,8 +750,17 @@ function seriesColor(key, index) {
   return named[key] || HISTORY_PALETTE[index % HISTORY_PALETTE.length];
 }
 
+/* Buckets are UTC, and every date on this page is stated as UTC elsewhere
+   ("record dates are interpreted at the end of the selected UTC day"). Without
+   timeZone here, a month bucket starting 1 September rendered as "Aug 31" for
+   anyone west of Greenwich -- a chart labelled one day before the data it
+   shows. */
 const shortDate = (iso) =>
-  new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 
 /** A multi-series line chart as inline SVG.
 
@@ -759,6 +768,12 @@ const shortDate = (iso) =>
     charts of the same shape, and a dependency whose reason does not survive
     being said out loud does not go in. Points carry their event ids so a click
     can open the rows behind the number. */
+function axisLabel(value, opts) {
+  if (opts.legend === "sum_money") return "$" + value.toFixed(value < 1 ? 3 : 2);
+  if (Number.isInteger(value)) return String(value);
+  return value.toFixed(2);
+}
+
 function chart(series, opts = {}) {
   const height = opts.height || 150;
   const width = 640;
@@ -766,10 +781,11 @@ function chart(series, opts = {}) {
   const points = series[0]?.points || [];
   if (!points.length) return `<div class="chart-empty">No data in this window.</div>`;
 
-  const max = Math.max(
-    opts.min_max || 1,
-    ...series.flatMap((s) => s.points.map((p) => p.value)),
-  );
+  // The floor is opt-in, not a default of 1. A count chart wants an axis that
+  // reaches 1 even when empty; a cost chart of values under a dollar drew as a
+  // flat line along the bottom of a 0-to-1 axis.
+  const max =
+    Math.max(opts.min_max ?? 0, ...series.flatMap((s) => s.points.map((p) => p.value))) || 1;
   const x = (i) =>
     pad.l + (i / Math.max(points.length - 1, 1)) * (width - pad.l - pad.r);
   const y = (v) => pad.t + (1 - v / max) * (height - pad.t - pad.b);
@@ -778,9 +794,9 @@ function chart(series, opts = {}) {
     .map(
       (f) =>
         `<line class="grid" x1="${pad.l}" x2="${width - pad.r}" y1="${y(max * f)}" y2="${y(max * f)}"/>` +
-        `<text class="axis" x="${pad.l - 6}" y="${y(max * f) + 3}" text-anchor="end">${
-          Number.isInteger(max * f) ? max * f : (max * f).toFixed(2)
-        }</text>`,
+        `<text class="axis" x="${pad.l - 6}" y="${y(max * f) + 3}" text-anchor="end">${esc(
+          axisLabel(max * f, opts),
+        )}</text>`,
     )
     .join("");
 
@@ -819,12 +835,18 @@ function chart(series, opts = {}) {
     )
     .join("");
 
+  const legendValue = (s) =>
+    opts.legend === "last"
+      ? (s.points[s.points.length - 1]?.value ?? 0)
+      : opts.legend === "sum_money"
+        ? "$" + s.points.reduce((a, p) => a + p.value, 0).toFixed(2)
+        : s.points.reduce((a, p) => a + p.value, 0);
   const legend =
     series.length > 1
       ? `<div class="chart-legend">${series
           .map(
             (s, si) =>
-              `<span><i style="background:${seriesColor(s.key, si)}"></i>${esc(s.key)} <b>${s.points.reduce((a, p) => a + p.value, 0)}</b></span>`,
+              `<span><i style="background:${seriesColor(s.key, si)}"></i>${esc(s.key)} <b>${esc(String(legendValue(s)))}</b></span>`,
           )
           .join("")}</div>`
       : "";
@@ -837,7 +859,7 @@ function panel(title, payload, note) {
   const value = payload.is_stock
     ? Math.round(payload.headline * 100) / 100
     : payload.headline;
-  return `<article class="panel hist-panel"><div class="row between"><h3>${esc(title)}</h3><span class="mono muted">${esc(String(value))} <small>${esc(payload.headline_label)}</small></span></div>${chart(payload.series, { label: title, height: 130 })}${note ? `<p class="caption">${note}</p>` : ""}</article>`;
+  return `<article class="panel hist-panel"><div class="row between"><h3>${esc(title)}</h3><span class="mono muted">${esc(String(value))} <small>${esc(payload.headline_label)}</small></span></div>${chart(payload.series, { label: title, height: 130, min_max: 1 })}${note ? `<p class="caption">${note}</p>` : ""}</article>`;
 }
 
 async function loadHistory(force) {
@@ -948,7 +970,7 @@ function askResult() {
         )
         .join("")}</ol></div>`
     : "";
-  return `${warn}${compiledPanel(historyAsk)}<article class="panel hist-panel wide-chart"><div class="row between"><h3>${esc(r.explanation)}</h3><span class="mono">${esc(String(Math.round(r.headline * 100) / 100))} <small>${esc(r.headline_label)}</small></span></div>${chart(r.series, { label: r.explanation, height: 190 })}<p class="caption">${r.events_scanned} events replayed${r.truncated ? " · window reached the log scan limit, so this is a partial view" : ""}. Click a point to read the events it counted.</p></article>${cites}`;
+  return `${warn}${compiledPanel(historyAsk)}<article class="panel hist-panel wide-chart"><div class="row between"><h3>${esc(r.explanation)}</h3><span class="mono">${esc(String(Math.round(r.headline * 100) / 100))} <small>${esc(r.headline_label)}</small></span></div>${chart(r.series, { label: r.explanation, height: 190, min_max: 1 })}<p class="caption">${r.events_scanned} events replayed${r.truncated ? " · window reached the log scan limit, so this is a partial view" : ""}. Click a point to read the events it counted.</p></article>${cites}`;
 }
 
 function overviewTab() {
@@ -984,7 +1006,7 @@ function ideasTab() {
     key: s.label,
     points: s.points.map((p) => ({ at: p.at, value: p.value, event_ids: [] })),
   }));
-  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Cluster mass · active objects per ${esc(d.bucket)}</span><span class="mono muted">${d.clustered}/${d.total} clustered · ${esc(d.embedder)}</span></div>${chart(series.slice(0, 6), { label: "idea mass", height: 200 })}${movers ? `<div class="movers">${movers}</div>` : ""}<p class="caption">Topics are derived from the same embeddings retrieval uses, never from a model asked to judge sentiment — every point is a set of objects you can open. Join threshold ${d.threshold} (${esc(d.threshold_source)}), chosen from this graph's own similarity distribution. With the <code>${esc(d.embedder)}</code> embedder these cluster on shared vocabulary rather than shared meaning.</p></div>
+  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Cluster mass · active objects per ${esc(d.bucket)}</span><span class="mono muted">${d.clustered}/${d.total} clustered · ${esc(d.embedder)}</span></div>${chart(series.slice(0, 6), { label: "idea mass", height: 200, legend: "last", min_max: 1 })}${movers ? `<div class="movers">${movers}</div>` : ""}<p class="caption">Topics are derived from the same embeddings retrieval uses, never from a model asked to judge sentiment — every point is a set of objects you can open. Join threshold ${d.threshold} (${esc(d.threshold_source)}), chosen from this graph's own similarity distribution. With the <code>${esc(d.embedder)}</code> embedder these cluster on shared vocabulary rather than shared meaning.</p></div>
   <div class="hist-grid">${d.clusters
     .slice(0, 8)
     .map(
@@ -1060,6 +1082,170 @@ function asOfTab() {
 }
 
 
+/* --- Choices: following one subject through the graph ----------------------
+   The Overview charts answer "what is happening to my context". These answer
+   "what does my context say, and when did it change its mind" -- which is the
+   question people actually arrive with, and the one a per-product memory
+   feature cannot answer at all because it only holds its own half.
+
+   With no model backend configured this is entirely computed: switches come
+   from supersession chains and alternative mass is counted. That is why the
+   suggestions are *derived from the graph* rather than written per persona --
+   a hardcoded list is a demo script, and a derived one keeps working on a real
+   workspace, including by going quiet when there is nothing to show. */
+
+let threadSuggestions = null,
+  threadReport = null,
+  threadBusy = false;
+
+/** Which Settings rate row prices each provider's traffic. The rates are the
+    user's own and live in browser prefs; this view only multiplies. */
+const PROVIDER_RATE_ROW = { claude: 1, chatgpt: 2, local: 3, coletar: 3, gemini: 2 };
+const rateFor = (provider) => {
+  const row = PROVIDER_RATE_ROW[provider];
+  return row === undefined || row === 3 ? 0 : Number(prefs.rates?.[row] ?? 0);
+};
+
+async function loadThreads(force) {
+  if (threadSuggestions && !force) return;
+  try {
+    threadSuggestions = await api("/history/threads");
+  } catch (error) {
+    historyError = error.message;
+  }
+  if (routeOf() === "audit") render();
+}
+
+async function openThread(subject, anchorIds) {
+  threadBusy = true;
+  render();
+  try {
+    threadReport = await api("/history/thread", {
+      subject,
+      anchor_ids: anchorIds || [],
+      bucket: "month",
+    });
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    threadBusy = false;
+    render();
+  }
+}
+
+function switchRow(s) {
+  const chips = (names, tone) =>
+    names
+      .map((n) => `<span class="name-chip ${tone}">${esc(n)}</span>`)
+      .join("");
+  return `<li class="switch-row">
+    <span class="mono muted">${esc(shortDate(s.at))}</span>
+    <div class="switch-names">${chips(s.dropped, "dropped")}${s.dropped.length && s.adopted.length ? '<span class="arrow">→</span>' : ""}${chips(s.adopted, "adopted")}</div>
+    <div class="history-diff"><del>${esc(s.before.slice(0, 120))}</del><span>→</span><ins>${esc(s.after.slice(0, 120))}</ins></div>
+    <span class="mono muted"><a href="#/object/${encodeURIComponent(s.to_object_id)}">${esc(s.to_object_id)}</a> · recorded via ${esc(s.provider)}</span>
+  </li>`;
+}
+
+function threadView() {
+  const r = threadReport;
+  if (!r) return "";
+  const series = r.alternatives.map((a) => ({
+    key: a.name,
+    points: a.points.map((p) => ({ at: p.at, value: p.value, event_ids: [] })),
+  }));
+  return `<article class="panel thread">
+    <div class="row between wrap">
+      <div><span class="eyebrow">Thread</span><h3>${esc(r.subject)}</h3></div>
+      <button class="quiet small" data-action="thread-close">${icon("close")}</button>
+    </div>
+    <p class="mono muted">${r.matched} objects · ${r.switches.length} recorded ${r.switches.length === 1 ? "change" : "changes"} of position${r.truncated ? " · showing the strongest matches only" : ""}</p>
+    ${r.switches.length ? `<ol class="switch-list">${r.switches.map(switchRow).join("")}</ol>` : `<div class="inset"><p>No change of position recorded for this subject.</p><span class="mono muted">A switch is only visible when a statement was written as replacing another.</span></div>`}
+    ${series.length ? `<h4 class="mt">Mentions still standing, per ${esc(r.bucket)}</h4>${chart(series.slice(0, 6), { label: "alternatives", height: 170, legend: "last", min_max: 1 })}<p class="caption">Counted, not judged: each point is the number of live objects naming that option, and a mention is not an endorsement. The switches above are the stronger evidence — those are changes you recorded.</p>` : ""}
+    <details class="thread-timeline"><summary>${r.timeline.length} objects in this thread</summary><ol class="life-steps">${r.timeline
+      .map(
+        (t) =>
+          `<li><span class="mono muted">${esc(shortDate(t.at))}</span><p class="small">${esc(t.content.slice(0, 150))}</p><span class="mono muted"><a href="#/object/${encodeURIComponent(t.object_id)}">${esc(t.object_id)}</a>${t.names.length ? ` · ${t.names.map((n) => esc(n)).join(", ")}` : ""}${t.retired ? " · retired" : ""}</span></li>`,
+      )
+      .join("")}</ol></details>
+    ${r.provider === "none" ? `<p class="caption">Computed from your revision log. No model read these memories — <code>history_thread_provider</code> is <code>none</code>.</p>` : `<p class="caption">Narration backend: <code>${esc(r.provider)}</code>. Switches and counts are still computed; a model only describes them.</p>`}
+  </article>`;
+}
+
+function choicesTab() {
+  if (threadBusy && !threadReport)
+    return `<div class="inset"><p>Following the thread…</p></div>`;
+  if (!threadSuggestions) return `<div class="inset"><p>Looking for recorded changes…</p></div>`;
+  const list = threadSuggestions.suggestions || [];
+  if (!list.length)
+    return empty(
+      "No changes of position recorded yet",
+      "This view finds subjects where one statement was written as replacing another. Correct a memory and it will appear here.",
+    );
+  return `${threadReport ? threadView() : ""}
+  <div class="panel"><span class="eyebrow">Questions this workspace can answer</span><p class="muted">Derived from your own graph, not a fixed list. Each one is backed by a change you recorded, so none of them open an empty chart.</p></div>
+  <div class="hist-grid">${list
+    .map(
+      (s) =>
+        `<article class="panel suggestion"><button class="suggestion-q" data-thread="${esc(s.subject)}" data-anchors="${esc(s.anchor_ids.join(","))}">${esc(s.question)}</button>
+        <div class="row wrap">${s.names
+          .map((n) => `<span class="name-chip">${esc(n)}</span>`)
+          .join("")}</div>
+        <span class="mono muted">${s.switches} recorded ${s.switches === 1 ? "change" : "changes"} · last ${esc(shortDate(s.last_change))}</span></article>`,
+    )
+    .join("")}</div>
+  ${threadSuggestions.provider === "none" ? `<p class="caption">A model backend would let you type any question and would write these up in prose. None is configured, so the page offers what the graph can prove instead. Everything above is computed from the revision log.</p>` : ""}`;
+}
+
+/* --- Cost -----------------------------------------------------------------
+   The only view here that is about money, and the only one whose inputs are
+   not in the graph. Tokens are measured -- every retrieval trace records
+   `token_estimate`, which is the same figure the plan meter reports. Rates are
+   the user's, from Settings. The server ships tokens and stays out of the
+   arithmetic, so this cannot drift from the number in the sidebar. */
+function costTab() {
+  if (!historyDash) return `<div class="inset"><p>Reading the revision log…</p></div>`;
+  const tokens = historyDash.panels.tokens_by_provider;
+  if (!tokens?.series?.length)
+    return empty("No context served yet", "Cost is computed from recorded retrievals. Nothing has read this workspace.");
+
+  const priced = tokens.series.map((s) => ({
+    key: s.key,
+    rate: rateFor(s.key),
+    total: s.points.reduce((a, p) => a + p.value, 0),
+    points: s.points.map((p) => ({
+      at: p.at,
+      value: Math.round((p.value / 1000000) * rateFor(s.key) * 10000) / 10000,
+      event_ids: p.event_ids,
+    })),
+  }));
+  const grandTokens = priced.reduce((a, s) => a + s.total, 0);
+  const grandCost = priced.reduce((a, s) => a + (s.total / 1000000) * s.rate, 0);
+  const anyRate = priced.some((s) => s.rate > 0);
+
+  // The counterfactual is the point of the view: the same context volume,
+  // routed somewhere else.
+  const alt = Number(prefs.rates?.[0] ?? 0);
+  const altCost = (grandTokens / 1000000) * alt;
+
+  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Context served, by assistant</span><span class="mono muted">${number(grandTokens)} tokens · ${esc(historyDash.bucket)} buckets</span></div>${chart(tokens.series, { label: "tokens served", height: 170, min_max: 1 })}<p class="caption">Measured, not estimated: every retrieval appends a trace carrying its token count.</p></div>
+  ${
+    anyRate
+      ? `<div class="panel mt"><div class="row between wrap"><span class="eyebrow">What that cost</span><span class="mono">$${grandCost.toFixed(2)}</span></div>${chart(priced, { label: "cost", height: 160, legend: "sum_money" })}</div>`
+      : `<div class="notice mt">${icon("info")} No input prices set. Add them in <a href="#/settings">Settings</a> and this becomes a cost chart — the rates stay yours and never leave the browser.</div>`
+  }
+  <div class="panel table-wrap mt"><table><thead><tr><th>Assistant</th><th>Tokens served</th><th>Rate / Mtok</th><th>Cost</th><th>Share</th></tr></thead><tbody>${priced
+    .map(
+      (s) =>
+        `<tr><td>${tag(s.key)}</td><td class="mono">${number(s.total)}</td><td class="mono">${s.rate ? "$" + s.rate.toFixed(2) : "—"}</td><td class="mono">${s.rate ? "$" + ((s.total / 1000000) * s.rate).toFixed(2) : "—"}</td><td class="mono muted">${grandTokens ? Math.round((s.total / grandTokens) * 100) : 0}%</td></tr>`,
+    )
+    .join("")}${
+    alt
+      ? `<tr class="counterfactual"><td class="mono muted">all of it at ${esc(costModels[0][0])}</td><td class="mono muted">${number(grandTokens)}</td><td class="mono muted">$${alt.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">$${altCost.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">${grandCost ? (altCost >= grandCost ? "+" : "−") + Math.abs(Math.round(((altCost - grandCost) / grandCost) * 100)) + "%" : "—"}</td></tr>`
+      : ""
+  }</tbody></table></div>
+  <p class="caption">A scenario calculator, not an invoice. Rates are the ones you entered in Settings; token counts are recorded retrievals over the selected window. Local models are priced at zero, which is a modelling choice and not a claim that running them is free.</p>`;
+}
+
 /** Saved questions, re-run on open. The metric-dashboard move: a chart you
     visit is a chart you forget, and the interesting ones are the ones that
     tell you when they moved. */
@@ -1077,7 +1263,9 @@ function watchesPanel() {
 function audit() {
   const tabs = [
     ["overview", "Overview"],
+    ["choices", "Choices"],
     ["ideas", "Ideas over time"],
+    ["cost", "Cost"],
     ["reach", "Who has read this"],
     ["asof", "As of / in force"],
   ];
@@ -1090,16 +1278,19 @@ function audit() {
     )
     .join("");
 
+  const nlReady =
+    historyDash && historyDash.thread_provider && historyDash.thread_provider !== "none";
+
   return shell(
     "Audit",
-    `<form id="ask-form" class="panel ask">
+    `${nlReady ? `<form id="ask-form" class="panel ask">
       <label class="ask-row"><span class="sr-only">Ask about your context history</span>
         <input name="question" type="text" autocomplete="off" placeholder="Ask: how many memories did I write per week last quarter" value="${esc(historyAsk?.question || "")}">
         <button class="primary">${icon("search")} Ask</button></label>
-      <p class="small muted">Your question compiles to a typed query before anything runs, and the query is shown so you can correct it. Nothing here reads your memories into a model.</p>
+      <p class="small muted">Your question compiles to a typed query before anything runs, and the query is shown so you can correct it. Counts and costs are computed from your revision log, never by a model. Following a subject sends that subject\u2019s memories to <code>${esc(String(historyDash?.thread_provider || "none"))}</code>.</p>
       ${examples ? `<div class="chips">${examples}</div>` : ""}
-    </form>
-    ${askResult()}
+    </form>` : ""}
+    ${nlReady ? askResult() : ""}
     ${watchesPanel()}
     <div class="row between wrap hist-controls">
       <div class="tabs" role="tablist">${tabs
@@ -1122,11 +1313,15 @@ function audit() {
     ${
       historyTab === "overview"
         ? overviewTab()
-        : historyTab === "ideas"
-          ? ideasTab()
-          : historyTab === "reach"
-            ? reachTab()
-            : asOfTab()
+        : historyTab === "choices"
+          ? choicesTab()
+          : historyTab === "ideas"
+            ? ideasTab()
+            : historyTab === "cost"
+              ? costTab()
+              : historyTab === "reach"
+                ? reachTab()
+                : asOfTab()
     }`,
   );
 }
@@ -2014,6 +2209,11 @@ async function runAction(action, id) {
     );
     return;
   }
+  if (action === "thread-close") {
+    threadReport = null;
+    render();
+    return;
+  }
   if (action === "cites-close") {
     historyCites = null;
     render();
@@ -2238,7 +2438,11 @@ function bindHistory() {
   // Fetch what the visible tab needs, and nothing else. The clustering pass
   // embeds every object in the workspace, so it must not run because someone
   // opened the page to look at a bar chart.
-  if (historyTab === "overview") loadHistory();
+  // The dashboard is needed by Overview and by Cost (which prices its tokens
+  // series), and it carries the backend flag the ask bar is gated on, so it is
+  // always fetched.
+  loadHistory();
+  if (historyTab === "choices") loadThreads();
   if (historyTab === "ideas") loadIdeas();
   if (historyTab === "reach") loadReach();
 
@@ -2261,6 +2465,13 @@ function bindHistory() {
   });
   document.querySelectorAll("[data-watch]").forEach((b) => {
     b.onclick = () => askHistory(b.dataset.watch);
+  });
+  document.querySelectorAll("[data-thread]").forEach((b) => {
+    b.onclick = () =>
+      openThread(
+        b.dataset.thread,
+        (b.dataset.anchors || "").split(",").filter(Boolean),
+      );
   });
 
   const askForm = $("#ask-form");

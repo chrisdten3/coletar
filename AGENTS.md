@@ -61,6 +61,37 @@ tests pass.
      model may return has nowhere to put a confidence or a locality, and every
      candidate is grounded against the source before it becomes an object.
 
+   **History questions may read stored memories.** Added 2026-09-26, and it
+   inverts the sentence two bullets above, so it is written out rather than
+   quietly folded into it. Extraction sends candidate turns and never the graph.
+   Answering "how has my choice of database changed over time" cannot work that
+   way: the question is *about* the graph, and the objects that answer it are
+   exactly the ones the user has already accepted. Reading them is a different
+   act from mining a transcript, and the boundary is different in both
+   directions — narrower in what it may send, wider in what it may see:
+   - **One subject's objects, never the whole graph.** A thread query resolves to
+     a bounded set of objects matching one subject, and that set is what is sent.
+     Not the workspace, not a whole scope, not "everything recent".
+   - **The user chooses the backend, separately.** `history_thread_provider`
+     defaults to `ollama` and is its own setting. It deliberately does not ride
+     on `extraction_provider`: "mine my conversations with a third party" and
+     "show my stored memories to a third party" are two different consents, and
+     granting one must not silently grant the other.
+   - **Named as a subprocessor for this flow in its own right.** Not an extension
+     of extraction's entry. The data class is different — accepted memories
+     rather than raw turns — and a compliance story that lists one and means both
+     is wrong about which.
+   - **The model narrates; the engine counts.** Every number — costs, totals, mass
+     per bucket — is computed from the log. The model produces prose and claims,
+     never arithmetic. This is not caution about capability; it is that there is
+     no reason to ask a model to sum events a loop can sum exactly.
+   - **Grounded before it renders.** A returned object id that does not exist, or
+     whose dates contradict the claim made about it, is dropped rather than shown.
+     Same discipline as extraction: nothing becomes visible because a model
+     asserted it.
+   - **Still §7.** The objects are rendered as background, not instructions, and
+     nothing in the answer path acts on their content.
+
 2. **No UI driving on the destination side either.** The ChatGPT compiler emits a
    package the *user* uploads through GPT Builder. It does not drive GPT Builder.
 

@@ -93,6 +93,7 @@ class Metric(StrEnum):
     RESCOPES = "rescopes"
     RETRIEVALS = "retrievals"
     OBJECTS_SERVED = "objects_served"
+    TOKENS_SERVED = "tokens_served"
     EXTRACTION_FAILURES = "extraction_failures"
 
     # Stock.
@@ -142,6 +143,7 @@ _METRIC_EVENT: dict[Metric, EventType] = {
     Metric.RESCOPES: EventType.OBJECT_RESCOPED,
     Metric.RETRIEVALS: EventType.RETRIEVAL_TRACE,
     Metric.OBJECTS_SERVED: EventType.RETRIEVAL_TRACE,
+    Metric.TOKENS_SERVED: EventType.RETRIEVAL_TRACE,
     Metric.EXTRACTION_FAILURES: EventType.EXTRACTION_UNAVAILABLE,
 }
 
