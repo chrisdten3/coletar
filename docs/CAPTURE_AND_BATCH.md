@@ -6,6 +6,22 @@ episode lineage, queue visibility, early user erasure, TTL crypto-shredding and 
 `extract-pending` command exist. Provider-native Batch API transport and scheduled
 execution remain deployment optimisations, not correctness prerequisites.
 
+## Automatic browser turns (2026-09-23)
+
+The separately consented automatic extension mode supplies a `turn_id`,
+`conversation_id`, and role to `/v1/capture`. User and assistant turns are separate
+encrypted EPISODE objects linked by their shared turn ID. Stable identity and Store
+leases make retry delivery idempotent without replacing keys or extending TTLs.
+Assistant replies have `origin=agent`, `extraction_method=browser_capture`, and no
+pending extraction flag. `is_pending` also excludes assistant roles defensively:
+model output is evidence, never a source of inferred user facts. No assistant
+output is sent to a third-party extraction model by this path.
+
+The extension's fail-open mode queues locally before generation but does not promise
+server durability before Send. Its encrypted local retry queue has a separate
+24-hour limit; backend raw retention still uses `capture_ttl_days`. See
+[`extension/README.md`](../extension/README.md) for consent, limitations and testing.
+
 ## The problem this solves
 
 Extraction currently has two paths with different quality, and they will drift apart

@@ -10,9 +10,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-python3 scripts/build_extension_icons.py
+uv run python scripts/build_extension_icons.py
 
-version="$(python3 -c "import json;print(json.load(open('extension/manifest.json'))['version'])")"
+version="$(uv run python -c "import json;print(json.load(open('extension/manifest.json'))['version'])")"
 out="dist/coleta-extension-${version}.zip"
 mkdir -p dist
 rm -f "$out"
@@ -22,6 +22,7 @@ rm -f "$out"
 ( cd extension && zip -q "../$out" \
     manifest.json \
     background.js \
+    bridge-core.js \
     content.js \
     options.html \
     options.js \

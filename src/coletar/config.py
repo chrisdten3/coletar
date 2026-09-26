@@ -87,6 +87,25 @@ class Settings(BaseSettings):
     # backend never needs Clerk's secret at all.
     clerk_publishable_key: str = ""
 
+    # --- Supabase Auth ----------------------------------------------------
+    # The project URL, e.g. https://your-ref.supabase.co. Root of both the `iss`
+    # every access token carries and the JWKS this server verifies against, which
+    # are derived from it together so a partial edit cannot point the issuer check
+    # and the trusted keys at two different projects.
+    supabase_url: str = ""
+    # Only set to override the derived `{url}/auth/v1/.well-known/jwks.json`.
+    supabase_jwks_url: str = ""
+    # The anon key, which is publishable and belongs in the browser bundle -- it is
+    # what the Supabase JS client presents to reach the auth endpoints, and it
+    # grants nothing on its own beyond what RLS allows (migrations 008 and 012
+    # enable RLS with no client policies, so it reaches no coletar table at all).
+    #
+    # The *service role* key is deliberately not a setting. It bypasses RLS and can
+    # mint sessions for any user, and no request path in coletar needs it:
+    # verification is a signature check against a public JWKS. Provisioning demo
+    # users needs it and reads it from the environment in that script alone.
+    supabase_anon_key: str = ""
+
     # Invite-gated beta. Comma-separated email addresses that may provision a new
     # account; an empty list means *closed*, not open. Someone who signs in through
     # Clerk without being listed gets a clear "not yet" rather than a new empty
@@ -129,6 +148,27 @@ class Settings(BaseSettings):
     # to leave the baselines alone because they run on `hashing`. See
     # docs/RETRIEVAL.md before changing it.
     retrieval_min_score: float = 0.0
+
+    # Which §5.1 reranking strategy `retrieve` uses when a caller names none.
+    #
+    # "published" is `rank_score`'s own order and is what every published baseline
+    # was measured with — the default for that reason, since a strategy that
+    # changed results by existing would make those numbers ambiguous.
+    #
+    # "mmr" trades a little relevance for coverage. It is the cheap win on a corpus
+    # with restatements: the real one answers "where do I work" with "I work at
+    # Eppley" twice and "i like chelsea" with "A club." twice, and each duplicate
+    # costs tokens while adding nothing.
+    #
+    # "model" is the cross-encoder prototype in `strategy.py`, run against the
+    # user's own model server. It exists to measure whether joint (query, document)
+    # scoring is worth a real cross-encoder's dependency weight; it is not a
+    # recommended production setting yet.
+    retrieval_reranker: Literal["published", "mmr", "model"] = "published"
+    #: MMR's relevance/diversity balance. 1.0 reproduces "published" exactly.
+    retrieval_mmr_lambda: float = 0.7
+    #: Which local model scores pairs when `retrieval_reranker` is "model".
+    retrieval_reranker_model: str = "llama3.1"
 
     # Whether imports use the deterministic pattern recogniser or model-assisted
     # extraction. This must be separate from provider selection: the old code made

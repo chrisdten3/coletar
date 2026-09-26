@@ -669,3 +669,37 @@ async def test_a_non_browser_caller_falls_back_to_its_key(monkeypatch):
             headers={"authorization": "Bearer sk-bridge"},
         )
     assert response.status_code == 200
+
+
+async def test_identified_capture_requires_raw_retention(client, store, monkeypatch):
+    from coletar.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "capture_turns", False)
+    async with client as c:
+        response = await c.post("/v1/capture", headers=AUTH, json={
+            "text": "Hello", "turn_id": "send-1", "role": "user",
+        })
+    assert response.status_code == 503
+    assert await store.list_objects(TENANT) == []
+
+
+async def test_browser_reply_and_retry_have_distinct_provenance(client, store, monkeypatch):
+    from coletar.capture import is_pending
+    from coletar.config import get_settings
+    from coletar.schema.objects import OriginType
+
+    monkeypatch.setattr(get_settings(), "capture_turns", True)
+    body = {"text": "I live in Paris", "turn_id": "send-1", "role": "assistant"}
+    async with client as c:
+        response = await c.post("/v1/capture", headers=AUTH, json=body)
+        retry = await c.post("/v1/capture", headers=AUTH, json=body)
+        conflict = await c.post("/v1/capture", headers=AUTH, json={**body, "text": "Changed"})
+        invalid = await c.post("/v1/capture", headers=AUTH, json={**body, "role": "system"})
+    assert response.status_code == retry.status_code == 200
+    assert response.json()["episode_id"] == retry.json()["episode_id"]
+    assert conflict.status_code == 409
+    assert invalid.status_code == 400
+    obj = await store.get_object(TENANT, response.json()["episode_id"])
+    assert obj is not None and obj.provenance.origin_type is OriginType.AGENT
+    assert not is_pending(obj)
+    assert len(await store.list_events(TENANT, object_id=obj.id)) == 1

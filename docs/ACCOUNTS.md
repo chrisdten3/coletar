@@ -150,6 +150,92 @@ hosted deployment, because `local` is refused once `COLETAR_PUBLIC_URL` is set.
 The scheduled capture job was single-tenant for the same reason and now runs across
 every active account, under one shared time budget.
 
+## Supabase Auth, as actually adopted — 2026-09-26
+
+The hosted deployment now runs `COLETAR_IDENTITY_PROVIDER=supabase`.
+`coletar/accounts/supabase.py` implements `verify`; `build_identity_provider`
+dispatches on `supabase`; Clerk stays implemented and switchable with that one
+value. Nothing in the account model moved — which is the second time the seam has
+been asked to do its job, and the first time it was asked by a provider it was not
+written against.
+
+**Why the switch, given Clerk already worked.** The deploy database is Supabase. An
+account's credential therefore already lived in the same Postgres as the account
+row, and Clerk put a second identity system beside it. One database where `account`
+joins `auth.users` is both simpler to operate and simpler to answer questions about
+— see `public.app_users` below.
+
+**The asymmetric-keys requirement is not optional.** Supabase's legacy arrangement
+signs tokens with a shared `JWT_SECRET`, and a secret that verifies a token can also
+mint one: holding it would make this server able to forge its own users' sessions.
+`SupabaseIdentityProvider` pins `algorithms` to `["ES256", "RS256"]` and so refuses
+HS256 outright rather than supporting both. A project must be on JWT signing keys
+(dashboard → Authentication → JWT Keys). The property this preserves is the one the
+Clerk section already claims: **coleta reads no auth provider's secret anywhere.**
+
+Three checks have no Clerk counterpart:
+
+  * **`aud` must be `authenticated`.** A service-role token is correctly signed and
+    is not a person signing in.
+  * **Anonymous sessions are refused.** Supabase will issue a valid token for a user
+    who proved nothing. Such a token must never reach `resolve_account`, which would
+    read it as a person and provision a workspace for it.
+  * **The issuer is the project.** Clerk needed a separate `azp` allowlist because
+    many sites share one Clerk instance; here a token from another project carries a
+    different `iss` and is signed by a JWKS we never fetch, so pinning `iss` is the
+    whole of that property. `issuer` and `jwks_url` are both derived from
+    `COLETAR_SUPABASE_URL` so a partial environment edit cannot check one project's
+    issuer against another's keys.
+
+### `public.app_users`, and why it is a view
+
+Migration 013 adds a view joining `account` to `auth.users`: address, tenant,
+identity provider, `email_confirmed_at`, `last_sign_in_at`, and a live count of
+issued keys. It is **not** a table, and there is still no password column anywhere
+in coletar's schema. The password is in `auth.users.encrypted_password`, hashed by
+GoTrue, which is Supabase's job; the view does not select it.
+
+A table duplicating either half would be two rows that can disagree about whether
+someone exists. Everything interesting about a user — is the address confirmed, when
+did they last sign in, whose graph is theirs — is a question about a join, not about
+a row somebody has to keep in step.
+
+It is created with `security_invoker = true`, so the caller's own privileges apply
+rather than the owner's: `anon` and `authenticated` have no policy on `account` and
+so still see nothing through it. It is also conditional on the `auth` schema
+existing, because the same migration runs against the local Postgres a laptop and
+the test suite use.
+
+### Adopting an existing graph
+
+`create_account` now takes an optional `tenant_id`. Graphs predate accounts here: a
+workspace built under `local`, or imported from an export before anyone signed in,
+already has a tenant id that no email hashes to. Without this the only ways to give
+such a graph an owner were to rewrite every row's `tenant_id` or to leave the
+account pointing at an empty workspace.
+
+Deriving stays the default, for the documented reason — it makes provisioning
+idempotent, so re-running it cannot strand someone's graph under a second tenant.
+Passing the argument is an explicit claim that the caller knows which graph it is
+attaching, and the one-tenant-per-account uniqueness constraint still refuses to
+attach one twice.
+
+### Demo accounts
+
+`scripts/provision_demo.py` creates the Supabase auth user, the account and the
+graph in one pass, because the three have to agree: an auth user with no account
+signs in to a 401, an account with no graph opens an empty workspace, and a graph
+with no account is unreachable. It is the only place in this repository that reads a
+service role key, from the environment, on the machine of whoever runs it. Generated
+passwords are written to a gitignored file rather than printed, because a password
+echoed to a terminal is a password in scrollback and in any recording of the demo.
+
+`scripts/copy_tenant.py` moves one tenant's rows between two databases preserving
+ids, timestamps, embeddings and the event chain — re-creating objects through the
+write path would stamp today's date on facts recorded months ago and replace the
+real event log with a synthetic one, leaving the Context Inspector explaining a
+history that did not happen.
+
 ## Not built
 
 A key-management UI. Settings' API-key panel remains the labelled simulation it has

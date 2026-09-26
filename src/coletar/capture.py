@@ -26,9 +26,11 @@ turn is what it is for.
 
 from __future__ import annotations
 
-from typing import Any
+import hashlib
+import uuid
+from typing import Any, Literal
 
-from coletar.episode_crypto import encrypt_episode
+from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode, encrypt_episode
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
@@ -54,7 +56,11 @@ PENDING = "needs_model_extraction"
 
 def is_pending(episode: ContextObject) -> bool:
     """Whether the batch pass still owes this turn a look."""
-    return bool(episode.payload.get(PENDING))
+    return (
+        episode.retired_at is None
+        and episode.payload.get("role", "user") == "user"
+        and bool(episode.payload.get(PENDING))
+    )
 
 
 async def capture_turn(
@@ -67,6 +73,9 @@ async def capture_turn(
     locality: Locality | None = None,
     principal_id: str | None = None,
     detail: dict[str, Any] | None = None,
+    role: Literal["user", "assistant"] = "user",
+    turn_id: str | None = None,
+    conversation_id: str | None = None,
 ) -> ContextObject:
     """Store one turn losslessly under a disposable key, before judging it.
 
@@ -78,31 +87,117 @@ async def capture_turn(
     Carries a TTL so `coletar expire` reaches it. An episode without one would
     outlive every retention promise the product makes.
     """
+    if turn_id is None:
+        return await _write_turn(
+            store,
+            tenant_id,
+            text,
+            episode_id=new_id(ObjectType.EPISODE),
+            surface=surface,
+            scope=scope,
+            locality=locality,
+            principal_id=principal_id,
+            detail=detail,
+            role=role,
+            turn_id=None,
+            conversation_id=conversation_id,
+        )
+    identity = f"{tenant_id}\0{principal_id}\0{surface}\0{turn_id}\0{role}"
+    episode_id = "epi_" + hashlib.sha256(identity.encode()).hexdigest()[:32]
+    owner = uuid.uuid4().hex
+    lease_name = "capture:" + episode_id
+    lease = await store.acquire_lease(tenant_id, lease_name, owner=owner, ttl_seconds=120)
+    if lease is None:
+        raise CaptureBusy("turn is already being captured; retry with the same turn ID")
+    try:
+        existing = await store.get_object(tenant_id, episode_id)
+        if existing is not None:
+            # Erasure is final: a delayed retry must never replace a shredded key.
+            try:
+                original = await decrypt_episode(store, tenant_id, existing)
+            except EpisodeKeyUnavailable:
+                return existing
+            if (
+                original != text
+                or existing.scope != scope
+                or existing.payload.get("conversation_id") != conversation_id
+            ):
+                raise CaptureConflict("turn ID was already used for different content")
+            return existing
+        return await _write_turn(
+            store,
+            tenant_id,
+            text,
+            episode_id=episode_id,
+            surface=surface,
+            scope=scope,
+            locality=locality,
+            principal_id=principal_id,
+            detail=detail,
+            role=role,
+            turn_id=turn_id,
+            conversation_id=conversation_id,
+        )
+    finally:
+        await store.release_lease(tenant_id, lease_name, owner=owner)
+
+
+class CaptureBusy(Exception):
+    """Another request holds this turn's capture lease."""
+
+
+class CaptureConflict(Exception):
+    """An idempotency key was reused for different turn content."""
+
+
+async def _write_turn(
+    store: Store,
+    tenant_id: TenantId,
+    text: str,
+    *,
+    episode_id: str,
+    surface: Provider,
+    scope: Scope,
+    locality: Locality | None,
+    principal_id: str | None,
+    detail: dict[str, Any] | None,
+    role: Literal["user", "assistant"],
+    turn_id: str | None,
+    conversation_id: str | None,
+) -> ContextObject:
     from coletar.config import get_settings
 
     settings = get_settings()
-    episode_id = new_id(ObjectType.EPISODE)
     ciphertext, key = encrypt_episode(tenant_id, episode_id, text)
     episode = ContextObject(
         id=episode_id,
         type=ObjectType.EPISODE,
         content=ciphertext,
         scope=scope,
-        locality=locality
-        or Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({surface})),
+        locality=locality or Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset({surface})),
         # A verbatim turn is not a claim. Confidence describes how much we believe an
         # assertion, and there is no assertion here yet — the episode is evidence,
         # and the objects derived from it carry the confidence.
         confidence=1.0,
-        extraction_method=ExtractionMethod.EXPLICIT_STATEMENT,
+        extraction_method=(
+            ExtractionMethod.BROWSER_CAPTURE
+            if role == "assistant"
+            else ExtractionMethod.EXPLICIT_STATEMENT
+        ),
         ttl_days=settings.capture_ttl_days,
         provenance=Provenance(
-            origin_type=OriginType.USER,
+            origin_type=OriginType.USER if role == "user" else OriginType.AGENT,
             provider=surface,
             source_object_ids=[],
             confidence=1.0,
         ),
-        payload={PENDING: True, "content_encryption": "aesgcm-v1"},
+        payload={
+            PENDING: role == "user",
+            "content_encryption": "aesgcm-v1",
+            "role": role,
+            "turn_id": turn_id,
+            "conversation_id": conversation_id,
+        },
     )
     # Key first: a crash may leave an orphan random key, but never ciphertext whose
     # content cannot be recovered before its retention period has elapsed.
@@ -113,9 +208,16 @@ async def capture_turn(
         event=Event(
             type=EventType.CONNECTOR_WRITE,
             object_id=episode.id,
-            actor=Actor.USER,
+            actor=Actor.USER if role == "user" else Actor.CONNECTOR,
             provider=surface,
-            detail={"principal": principal_id, "captured": True, **(detail or {})},
+            detail={
+                **(detail or {}),
+                "principal": principal_id,
+                "captured": True,
+                "role": role,
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+            },
         ),
     )
     return episode

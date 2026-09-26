@@ -92,3 +92,77 @@ async def test_an_episode_the_model_has_seen_is_no_longer_pending() -> None:
     episode = await capture_turn(store, TENANT, "anything", surface=Provider.CHATGPT)
     episode.payload = {**episode.payload, PENDING: False}
     assert not is_pending(episode)
+
+
+@pytest.mark.asyncio
+async def test_identified_turn_retries_do_not_replace_keys_or_append_events() -> None:
+    store = InMemoryStore()
+    kwargs = dict(surface=Provider.CLAUDE, turn_id="send-1", conversation_id="chat-1")
+    first = await capture_turn(store, TENANT, "Same prompt", **kwargs)
+    first_key = await store.get_object_key(TENANT, first.id)
+    second = await capture_turn(store, TENANT, "Same prompt", **kwargs)
+    assert first.id == second.id
+    assert await store.get_object_key(TENANT, first.id) == first_key
+    assert len(await store.list_events(TENANT, object_id=first.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_reusing_turn_id_for_changed_content_is_rejected() -> None:
+    from coletar.capture import CaptureConflict
+
+    store = InMemoryStore()
+    await capture_turn(store, TENANT, "Original", surface=Provider.CLAUDE, turn_id="send-1")
+    with pytest.raises(CaptureConflict):
+        await capture_turn(store, TENANT, "Changed", surface=Provider.CLAUDE, turn_id="send-1")
+
+
+@pytest.mark.asyncio
+async def test_assistant_evidence_is_not_user_memory_or_extraction_input() -> None:
+    from coletar.schema.objects import ExtractionMethod, OriginType
+
+    store = InMemoryStore()
+    user = await capture_turn(store, TENANT, "Question", surface=Provider.CLAUDE, turn_id="s1")
+    reply = await capture_turn(
+        store,
+        TENANT,
+        "I live in Paris",
+        surface=Provider.CLAUDE,
+        turn_id="s1",
+        role="assistant",
+    )
+    assert user.id != reply.id
+    assert reply.provenance.origin_type is OriginType.AGENT
+    assert reply.extraction_method is ExtractionMethod.BROWSER_CAPTURE
+    assert not is_pending(reply)
+    reply.payload[PENDING] = True
+    assert not is_pending(reply), "even an incorrect pending flag cannot mine model text"
+    assert await decrypt_episode(store, TENANT, reply) == "I live in Paris"
+
+
+@pytest.mark.asyncio
+async def test_delayed_retry_does_not_resurrect_erased_turn() -> None:
+    store = InMemoryStore()
+    obj = await capture_turn(store, TENANT, "Private", surface=Provider.CLAUDE, turn_id="s1")
+    await store.shred_object_key(TENANT, obj.id, reason="user erasure")
+    retry = await capture_turn(store, TENANT, "Private", surface=Provider.CLAUDE, turn_id="s1")
+    assert retry.id == obj.id
+    assert await store.get_object_key(TENANT, obj.id) is None
+
+
+@pytest.mark.asyncio
+async def test_repeated_text_in_distinct_turns_is_not_dropped() -> None:
+    store = InMemoryStore()
+    first = await capture_turn(store, TENANT, "Continue", surface=Provider.CLAUDE, turn_id="s1")
+    second = await capture_turn(store, TENANT, "Continue", surface=Provider.CLAUDE, turn_id="s2")
+    assert first.id != second.id
+
+
+@pytest.mark.asyncio
+async def test_capture_lease_rejects_concurrent_delivery() -> None:
+    from coletar.capture import CaptureBusy
+
+    store = InMemoryStore()
+    obj = await capture_turn(store, TENANT, "Text", surface=Provider.CLAUDE, turn_id="s1")
+    await store.acquire_lease(TENANT, "capture:" + obj.id, owner="another", ttl_seconds=120)
+    with pytest.raises(CaptureBusy):
+        await capture_turn(store, TENANT, "Text", surface=Provider.CLAUDE, turn_id="s1")

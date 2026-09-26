@@ -1,37 +1,10 @@
 /* Second design experiment: editorial landscapes and inspectable context.
    All demonstration state is synthetic. Workspace actions use product.js APIs. */
-let horizonSlide = 0;
-let flowStep = 0;
 let horizonObserver;
-const horizonStories = [
-  {
-    label: "Your context",
-    title: "Your context,<br>anywhere and everywhere.",
-    description:
-      "Stay in context no matter the model.\nSecure, audited, and compliant wherever it goes.",
-    receipt: "A little more you.<br>In every conversation.",
-    fact: "Use plain language. Keep explanations concise.",
-    type: "Writing preference",
-  },
-  {
-    label: "Your rules",
-    title: "A little personal.<br>Entirely in your control.",
-    description:
-      "Choose which assistants can read each detail.\nLet the useful things travel. Keep the private things close.",
-    receipt: "The right context.<br>Only in the right hands.",
-    fact: "Keep my personal journal on my local model.",
-    type: "Personal context",
-  },
-  {
-    label: "Your next step",
-    title: "New conversations.<br>Same understanding.",
-    description:
-      "Keep the thread of your work, even when your tools change.\nYour context has a history. And a way forward.",
-    receipt: "Everything changes.<br>Keep what matters.",
-    fact: "The Atlas launch is now 24 October.",
-    type: "Project decision",
-  },
-];
+const horizonStory = {
+  title: "Your context,<br>anywhere and everywhere.",
+  description: "Stay in context no matter the model.\nSecure, audited, and compliant wherever it goes.",
+};
 /* The hero background is a looping reel rather than one still. Clips are held at
    720p because the shade gradients sit on top of them and nothing in the frame is
    ever read for detail; the weight saved matters more than the resolution lost.
@@ -47,57 +20,87 @@ const heroClips = [
 let heroClip = 0;
 // Longest a single clip holds the hero before the reel moves on, in seconds.
 const HERO_DWELL = 12;
+/* Every call to action on this page points at one of two places, and which one
+   depends on whether the reader already has a workspace. Sending a signed-out
+   visitor to `#/library` used to work only because the whole app was a login wall;
+   now that the marketing pages render without an account, an unguarded link there
+   is a button that silently turns into a sign-in form. These two helpers are the
+   single place that decision is made.
+
+   Read through `window.coletaAuth` rather than captured at load: these are called
+   during render, by which point auth.js has resolved the session, and a value
+   captured at parse time would be stale for the whole page. */
+const signedIn = () => Boolean(window.coletaAuth?.session?.signedIn);
+const canSignUp = () => Boolean(window.coletaAuth?.session?.canSignUp);
+/** Where "start using this" goes. */
+const ctaHref = () =>
+  signedIn() ? "#/library" : canSignUp() ? "#/sign-up" : "#/sign-in";
+const ctaLabel = () =>
+  signedIn() ? "Open your workspace" : canSignUp() ? "Get started" : "Sign in";
 function horizonNav(onHero = false) {
   return `<header class="horizon-nav site-nav ${onHero ? "on-hero" : ""}">
     <a class="brand" href="#/home">coleta</a>
     <nav class="horizon-links" aria-label="Main">
-      <details class="nav-disclosure"><summary>Product ${icon("chevron")}</summary><div class="nav-popover"><a href="#/home/how-it-works" data-scroll="how-it-works">${icon("network")}<span>How it works<small>A continuous thread for your thinking</small></span></a><a href="#/home/product" data-scroll="product">${icon("shield")}<span>Selective context<small>Decide who can know what</small></span></a><a href="#/library">${icon("library")}<span>Your workspace<small>Explore your collection</small></span></a></div></details>
+      <details class="nav-disclosure"><summary>Product ${icon("chevron")}</summary><div class="nav-popover"><a href="#/home/how-it-works" data-scroll="how-it-works">${icon("network")}<span>How it works<small>A continuous thread for your thinking</small></span></a><a href="#/home/product" data-scroll="product">${icon("shield")}<span>Selective context<small>Decide who can know what</small></span></a><a href="${ctaHref()}">${icon("library")}<span>Your workspace<small>Explore your collection</small></span></a></div></details>
       <a href="#/security">Trust & privacy</a>
       <details class="nav-disclosure"><summary>Resources ${icon("chevron")}</summary><div class="nav-popover"><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">${icon("code")}<span>Developers<small>API, SDKs & MCP documentation</small></span></a><a href="#/migrate">${icon("download")}<span>Export & migrate<small>Take your context with you</small></span></a><a href="#/audit">${icon("audit")}<span>Context history<small>See how your knowledge changed</small></span></a></div></details>
     </nav>
-    <div class="horizon-nav-actions"><a class="nav-workspace" href="#/library">Try it out ${icon("arrow")}</a><button class="horizon-menu" aria-label="Toggle navigation" aria-expanded="false" aria-controls="horizon-mobile-nav">${icon("menu")}</button></div>
-    <nav id="horizon-mobile-nav" class="horizon-mobile-nav" aria-label="Mobile navigation" hidden><a href="#/home/how-it-works" data-scroll="how-it-works">How it works</a><a href="#/home/product" data-scroll="product">Selective context</a><a href="#/security">Trust & privacy</a><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Developers ${icon("external")}</a></nav>
+    <div class="horizon-nav-actions">${
+      signedIn()
+        ? `<a class="nav-workspace" href="#/library">Open your workspace ${icon("arrow")}</a>`
+        : `<a class="nav-signin" href="#/sign-in">Sign in</a><a class="nav-workspace" href="${ctaHref()}">${ctaLabel()} ${icon("arrow")}</a>`
+    }<button class="horizon-menu" aria-label="Toggle navigation" aria-expanded="false" aria-controls="horizon-mobile-nav">${icon("menu")}</button></div>
+    <nav id="horizon-mobile-nav" class="horizon-mobile-nav" aria-label="Mobile navigation" hidden><a href="#/home/how-it-works" data-scroll="how-it-works">How it works</a><a href="#/home/product" data-scroll="product">Selective context</a><a href="#/security">Trust & privacy</a><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Developers ${icon("external")}</a>${
+      signedIn()
+        ? `<a href="#/library">Open your workspace</a>`
+        : `<a href="#/sign-in">Sign in</a><a href="${ctaHref()}">${ctaLabel()}</a>`
+    }</nav>
   </header>`;
 }
-function heroReceipt() {
-  const story = horizonStories[horizonSlide];
-  const providers =
-    horizonSlide === 1 ? ["local"] : ["claude", "chatgpt", "local"];
-  return `<div class="receipt-top"><span class="receipt-orbit">${icon("library")}</span><span>YOUR CONTEXT, CONNECTED</span>${icon("external")}</div><h2>${story.receipt}</h2><button class="receipt-fact" data-source="${[0, 3, 2][horizonSlide]}"><span>${story.type} ${icon("external")}</span><p>${story.fact}</p><small>${icon("check")} Source attached · inspect this example</small></button><div class="receipt-bottom"><span>Available to</span><div>${providers.map((p) => `<span title="${providerName(p)}">${mark(p, providerName(p))}</span>`).join("")}</div></div>`;
-}
-const flowTitles = [
-  "Bring what matters.",
-  "Give every detail a place.",
-  "Carry it into the next conversation.",
-];
-const flowDescriptions = [
-  "Start with an export you choose. Useful details keep a link to the conversation they came from.",
-  "Facts, preferences, and decisions share one collection, with their own source, scope, and history.",
-  "Connected assistants can retrieve eligible context. Your access policy decides what stays private.",
-];
-/* One continuous strip — sources, then the coleta core, then destinations — behind a
-   window that only ever shows one third of it. Clicking a step doesn't swap the
-   diagram for a different one; it slides the same strip over, so the three stay
-   visibly one thing instead of three unrelated screens. The `.flow-lead` connectors
-   fade toward whichever edge holds the next or previous stage, so even the fully-
-   visible slide hints there's more strip just out of frame. */
-function flowPreview() {
-  return `<div class="flow-explainer"><span class="section-label">0${flowStep + 1} / THE CONTEXT LOOP</span><h3 id="flow-title">${flowTitles[flowStep]}</h3><p id="flow-description">${flowDescriptions[flowStep]}</p><div class="flow-control" role="group" aria-label="Context workflow">${["Collect", "Organize", "Continue"].map((v, i) => `<button data-flow-step="${i}" aria-pressed="${flowStep === i}"><span>0${i + 1}</span>${v}</button>`).join("")}</div></div><div class="flow-canvas" aria-label="Illustrative context flow"><div class="flow-track step-${flowStep}">
-  <div class="flow-slide" aria-hidden="${flowStep !== 0}"><div class="flow-sources"><span class="flow-token">${mark("claude")} Claude export</span><span class="flow-token">${mark("chatgpt")} ChatGPT export</span><span class="flow-token">${icon("file")} Your own notes</span></div><div class="flow-lead" aria-hidden="true"></div></div>
-  <div class="flow-slide" aria-hidden="${flowStep !== 1}"><div class="flow-lead flip" aria-hidden="true"></div><div class="flow-core"><div class="flow-core-brand">coleta</div><span class="flow-object">${icon("check")} Senior engineer — skip the basics</span><span class="flow-object">${icon("library")} Project Atlas</span><span class="flow-object">${icon("audit")} Launch: 24 October</span><span class="flow-core-caption">Context + source + your rules</span></div><div class="flow-lead" aria-hidden="true"></div></div>
-  <div class="flow-slide" aria-hidden="${flowStep !== 2}"><div class="flow-lead flip" aria-hidden="true"></div><div class="flow-destinations">${["claude", "chatgpt", "local"].map((p) => `<span class="flow-token">${mark(p)}${providerName(p)}</span>`).join("")}</div></div>
-  </div><span class="flow-footnote">Illustrative flow · availability depends on the connection and access policy</span></div>`;
+function productOfferings() {
+  return `<section id="product" class="horizon-features horizon-section">
+    <div class="horizon-section-head centered"><h2>Coleta keeps your context<br><span>up to date, mobile, and secure.</span></h2></div>
+    <div class="horizon-feature-grid">
+      <a class="horizon-feature" href="#/surfaces">
+        <div class="feature-visual offering-visual sync-visual"><div class="offering-window">
+          <div class="offering-toolbar"><span>${icon("network")} Live sync</span><small class="status-pill">Connected</small></div>
+          <div class="sync-update"><small>PROJECT ATLAS · JUST UPDATED</small><p>Launch moved to 24 October.</p><span>${icon("check")} Saved with its source</span></div>
+          <div class="offering-row"><span>${mark("claude")} Claude</span><small>Available ${icon("check")}</small></div>
+          <div class="offering-row"><span>${mark("ollama")} Ollama</span><small>Available ${icon("check")}</small></div>
+        </div><span class="offering-example">Example connection activity</span></div>
+        <div class="feature-copy"><span>01 / UP TO DATE</span><h3>Live sync ${icon("external")}</h3><p>Keep useful context current across supported connections. Save a detail once so connected assistants can find it when it’s relevant.</p></div>
+      </a>
+      <a class="horizon-feature" href="#/migrate">
+        <div class="feature-visual offering-visual migration-visual"><div class="offering-window">
+          <div class="offering-toolbar"><span>${icon("download")} Migration preview</span><small>01 → 02</small></div>
+          <div class="migration-route"><span>${mark("chatgpt")} ChatGPT</span>${icon("arrow")}<span>${mark("claude")} Claude</span></div>
+          <div class="offering-row"><span>Project instructions</span><small>Native ${icon("check")}</small></div>
+          <div class="offering-row"><span>Saved context</span><small>Reconstructed</small></div>
+          <div class="preview-action">Download your package ${icon("download")}</div>
+        </div><span class="offering-example">Example destination package</span></div>
+        <div class="feature-copy"><span>02 / MOBILE</span><h3>True migration ${icon("external")}</h3><p>Move your work into another tool’s own format. Preview what carries over, see any gaps, then download a package you install yourself.</p></div>
+      </a>
+      <a class="horizon-feature" href="${ctaHref()}">
+        <div class="feature-visual offering-visual selective-visual"><div class="offering-window">
+          <div class="offering-toolbar"><span>${icon("shield")} Context access</span><small>Per detail</small></div>
+          <div class="access-detail"><small>PERSONAL CONTEXT</small><p>My private journal</p></div>
+          <div class="offering-row"><span>${mark("claude")} Claude</span><span class="preview-switch"><i></i><small>Off</small></span></div>
+          <div class="offering-row"><span>${mark("local")} Local model</span><span class="preview-switch on"><i></i><small>On</small></span></div>
+          <div class="access-note">${icon("shield")} Stays with your local model</div>
+        </div><span class="offering-example">Example access policy</span></div>
+        <div class="feature-copy"><span>03 / SECURE</span><h3>Selective context ${icon("external")}</h3><p>Choose which providers can read each detail. Share useful project context while keeping personal information within the boundaries you set.</p></div>
+      </a>
+    </div>
+  </section>`;
 }
 function horizonHome() {
-  const story = horizonStories[horizonSlide];
+  const story = horizonStory;
   return `<div class="horizon">${horizonNav(true)}<main id="content" class="horizon-main">
-    <section class="horizon-hero" aria-label="Introduction"><div class="horizon-reel" aria-hidden="true"><video class="horizon-clip is-active" data-hero-clip="0" src="/static/video/${heroClips[0]}" poster="/static/images/hero-poster.jpg" muted playsinline preload="auto" disablepictureinpicture disableremoteplayback></video><video class="horizon-clip" data-hero-clip="1" poster="/static/images/hero-poster.jpg" muted playsinline preload="none" disablepictureinpicture disableremoteplayback></video></div><div class="hero-shade"></div><div class="horizon-hero-grid"><div class="horizon-hero-copy"><h1 id="horizon-title">${story.title}</h1><p id="horizon-description">${story.description.replace("\n", "<br>")}</p><div class="horizon-hero-actions"><a class="btn horizon-primary" href="#/library">Find your continuity ${icon("arrow")}</a><a class="hero-secondary" href="#/home/how-it-works" data-scroll="how-it-works">See how it works ${icon("external")}</a></div></div><div id="hero-receipt" class="hero-receipt">${heroReceipt()}</div></div><div class="hero-story-nav" role="group" aria-label="Explore coleta"><span class="hero-story-intro">A place for your thinking.<br>A way to take it further.</span>${horizonStories.map((s, i) => `<button data-horizon-slide="${i}" aria-pressed="${horizonSlide === i}"><span>0${i + 1}</span><strong>${s.label}</strong>${icon("external")}</button>`).join("")}</div></section>
+    <section class="horizon-hero" aria-label="Introduction"><div class="horizon-reel" aria-hidden="true"><video class="horizon-clip is-active" data-hero-clip="0" src="/static/video/${heroClips[0]}" poster="/static/images/hero-poster.jpg" muted playsinline preload="auto" disablepictureinpicture disableremoteplayback></video><video class="horizon-clip" data-hero-clip="1" poster="/static/images/hero-poster.jpg" muted playsinline preload="none" disablepictureinpicture disableremoteplayback></video></div><div class="hero-shade"></div><div class="horizon-hero-grid"><div class="horizon-hero-copy"><h1 id="horizon-title">${story.title}</h1><p id="horizon-description">${story.description.replace("\n", "<br> ")}</p><div class="horizon-hero-actions"><a class="btn horizon-primary" href="${ctaHref()}">${ctaLabel()} ${icon("arrow")}</a><a class="hero-secondary" href="#/home/how-it-works" data-scroll="how-it-works">See how it works ${icon("external")}</a></div></div></div></section>
     <section class="horizon-intro"><div class="horizon-platforms"><span>Keep working where you think best.</span><div>${mark("claude")}Claude</div><div>${mark("chatgpt")}ChatGPT</div><div>${mark("ollama")}Ollama</div><a href="#/surfaces">Explore connections ${icon("external")}</a></div><div class="horizon-statement"><h2>Great work doesn’t<br>start from zero.</h2><p>Your preferences. The decisions behind your project. The details you’ve already explained. Coleta brings that context to any model, and builds your knowledge base from the conversations you’ve already had.</p></div></section>
-    <section id="how-it-works" class="horizon-section flow-section"><div class="horizon-section-head"><span class="section-label">01 / COLLECT. CONNECT. CONTINUE.</span><h2>Your AI’s source of truth.</h2></div><div id="horizon-flow" class="horizon-flow">${flowPreview()}</div></section>
-    <section class="horizon-features horizon-section"><div class="horizon-section-head centered"><h2>The things that make<br>your AI <span>yours.</span></h2></div><div class="horizon-feature-grid"><a class="horizon-feature" href="#/library"><div class="feature-visual collection-visual"><span class="mini-context ctx-one">${icon("file")} A preference worth keeping</span><span class="mini-context ctx-two">${icon("library")} The thinking behind Project Atlas</span><span class="mini-context ctx-three">${icon("check")} A decision with a source</span><div class="collection-grid" aria-hidden="true"></div></div><div class="feature-copy"><span>01 / YOUR COLLECTION</span><h3>A home for useful context. ${icon("external")}</h3><p>Keep facts, preferences, and decisions together, with a source you can always inspect.</p></div></a><a class="horizon-feature" href="#/home/product" data-scroll="product"><div class="feature-visual reach-visual"><div class="reach-orbit orbit-one"></div><div class="reach-orbit orbit-two"></div><div class="reach-lock">${icon("shield")}</div><span class="floating-brand fb-one">${mark("claude")}</span><span class="floating-brand fb-two">${mark("chatgpt")}</span><span class="floating-brand fb-three">${mark("local")}</span><span class="mini-policy">Your context. Your boundaries.</span></div><div class="feature-copy"><span>02 / YOUR CONTROL</span><h3>Selective by nature. ${icon("external")}</h3><p>Set access for each detail. Your personal context doesn’t need to go everywhere.</p></div></a><a class="horizon-feature" href="#/audit"><div class="feature-visual time-visual"><div class="time-line"></div><div class="time-point"><span></span><small>03 SEP</small><p>Launch: <del>10 October</del></p></div><div class="time-point current"><span></span><small>08 SEP</small><p>Launch: 24 October</p><b>${icon("check")} Current version</b></div></div><div class="feature-copy"><span>03 / YOUR HISTORY</span><h3>Room to change your mind. ${icon("external")}</h3><p>A correction moves you forward. The previous version remains part of the story.</p></div></a></div></section>
-    <section id="product" class="horizon-section horizon-access"><div class="horizon-section-head"><div><span class="section-label">02 / SEE YOUR RULES AT WORK</span><h2>Context is personal.<br>Keep it that way.</h2></div><p>Choose a detail. Change who can read it.<br>See exactly what becomes available.</p></div><div class="horizon-playground-label"><span>${icon("settings")} The context playground</span><span>Synthetic data · your workspace is untouched</span><button id="reset-demo" class="quiet">${icon("reset")} Reset example</button></div><div id="context-demo" class="context-demo">${demoPanel()}</div><div class="playground-caption"><span>${icon("shield")} Your policy is enforced when context is read.</span><a href="#/library">Make it yours ${icon("arrow")}</a></div></section>
-    <section class="horizon-history horizon-section"><div><span class="section-label">03 / AN EXPLANATION FOR EVERYTHING</span><h2>Nothing lost.<br>Nothing without<br>a source.</h2><p>Follow a fact back to its origin. See how a decision changed. Ask what your workspace knew at a different moment.</p><a href="#/audit" class="btn">Explore your history ${icon("arrow")}</a></div><div id="history-example" class="history-example">${historyExample()}</div></section>
-    <section class="horizon-section horizon-portable"><div class="horizon-section-head centered"><span class="section-label">04 / OPEN AT BOTH ENDS</span><h2>Bring your history.<br>Keep your freedom.</h2></div><div class="portable-grid"><article class="portable-card import"><img src="/static/images/misty-valley.jpg" alt="Misty green mountain valley at sunrise" loading="lazy" width="1800" height="1200"><div class="portable-card-shade"></div><div class="portable-paper" aria-hidden="true">${icon("file")}<span>conversations.json</span><small>Your history, ready for a new home.</small></div><div class="portable-copy"><span class="section-label">START WITH WHAT YOU KNOW</span><h3>You’re already<br>part of the way there.</h3><p>Choose a conversation export. Inspect the useful context, then decide where it belongs.</p><a class="btn" href="#/surfaces">Import your history ${icon("arrow")}</a></div></article><article class="portable-card export"><div class="export-diagram" aria-hidden="true"><div class="export-core">coleta</div><div class="export-line"></div><span>${mark("claude")}</span><span>${mark("chatgpt")}</span><span>${mark("ollama")}</span></div><div class="portable-copy"><span class="section-label">YOUR RIGHT TO LEAVE</span><h3>Another tool.<br>Still your context.</h3><p>Preview the manifest and Continuity Score. Download a package you install at your next destination.</p><a class="btn" href="#/migrate">Explore migration ${icon("arrow")}</a></div></article></div></section>
+    ${productOfferings()}
+    <section id="how-it-works" class="horizon-section truth-section" aria-label="Your AI’s source of truth"><picture><source media="(max-width: 760px)" srcset="/static/images/context-flow-mobile.svg" width="600" height="800"><img class="truth-diagram" src="/static/images/context-flow.svg" alt="Your AI’s source of truth: your exports and notes flow into Coleta, where context keeps its source, history, and access rules. Eligible context is then available to connected assistants." width="1200" height="560" loading="lazy"></picture></section>
+    <section class="horizon-section horizon-portable"><div class="horizon-section-head centered"><span class="section-label">OPEN AT BOTH ENDS</span><h2>Bring your history.<br>Keep your freedom.</h2></div><div class="portable-grid"><article class="portable-card import"><img src="/static/images/misty-valley.jpg" alt="Misty green mountain valley at sunrise" loading="lazy" width="1800" height="1200"><div class="portable-card-shade"></div><div class="portable-paper" aria-hidden="true">${icon("file")}<span>conversations.json</span><small>Your history, ready for a new home.</small></div><div class="portable-copy"><span class="section-label">START WITH WHAT YOU KNOW</span><h3>You’re already<br>part of the way there.</h3><p>Choose a conversation export. Inspect the useful context, then decide where it belongs.</p><a class="btn" href="#/surfaces">Import your history ${icon("arrow")}</a></div></article><article class="portable-card export"><div class="export-diagram" aria-hidden="true"><div class="export-core">coleta</div><div class="export-line"></div><span>${mark("claude")}</span><span>${mark("chatgpt")}</span><span>${mark("ollama")}</span></div><div class="portable-copy"><span class="section-label">YOUR RIGHT TO LEAVE</span><h3>Another tool.<br>Still your context.</h3><p>Preview the manifest and Continuity Score. Download a package you install at your next destination.</p><a class="btn" href="#/migrate">Explore migration ${icon("arrow")}</a></div></article></div></section>
     <section class="horizon-faq horizon-section"><div><span class="section-label">A FEW THINGS WORTH KNOWING</span><h2>Clarity,<br>before anything.</h2><a href="#/security">Our boundaries ${icon("external")}</a></div><div class="faq-list">${[
       [
         "Do I have to change how I use AI?",
@@ -109,7 +112,7 @@ function horizonHome() {
       ],
       [
         "How does my existing history get here?",
-        "You export your conversations from the provider and choose the downloaded file in coleta. The current web importer uses local pattern extraction. Optional browser capture requires consent and only captures submitted user text on the active supported page.",
+        "You export your conversations from the provider and choose the downloaded file in coleta. The current web importer uses local pattern extraction. Optional automatic browser mode requires separate consent and captures your prompt and its completed reply on the active, visible supported page. Manual capture reads only your submitted text.",
       ],
       [
         "What happens when a detail changes?",
@@ -125,7 +128,7 @@ function horizonHome() {
           `<details><summary>${q}${icon("plus")}</summary><p>${a}</p></details>`,
       )
       .join("")}</div></section>
-    <section class="horizon-closing"><img src="/static/images/alpine-valley.webp" alt="" loading="lazy" width="2200" height="1375"><div class="closing-shade"></div><span class="section-label">THERE’S MORE AHEAD.</span><h2>Go further.<br>Bring your thinking.</h2><a class="btn" href="#/library">Try it out ${icon("arrow")}</a></section>
+    <section class="horizon-closing"><img src="/static/images/alpine-valley.webp" alt="" loading="lazy" width="2200" height="1375"><div class="closing-shade"></div><span class="section-label">THERE’S MORE AHEAD.</span><h2>Go further.<br>Bring your thinking.</h2><a class="btn" href="${ctaHref()}">${ctaLabel()} ${icon("arrow")}</a></section>
     </main><footer class="horizon-footer"><div class="horizon-footer-top"><div><a class="brand" href="#/home">coleta</a><p>Independent context.<br>Human control.</p></div><div><span>Product</span><a href="#/library">Workspace</a><a href="#/surfaces">Connections</a><a href="#/migrate">Export & migrate</a></div><div><span>Trust</span><a href="#/security">Privacy & boundaries</a><a href="#/audit">History</a><a href="https://github.com/chrisdten3/coletar/blob/main/docs/CONTINUITY_SCORE.md" target="_blank" rel="noopener">Continuity Score ${icon("external")}</a></div><div><span>For builders</span><a href="https://github.com/chrisdten3/coletar" target="_blank" rel="noopener">Source & docs ${icon("external")}</a><a href="/" target="_blank" rel="noopener">Developer Inspector ${icon("external")}</a><button class="photo-credits quiet">Media credits</button></div></div><div class="horizon-wordmark" aria-hidden="true">coleta<span>↗</span></div><div class="horizon-footer-bottom"><span>A portable AI workspace.</span><span>Your context. Your rules. Your next step.</span></div></footer></div>`;
 }
 function openWorkspaceSearch() {
@@ -247,52 +250,6 @@ function bindHeroReel() {
 }
 function bindHorizon() {
   bindHeroReel();
-  document.querySelectorAll("[data-horizon-slide]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        horizonSlide = Number(b.dataset.horizonSlide);
-        const s = horizonStories[horizonSlide];
-        $("#horizon-title").innerHTML = s.title;
-        $("#horizon-description").innerHTML = s.description.replace(
-          "\n",
-          "<br>",
-        );
-        // The reel runs on its own clock; changing the story does not cut the clip.
-        $("#hero-receipt").innerHTML = heroReceipt();
-        document
-          .querySelectorAll("[data-horizon-slide]")
-          .forEach((x) =>
-            x.setAttribute(
-              "aria-pressed",
-              String(Number(x.dataset.horizonSlide) === horizonSlide),
-            ),
-          );
-        $("#hero-receipt")
-          .querySelectorAll("[data-source]")
-          .forEach(
-            (x) => (x.onclick = () => showDemoSource(Number(x.dataset.source))),
-          );
-      }),
-  );
-  // Targeted updates, not a re-render: the track has to stay the same DOM node
-  // across a step change or its CSS transition has nothing to animate from.
-  document.querySelectorAll("[data-flow-step]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        flowStep = Number(b.dataset.flowStep);
-        $("#flow-title").textContent = flowTitles[flowStep];
-        $("#flow-description").textContent = flowDescriptions[flowStep];
-        document.querySelectorAll("[data-flow-step]").forEach((x) =>
-          x.setAttribute("aria-pressed", String(Number(x.dataset.flowStep) === flowStep)),
-        );
-        const track = $(".flow-track");
-        track.className = "flow-track step-" + flowStep;
-        track.querySelectorAll(".flow-slide").forEach((slide, i) =>
-          slide.setAttribute("aria-hidden", String(i !== flowStep)),
-        );
-        b.focus({ preventScroll: true });
-      }),
-  );
   if ($(".horizon-menu"))
     $(".horizon-menu").onclick = () => {
       const open = $(".horizon-menu").getAttribute("aria-expanded") !== "true";

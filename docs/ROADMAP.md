@@ -348,16 +348,20 @@ This removes that requirement.
       credentials from a preflight by definition, so gating it on auth would fail
       every cross-origin call before the real request was sent. Rejections carry the
       headers too, or the browser hides a 401 and it looks like a network failure
-- [x] MV3 extension reading **only the composer**. `COMPOSERS` is the single DOM
-      lookup in the file; there is no selector for a message, a response or a
-      transcript, so no code path can reach one
-- [x] Recall is explicit and visible — memory is written into the box above the
-      user's text, so they read it and send it themselves. Nothing is added to a
-      message they did not see
-- [x] Passive inference defaults off. With explicit capture consent, the extension
-      stores the submitted user turn as an encrypted, surface-local `EPISODE` and
-      the asynchronous semantic worker materialises grounded objects later. It never
-      reads provider output and collect-then-batch writes no provisional regex memory
+- [x] MV3 extension with composer-only manual mode and a separate opt-in automatic
+      mode. Normal Send/Enter triggers encrypted local capture, a bounded context
+      lookup, visible injection and one activation of the native Send control.
+- [x] Automatic capture records the new completed reply only while that conversation
+      is active and visible. Leaving, stopping, or ambiguous completion cancels it.
+      Assistant episodes carry agent provenance and never enter user-fact extraction.
+- [x] Encrypted extension outbox: bounded to 100 records / 2 MB, 24-hour retention,
+      origin-and-account isolation, foreground retries and clearing on opt-out.
+      Identified capture retries reuse one episode without resetting its key or TTL.
+- [x] User turns use encrypted, surface-local episodes and asynchronous extraction.
+      Automatic mode requires server raw capture; it never falls back to regex writes.
+- [ ] Manual smoke test of automatic mode on current ChatGPT/Claude websites.
+      Synthetic adapters and API tests cover the lifecycle; native UI compatibility
+      and extension load/reload must still be checked in the user's browser.
 - [x] **Verified end to end on claude.ai, 29 Aug 2026, with no Project and no
       snippet.** Read: the button retrieved the stored preference and injected it
       visibly (`surface=claude.ai`, 27ms). Write: typing *"I never use an ORM; every
@@ -369,10 +373,11 @@ This removes that requirement.
       precision-first extractor declining correctly
 - [ ] Measure whether recall+capture in practice beats the Project snippet
 
-**The line, and why it holds.** Reading what a user types into a text field is the
-category password managers, text expanders and spell checkers occupy. Reading the
-model's Output is what both providers' terms name. The extension does the first and
-has no ability to do the second.
+**Boundary amendment, 2026-09-23.** The user explicitly authorized a narrow,
+consented active-page Send interception and new-reply capture exception. The older
+composer-only measurement above applies to manual mode, not a verification of the
+new automatic adapters. No provider account credentials, network interception,
+archive reading, headless driving, or background page capture is permitted.
 
 ### M3.4 Claude Code acquisition — guaranteed capture ✅
 

@@ -36,6 +36,7 @@ class Directory(Protocol):
         display_name: str = "",
         identity_provider: str | None = None,
         external_id: str | None = None,
+        tenant_id: TenantId | None = None,
     ) -> Account:
         """Provision an account and the tenant it owns.
 
@@ -43,6 +44,19 @@ class Directory(Protocol):
         provisioning is the caller's job, not a silent upsert here: quietly
         returning an existing account would make "create" a way to acquire someone
         else's graph by guessing their address.
+
+        `tenant_id` adopts an **existing** graph instead of deriving a fresh id from
+        the address. It exists because graphs predate accounts here: a workspace
+        built under the `local` provider, or imported from an export before anyone
+        signed in, already has a tenant id that no email hashes to. Without this the
+        only ways to give such a graph an owner are to rewrite every row's
+        `tenant_id` or to leave the account pointing at an empty workspace.
+
+        Deriving remains the default, and for the documented reason: it makes
+        provisioning idempotent, so re-running it for the same person cannot strand
+        their graph under a second tenant. Passing this is therefore an explicit
+        claim that the caller knows which graph it is attaching, and the one-tenant-
+        per-account uniqueness constraint still refuses to attach one twice.
         """
         ...
 

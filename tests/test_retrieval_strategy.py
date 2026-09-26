@@ -23,6 +23,11 @@ from coletar.schema.objects import Locality, LocalityMode, Memory, Provider, Sen
 from coletar.store.memory import InMemoryStore
 from conftest import TENANT
 
+#: These strategies ignore the query — the published order reuses existing
+#: scores and MMR is a diversity pass. It is in the signature for the
+#: cross-encoder, which cannot work without it.
+QUERY = "where does ledger deploy"
+
 
 def scored(content: str, total: float) -> Scored:
     obj = Memory.from_write(content)
@@ -42,45 +47,45 @@ async def store_with(*memories: Memory) -> InMemoryStore:
 # --- the default must change nothing -------------------------------------------
 
 
-def test_the_published_order_is_the_untouched_default() -> None:
+async def test_the_published_order_is_the_untouched_default() -> None:
     hits = [scored("a", 0.9), scored("b", 0.5), scored("c", 0.1)]
-    assert PublishedOrder().rerank(hits, limit=2) == hits[:2]
+    assert await PublishedOrder().rerank(hits, query=QUERY, limit=2) == hits[:2]
 
 
-def test_mmr_at_lambda_one_reproduces_the_published_order() -> None:
+async def test_mmr_at_lambda_one_reproduces_the_published_order() -> None:
     """The property that makes MMR safe to add: it is a *generalisation* of the
     default, not an alternative to it. At full relevance weighting the diversity term
     is multiplied by zero and the two orders coincide."""
     hits = [scored("alpha beta", 0.9), scored("alpha gamma", 0.6), scored("delta", 0.3)]
-    assert MaximalMarginalRelevance(1.0).rerank(hits, limit=3) == PublishedOrder().rerank(
-        hits, limit=3
-    )
+    diverse = await MaximalMarginalRelevance(1.0).rerank(hits, query=QUERY, limit=3)
+    published = await PublishedOrder().rerank(hits, query=QUERY, limit=3)
+    assert diverse == published
 
 
-def test_mmr_prefers_coverage_over_a_second_way_of_saying_the_same_thing() -> None:
+async def test_mmr_prefers_coverage_over_a_second_way_of_saying_the_same_thing() -> None:
     near_duplicate = scored("chris prefers fixed point integers for money", 0.80)
     distinct = scored("beacon deploys to fly io every friday", 0.55)
     hits = [scored("chris prefers fixed point integers money", 0.90), near_duplicate, distinct]
 
-    chosen = MaximalMarginalRelevance(0.5).rerank(hits, limit=2)
+    chosen = await MaximalMarginalRelevance(0.5).rerank(hits, query=QUERY, limit=2)
     assert chosen[1] is distinct
 
 
-def test_a_reranker_may_drop_but_never_add() -> None:
+async def test_a_reranker_may_drop_but_never_add() -> None:
     hits = [scored("a", 0.9), scored("b", 0.5)]
     for strategy in (PublishedOrder(), MaximalMarginalRelevance(0.7)):
-        result = strategy.rerank(hits, limit=5)
+        result = await strategy.rerank(hits, query=QUERY, limit=5)
         assert {hit.obj.id for hit in result} <= {hit.obj.id for hit in hits}
 
 
-def test_reranking_an_empty_result_is_empty() -> None:
-    assert MaximalMarginalRelevance(0.7).rerank([], limit=5) == []
+async def test_reranking_an_empty_result_is_empty() -> None:
+    assert await MaximalMarginalRelevance(0.7).rerank([], query=QUERY, limit=5) == []
 
 
 # --- fusion --------------------------------------------------------------------
 
 
-def test_rrf_fuses_by_rank_because_scores_share_no_scale() -> None:
+async def test_rrf_fuses_by_rank_because_scores_share_no_scale() -> None:
     """A cosine of 0.31 and a BM25 of 4.7 cannot be added. Position is the only thing
     two retrievers genuinely share, which is why this is the fusion boundary the
     Postgres sparse path will plug into."""
@@ -100,7 +105,7 @@ def test_rrf_fuses_by_rank_because_scores_share_no_scale() -> None:
     assert {hit.obj.id for hit in fused} == {a.obj.id, b.obj.id, c.obj.id}
 
 
-def test_rrf_keeps_real_components_so_explain_still_works() -> None:
+async def test_rrf_keeps_real_components_so_explain_still_works() -> None:
     a = scored("a", 0.9)
     fused = reciprocal_rank_fusion([[a], [a]], limit=1)
     assert fused[0].components.total == a.components.total

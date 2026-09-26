@@ -131,8 +131,8 @@ let auditAt = "2026-03-03",
 // The Library's sections, fetched alongside state. Null until the first load and
 // after any write, because a memory added or retired changes what belongs where.
 let libraryIndex = null;
-// Sections the reader has collapsed, and duplicate clusters they have opened.
-const collapsed = new Set();
+// Sections and duplicate clusters stay closed until the reader opens them.
+const expandedSections = new Set();
 const expandedClusters = new Set();
 const savePrefs = () => {
   try {
@@ -193,9 +193,31 @@ async function api(path, body, method) {
     }
     // A session that expired mid-visit is not a failed form submission, and
     // showing it as a toast over a workspace the server will no longer serve is
-    // worse than useless. `handleAuthFailure` paints the real state and takes over.
-    if (coletaAuth.handleAuthFailure(response.status, problem.detail)) {
-      throw new Error(problem.detail || "Sign in again.");
+    // worse than useless.
+    //
+    // 401 and 403 stay distinct here as they are on the server: "your sign-in is
+    // not valid" and "your sign-in is fine and you are not on the invite list"
+    // send a person to two different places.
+    if (coletaAuth.session.config.required) {
+      if (response.status === 401) {
+        // Drop the dead session so the sign-in form does not render behind an
+        // account chip naming whoever just expired.
+        await coletaAuth.session.signOut();
+        authNotice =
+          "Your session has expired. Sign in again to reopen your workspace.";
+        // `render` bails when `state` is unset, which is exactly the case here when
+        // the very first `/state` call is the one that 401s. Without this the page
+        // would stay on the loading splash forever.
+        state = state || { ...ANONYMOUS_STATE };
+        go("#/sign-in");
+        throw new Error(problem.detail || "Sign in again.");
+      }
+      if (response.status === 403) {
+        notInvited = problem.detail || "coleta is in invite-only beta.";
+        state = state || { ...ANONYMOUS_STATE };
+        go("#/not-invited");
+        throw new Error(notInvited);
+      }
     }
     throw new Error(
       typeof problem.detail === "string"
@@ -205,13 +227,73 @@ async function api(path, body, method) {
   }
   return response.json();
 }
+/* --- Routes that need an account, and routes that do not -------------------
+   Splitting these is the whole reason the app no longer refuses to render until
+   someone signs in. The marketing pages describe what coleta is; requiring an
+   account to read them made the sign-in screen the home page and gave a visitor
+   nothing to decide from. Workspace routes still resolve a real tenant on the
+   server and are unreachable without a session -- what changed is that the app now
+   sends someone to a sign-in page instead of *being* one. */
+const PUBLIC_ROUTES = new Set([
+  "home",
+  "pricing",
+  "security",
+  "sign-in",
+  "sign-up",
+  "forgot",
+  "check-email",
+  "not-invited",
+]);
+
+/** Messages carried into an auth screen by whatever redirected there. */
+let authNotice = "";
+let notInvited = "";
+/** Where to return after signing in, so a deep link survives the detour. */
+let afterSignIn = "";
+
+const routeOf = (hash) =>
+  (String(hash || location.hash).replace(/^#\/?/, "") || "library").split(
+    "/",
+  )[0];
+
+/** Navigate. Assigning the hash rather than calling `render` keeps history honest. */
+function go(hash) {
+  if (location.hash === hash) render();
+  else location.hash = hash;
+}
+
 async function refresh() {
+  // Nothing on /web-api is reachable without a session, so asking before there is
+  // one is a guaranteed 401 -- which would bounce a visitor reading the home page
+  // to a sign-in form they never asked for.
+  if (!coletaAuth.session.signedIn) {
+    state = state || { ...ANONYMOUS_STATE };
+    return;
+  }
   state = await api("/state");
   if (state.hosted) connections = await api("/connections");
   manifest = null;
   libraryIndex = null;
   graphData = null;
 }
+
+/* Enough of a `state` for the marketing pages to render against. They read counts
+   and flags for copy, and every renderer below assumes `state` is an object -- a
+   visitor with no session must not meet a page that throws on `state.objects`. */
+const ANONYMOUS_STATE = {
+  hosted: true,
+  tenant: "",
+  objects: [],
+  unreviewed: [],
+  events: [],
+  can_compile: false,
+  usage: {},
+  sample: false,
+  conflicts: [],
+  //: Not part of `Snapshot`. Read by the shell to tell "signed in, empty
+  //: workspace" from "nobody is signed in", which are different pages.
+  anonymous: true,
+};
 function toast(message, error = false) {
   const el = $("#toast");
   el.textContent = message;
@@ -236,11 +318,19 @@ function accountChip() {
     // Local development, where there is no sign-in by design.
     return `<a class="account" href="#/settings"><span class="avatar">${state.sample ? "DS" : state.hosted ? "PW" : "LW"}</span>${state.sample ? "Design sample workspace" : isPublic() ? "Public workspace" : state.hosted ? "Hosted workspace" : "Local workspace"}</a>`;
   }
-  const email = user.primaryEmailAddress?.emailAddress || "";
-  const name = user.fullName || email || "Your workspace";
+  // `user` is our shape, not a provider's — see `auth.js`. Initials come from the
+  // display name when there is one and the address when there is not, because a
+  // workspace provisioned from the CLI has an email and no name until someone
+  // fills one in.
+  const email = user.email || "";
+  const name = user.name || email || "Your workspace";
   const initials =
-    (user.firstName?.[0] || email[0] || "?").toUpperCase() +
-    (user.lastName?.[0] || "").toUpperCase();
+    (name
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("") || "?").toUpperCase();
   return `<div class="account-row"><a class="account" href="#/settings" title="${esc(email)}"><span class="avatar">${esc(initials)}</span>${esc(name)}</a><button type="button" class="quiet small" data-sign-out title="Sign out">${icon("migrate")}<span class="sr-only">Sign out</span></button></div>`;
 }
 function shell(title, body, actions = "") {
@@ -255,7 +345,6 @@ function shell(title, body, actions = "") {
     ["review", "Review"],
     ["audit", "History"],
     ["surfaces", "Connections"],
-    ["migrate", "Export & migrate"],
     ["settings", "Settings"],
   ];
   title =
@@ -351,7 +440,7 @@ function clusterBlock(group) {
 
 function section(label, kind, description, objects) {
   const key = `${kind}:${label}`;
-  const shut = collapsed.has(key);
+  const shut = !expandedSections.has(key);
   return `<section class="lib-section ${shut ? "shut" : ""}"><button type="button" class="lib-head" data-section="${esc(key)}" aria-expanded="${!shut}"><span class="lib-head-label">${esc(label)}</span>${description ? `<span class="lib-head-desc">${esc(description)}</span>` : ""}<span class="lib-head-count">${objects.length}</span></button>${
     shut ? "" : `<div class="lib-rows">${cluster(objects).map(clusterBlock).join("")}</div>`
   }</section>`;
@@ -898,6 +987,158 @@ function historyExample() {
 function home() {
   return horizonHome();
 }
+
+/* --- Sign in, sign up, recover --------------------------------------------
+   Our own forms rather than a provider's widget, for one reason: these are the
+   first pages a person sees and a drop-in component is visibly from somewhere
+   else. They talk to GoTrue through `coletaAuth.session`, which is the only thing
+   here that knows a provider's name.
+
+   The right-hand panel is not decoration. Someone arriving at a sign-up form has
+   usually not read the home page, and "what is this and why does it want an
+   account" is the question the form itself cannot answer. */
+function authAside() {
+  const points = [
+    ["library", "One graph, every assistant", "Facts you state once are available to Claude, ChatGPT and local models alike."],
+    ["shield", "You decide what travels", "Per-object reach. A salary figure can be readable by a local model and nothing else."],
+    ["audit", "Every change has a receipt", "Nothing is deleted. You can see what a fact used to say and when it changed."],
+  ];
+  return `<aside class="auth-aside">
+    <div class="auth-aside-head">
+      <span class="eyebrow">A portable AI workspace</span>
+      <h2>Keep what matters.<br>Carry it forward.</h2>
+    </div>
+    <ul class="auth-points">${points
+      .map(
+        ([ic, title, body]) =>
+          `<li>${icon(ic)}<span><strong>${title}</strong><small>${body}</small></span></li>`,
+      )
+      .join("")}</ul>
+    <p class="auth-aside-foot">Your context is yours. Export it whenever you like.</p>
+  </aside>`;
+}
+
+/** The shared frame. `panel` is the form; everything around it is identical. */
+function authPage(panel) {
+  return `<div class="auth-page">
+    <div class="auth-panel">
+      <a class="brand auth-brand" href="#/home">coleta</a>
+      ${panel}
+    </div>
+    ${authAside()}
+  </div>`;
+}
+
+/** A notice carried in by a redirect, rendered once and then forgotten. */
+function authNoticeMarkup() {
+  if (!authNotice) return "";
+  const markup = `<p class="auth-notice">${icon("audit")}<span>${esc(authNotice)}</span></p>`;
+  authNotice = "";
+  return markup;
+}
+
+function signIn() {
+  if (!coletaAuth.session.config.required)
+    return authPage(
+      `<h1>No sign-in here</h1><p class="muted">This is a local workspace and it trusts whoever can reach the port. <a href="#/library">Open it</a>.</p>`,
+    );
+  if (coletaAuth.session.provider !== "supabase")
+    // Clerk has no REST surface a browser may drive with a publishable key, so its
+    // own component is mounted into the same frame instead.
+    return authPage(
+      `<h1>Sign in to coleta</h1><p class="muted">Your context is yours. Sign in to open it.</p><div id="clerk-sign-in" class="clerk-mount"></div>`,
+    );
+  return authPage(`
+    <h1>Welcome back</h1>
+    <p class="muted">Sign in to open your workspace.</p>
+    ${authNoticeMarkup()}
+    <form class="auth-form" id="sign-in-form" novalidate>
+      <label><span class="eyebrow">Email</span>
+        <input name="email" type="email" autocomplete="email" required
+               placeholder="you@example.com" autofocus></label>
+      <label><span class="eyebrow">Password</span>
+        <input name="password" type="password" autocomplete="current-password"
+               required placeholder="••••••••••"></label>
+      <div class="error-message" role="alert"></div>
+      <button class="primary auth-submit" type="submit">Sign in ${icon("arrow")}</button>
+    </form>
+    <div class="auth-alt">
+      <a href="#/forgot">Forgot your password?</a>
+      ${
+        coletaAuth.session.canSignUp
+          ? `<span>New here? <a href="#/sign-up">Create an account</a></span>`
+          : `<span class="muted">coleta is in invite-only beta.</span>`
+      }
+    </div>`);
+}
+
+function signUp() {
+  if (!coletaAuth.session.canSignUp)
+    // Not a form that would fail on submit: an invite-only deployment should say
+    // so here rather than let someone fill in a password and then be refused.
+    return authPage(`
+      <h1>Invite-only, for now</h1>
+      <p class="muted">coleta is in closed beta. Accounts are provisioned by invitation
+      while the extraction pipeline is still being tuned against real corpora.</p>
+      <div class="auth-alt"><span>Already invited? <a href="#/sign-in">Sign in</a></span></div>`);
+  return authPage(`
+    <h1>Create your workspace</h1>
+    <p class="muted">One graph for everything you bring to AI.</p>
+    ${authNoticeMarkup()}
+    <form class="auth-form" id="sign-up-form" novalidate>
+      <label><span class="eyebrow">Your name</span>
+        <input name="name" type="text" autocomplete="name" required
+               placeholder="Ada Lovelace" autofocus></label>
+      <label><span class="eyebrow">Email</span>
+        <input name="email" type="email" autocomplete="email" required
+               placeholder="you@example.com"></label>
+      <label><span class="eyebrow">Password</span>
+        <input name="password" type="password" autocomplete="new-password"
+               required minlength="8" placeholder="At least 8 characters"></label>
+      <p class="small muted">coleta stores no password. Your credential lives with the
+      identity provider; this workspace only ever sees a signed token.</p>
+      <div class="error-message" role="alert"></div>
+      <button class="primary auth-submit" type="submit">Create workspace ${icon("arrow")}</button>
+    </form>
+    <div class="auth-alt"><span>Already have an account? <a href="#/sign-in">Sign in</a></span></div>`);
+}
+
+function forgot() {
+  return authPage(`
+    <h1>Reset your password</h1>
+    <p class="muted">We’ll email you a link to choose a new one.</p>
+    <form class="auth-form" id="forgot-form" novalidate>
+      <label><span class="eyebrow">Email</span>
+        <input name="email" type="email" autocomplete="email" required
+               placeholder="you@example.com" autofocus></label>
+      <div class="error-message" role="alert"></div>
+      <button class="primary auth-submit" type="submit">Send the link ${icon("arrow")}</button>
+    </form>
+    <div class="auth-alt"><a href="#/sign-in">Back to sign in</a></div>`);
+}
+
+function checkEmail() {
+  return authPage(`
+    <h1>Check your inbox</h1>
+    <p class="muted">${esc(authNotice || "We’ve sent you a link. Open it to continue.")}</p>
+    <div class="auth-alt"><a href="#/sign-in">Back to sign in</a></div>`);
+}
+
+function notInvitedPage() {
+  const user = coletaAuth.session.user;
+  return authPage(`
+    <h1>You’re not on the list yet</h1>
+    <p class="muted">${esc(notInvited || "coleta is in invite-only beta.")}</p>
+    ${user ? `<p class="small muted">Signed in as ${esc(user.email || "an unlisted address")}.</p>` : ""}
+    <button type="button" class="primary auth-submit" data-sign-out>Sign out</button>`);
+}
+
+/** The deployment cannot authenticate anyone. Painted instead of the app. */
+function authFaultPage() {
+  return authPage(
+    `<h1>Sign-in is not configured</h1><p class="muted">${esc(coletaAuth.session.fault)}</p>`,
+  );
+}
 function showDemoSource(index) {
   const f =
     index === 4
@@ -1038,8 +1279,8 @@ function bindDesign() {
     (b) =>
       (b.onclick = () => {
         const key = b.dataset.section;
-        if (collapsed.has(key)) collapsed.delete(key);
-        else collapsed.add(key);
+        if (expandedSections.has(key)) expandedSections.delete(key);
+        else expandedSections.add(key);
         render();
         $(`[data-section="${CSS.escape(key)}"]`)?.focus();
       }),
@@ -1109,12 +1350,22 @@ function pricing() {
   return `<div class="marketing">${marketingNav()}<main id="content" style="padding:0;max-width:none"><header class="pricing-header"><h1>Priced on context served,<br>not memories stored.</h1><p class="muted">Proposed plans from the product design. Billing and subscriptions are not available.</p></header><section class="pricing-grid">${plans.map(([name, price, tokens, desc, features]) => `<article class="panel"><span class="eyebrow">${name}</span><div class="price">${price}</div><p class="muted">${desc}</p><p><b>${tokens}</b> context tokens / month</p><ul>${features.map((f) => `<li>${f}</li>`).join("")}</ul><a href="#/library" class="btn ${name === "Free" ? "primary" : ""}">Explore prototype</a></article>`).join("")}</section><section class="features"><div><h2>What counts as context</h2><p>The context your graph retrieves and hands to a model. The prototype exposes recorded usage without charging for it.</p></div><div><h2>Why not per-memory</h2><p>A useful graph grows with your history. The proposed pricing model does not charge by the object.</p></div><div><h2>If you use a local model</h2><p>Your graph stays portable. Compare estimated input costs in the Settings scenario calculator.</p></div></section></main>${marketingFooter()}</div>`;
 }
 function security() {
-  return `<div class="marketing">${marketingNav()}<main id="content" class="privacy"><h1>Your context, under your control.</h1><h2>Only what you choose to share</h2><p>Import files you export yourself. Consented extension capture is limited to submitted user turns on the active page. coleta never signs in as you, replays provider sessions, or automates a provider UI.</p><h2 class="mt">A record for every change</h2><p>Memories carry provenance. Edits and retirements append events. Retirement preserves history; raw-turn erasure uses the separate crypto-shredding workflow.</p><h2 class="mt">${state.hosted ? "Hosted preview boundaries" : "Local prototype boundaries"}</h2><p>${state.hosted ? `This single-owner workspace runs on Vercel with Supabase Postgres. ${isPublic() ? "This workspace is public: anyone with its link can read and change it." : "This workspace uses the configured hosted access gate."} Connectors use separate scoped bearer keys. Account signup and billing are not enabled. Imports run on the hosted server without third-party model calls. Captured turns require an opt-in client. When OpenAI extraction is enabled, only candidate turns are sent to OpenAI; stored memories and the rest of the graph are not sent. OpenAI is the extraction subprocessor. Batches run daily and on demand.` : "This app runs on loopback and has no account/session system. Import uses the local pattern extractor and makes no model calls. Connection and API-key screens simulate setup; their saved values do not grant access."}</p><h2 class="mt">A real way out</h2><p>The three provider compilers produce downloadable native packages after review. Destination reach is enforced by the compiler. Markdown is an owner export and includes restricted context.</p><a class="btn primary mt" href="#/library">Explore your library</a></main>${marketingFooter()}</div>`;
+  return `<div class="marketing">${marketingNav()}<main id="content" class="privacy"><h1>Your context, under your control.</h1><h2>Only what you choose to share</h2><p>Import files you export yourself. The extension’s automatic mode requires a separate opt-in. It can add context on your normal Send action and capture your prompt and its completed reply on the active, visible page. Manual mode reads only your composer. Coleta never signs in as you, replays provider sessions, or reads your archive or background tabs.</p><h2 class="mt">A record for every change</h2><p>Memories carry provenance. Edits and retirements append events. Retirement preserves history; raw-turn erasure uses the separate crypto-shredding workflow.</p><h2 class="mt">${state.hosted ? "Hosted preview boundaries" : "Local prototype boundaries"}</h2><p>${state.hosted ? `This single-owner workspace runs on Vercel with Supabase Postgres. ${isPublic() ? "This workspace is public: anyone with its link can read and change it." : "This workspace uses the configured hosted access gate."} Connectors use separate scoped bearer keys. Account signup and billing are not enabled. Imports run on the hosted server without third-party model calls. Captured turns require an opt-in client. When OpenAI extraction is enabled, only candidate turns are sent to OpenAI; stored memories and the rest of the graph are not sent. OpenAI is the extraction subprocessor. Batches run daily and on demand.` : "This app runs on loopback and has no account/session system. Import uses the local pattern extractor and makes no model calls. Connection and API-key screens simulate setup; their saved values do not grant access."}</p><h2 class="mt">A real way out</h2><p>The three provider compilers produce downloadable native packages after review. Destination reach is enforced by the compiler. Markdown is an owner export and includes restricted context.</p><a class="btn primary mt" href="#/library">Explore your library</a></main>${marketingFooter()}</div>`;
 }
+//: Route → the page's own title. Anything absent is title-cased from the route.
+const TITLES = {
+  home: "Your context, everywhere",
+  "sign-in": "Sign in",
+  "sign-up": "Create your workspace",
+  forgot: "Reset your password",
+  "check-email": "Check your inbox",
+  "not-invited": "Invite-only beta",
+};
+
 function render() {
   if (!state) return;
   const parts = (location.hash.replace(/^#\/?/, "") || "library").split("/");
-  const route = parts[0];
+  let route = parts[0];
   const pages = {
     library,
     capture,
@@ -1126,13 +1377,40 @@ function render() {
     home,
     pricing,
     security,
+    "sign-in": signIn,
+    "sign-up": signUp,
+    forgot,
+    "check-email": checkEmail,
+    "not-invited": notInvitedPage,
   };
+
+  // The gate. A workspace route without a session renders the sign-in page rather
+  // than redirecting, so the address bar keeps the destination and `afterSignIn`
+  // can return there — a shared link to an object survives the detour instead of
+  // dropping the person on a dashboard with no idea what they were sent to.
+  const needsAccount =
+    coletaAuth.session.config.required &&
+    !coletaAuth.session.signedIn &&
+    !PUBLIC_ROUTES.has(route);
+  if (needsAccount) {
+    afterSignIn = location.hash;
+    route = "sign-in";
+  }
+  // Signing in and then navigating back to /sign-in is a dead end; send them on.
+  if (
+    coletaAuth.session.signedIn &&
+    ["sign-in", "sign-up", "forgot", "check-email"].includes(route)
+  ) {
+    route = "library";
+  }
+
   $("#app").innerHTML =
-    route === "object"
+    route === "object" && !needsAccount
       ? detail(decodeURIComponent(parts.slice(1).join("/")))
       : (pages[route] || library)();
-  document.title = `${route === "home" ? "Your context, everywhere" : route.charAt(0).toUpperCase() + route.slice(1)} · coleta`;
+  document.title = `${TITLES[route] || route.charAt(0).toUpperCase() + route.slice(1)} · coleta`;
   bind();
+  bindAuth();
   bindDesign();
   bindHorizon();
   bindGraph();
@@ -1414,6 +1692,80 @@ async function upload(file) {
     throw error;
   }
 }
+/* --- The auth forms -------------------------------------------------------
+   One helper, because all three forms have the same shape: disable, call, show the
+   provider's own message in place on failure. A toast is the wrong place for "that
+   password is wrong" — it disappears, and the field it refers to is right there. */
+function bindAuthForm(id, handler) {
+  const form = document.getElementById(id);
+  if (!form) return;
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const button = form.querySelector("button[type=submit]");
+    const error = form.querySelector(".error-message");
+    error.textContent = "";
+    if (!form.reportValidity()) return;
+    if (button) button.disabled = true;
+    const data = new FormData(form);
+    try {
+      await handler({
+        email: String(data.get("email") || "").trim(),
+        password: String(data.get("password") || ""),
+        name: String(data.get("name") || "").trim(),
+      });
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      if (button) button.disabled = false;
+    }
+  };
+}
+
+function bindAuth() {
+  // Clerk's own component, when that is the configured provider.
+  const mount = document.getElementById("clerk-sign-in");
+  if (mount) coletaAuth.session.mountSignIn(mount);
+
+  bindAuthForm("sign-in-form", async ({ email, password }) => {
+    await coletaAuth.session.signIn(email, password);
+    await enterWorkspace();
+  });
+
+  bindAuthForm("sign-up-form", async ({ email, password, name }) => {
+    const result = await coletaAuth.session.signUp(email, password, name);
+    if (result.session) {
+      await enterWorkspace();
+      return;
+    }
+    // Email confirmation is on. Saying "check your inbox" is the only honest
+    // answer; rendering a workspace for a session that does not exist yet is not.
+    authNotice = `We’ve sent a confirmation link to ${result.email}. Open it to finish creating your workspace.`;
+    go("#/check-email");
+  });
+
+  bindAuthForm("forgot-form", async ({ email }) => {
+    await coletaAuth.session.recover(email);
+    // Deliberately the same message whether or not the address has an account.
+    // Anything else turns this form into a way to ask who has signed up.
+    authNotice = `If ${email} has a workspace, a reset link is on its way.`;
+    go("#/check-email");
+  });
+}
+
+/**
+ * Load the workspace after a successful sign-in, and go where they were headed.
+ *
+ * `refresh` can still fail here — a perfectly good sign-in for an address that is
+ * not on the invite list is a 403 — and `api` has already routed that to the right
+ * page, so this must not paint over it.
+ */
+async function enterWorkspace() {
+  const destination = afterSignIn && afterSignIn !== "#/sign-in" ? afterSignIn : "#/library";
+  afterSignIn = "";
+  await refresh();
+  go(destination);
+}
+
 function bind() {
   document.querySelectorAll("[data-sign-out]").forEach(
     (b) =>
@@ -1421,8 +1773,11 @@ function bind() {
         b.disabled = true;
         // Reload rather than re-render: signing out invalidates every cached
         // answer in `state`, and the cheapest way to be certain none of it is
-        // still on screen is to start the page over.
+        // still on screen is to start the page over. Land on the home page rather
+        // than reloading in place, so signing out of a workspace route does not
+        // come straight back as a sign-in form.
         await coletaAuth.session.signOut();
+        location.hash = "#/home";
         location.reload();
       }),
   );
@@ -1647,15 +2002,34 @@ window.addEventListener("hashchange", (event) => {
     }
   }
 });
-// Sign-in first: there is no workspace to draw until we know whose it is, and
-// rendering before the answer is what shows a stranger someone else's shell for a
-// frame. `establishSession` returns false once it has painted the reason itself —
-// a sign-in form, or a misconfiguration — and we stop.
+// Resolve who is signed in before rendering. This no longer *gates* the app —
+// `render` decides per route whether an account is needed, so the marketing pages
+// are reachable without one — but it must still finish first: rendering before the
+// answer is what shows a stranger the shape of someone else's shell for a frame,
+// and what draws a "Sign in" button for someone who already is.
+//
+// `establishSession` returns false only when the deployment cannot authenticate
+// anyone at all. That is a fault to paint, not a route.
 coletaAuth
   .establishSession()
-  .then(async (proceed) => {
-    if (!proceed) return;
-    await refresh();
+  .then(async (ready) => {
+    if (!ready) {
+      state = { ...ANONYMOUS_STATE };
+      $("#app").innerHTML = authFaultPage();
+      return;
+    }
+    // A signed-out visitor landing on the root should meet the home page, not the
+    // dashboard route's sign-in redirect.
+    if (!location.hash && !coletaAuth.session.signedIn) {
+      location.hash = "#/home";
+    }
+    try {
+      await refresh();
+    } catch {
+      // `api` has already routed a 401 or 403 to the page that explains it. Any
+      // other failure leaves `state` unset, and the catch below paints it.
+      if (!state) throw new Error("Couldn’t reach your workspace.");
+    }
     render();
   })
   .catch((error) => {

@@ -1,9 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "coleta — portable memory",
-  "version": "0.2.0",
-  "description": "Bring your portable memory into the prompt box, and capture what you type. Never reads AI responses.",
-  "permissions": ["storage"],
+  "name": "coleta \u2014 portable memory",
+  "version": "0.3.1",
+  "description": "Opt-in automatic recall on Send, with encrypted capture of your prompt and the completed reply on the active page.",
+  "permissions": [
+    "storage",
+    "alarms"
+  ],
   "host_permissions": [
     "https://claude.ai/*",
     "https://chatgpt.com/*",
@@ -16,7 +19,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "coleta — open settings",
+    "default_title": "coleta \u2014 open settings",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png"
@@ -33,7 +36,10 @@
         "https://chatgpt.com/*",
         "https://chat.openai.com/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "bridge-core.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

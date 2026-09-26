@@ -310,6 +310,18 @@ class AuthMiddleware:
             (b"access-control-allow-headers", b"authorization, x-api-key, content-type"),
             (b"access-control-allow-methods", b"POST, OPTIONS"),
             (b"access-control-max-age", b"600"),
+            # Chrome's Private Network Access gate. A page served from
+            # https://claude.ai reaching a server on 127.0.0.1 is a public →
+            # private request, which Chrome blocks unless the private side opts
+            # in on the preflight. Without this the extension's fetch fails before
+            # it is sent, and the only symptom in the page is a network error that
+            # looks like the server being down — which is precisely the local
+            # development setup the bridge exists for.
+            #
+            # This grants nothing on its own: the origin allowlist above still
+            # decides who gets a CORS response at all, and the bearer key still
+            # decides what they may read.
+            (b"access-control-allow-private-network", b"true"),
             # The origin decides the response, so caches must not share it.
             (b"vary", b"Origin"),
         ]

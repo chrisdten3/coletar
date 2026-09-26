@@ -130,9 +130,21 @@ jobs:
         run: |
           node --check src/coletar/inspector/static/product.js
           node --check src/coletar/inspector/static/horizon.js
+          # auth.js is the one client file where a syntax error is a lockout
+          # rather than a cosmetic bug: nothing renders until it has run.
+          node --check src/coletar/inspector/static/auth.js
       - name: node --test
         working-directory: sdk/js
         run: node --test
+      # Session handling in the browser: token refresh arithmetic, the
+      # single-flight guard that stops a rotated refresh token being spent twice,
+      # and failing closed on a config that did not render. None of these are
+      # reachable from pytest, and all of them are lockouts when they break.
+      - name: Workspace client tests
+        run: node --test tests/web/
+      # The extension's own suite, which nothing ran before this.
+      - name: Extension tests
+        run: node --test tests/extension/
 
   extension:
     name: Extension syntax

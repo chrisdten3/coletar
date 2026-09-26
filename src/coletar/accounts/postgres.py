@@ -103,12 +103,15 @@ class PostgresDirectory(Directory):
         display_name: str = "",
         identity_provider: str | None = None,
         external_id: str | None = None,
+        tenant_id: TenantId | None = None,
     ) -> Account:
         address = email.strip().lower()
         if not address:
             raise DirectoryError("An account needs an email address.")
         account = Account(
-            tenant_id=Account.tenant_for(address),
+            # Derived unless the caller is adopting an existing graph; see the
+            # protocol docstring for why that is an explicit argument.
+            tenant_id=tenant_id or Account.tenant_for(address),
             email=address,
             display_name=display_name,
             identity_provider=identity_provider or LOCAL_IDENTITY,

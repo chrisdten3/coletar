@@ -26,6 +26,15 @@ tests pass.
      is browsing" and "we are impersonating the user".
    - **No headless automation.** No Playwright, Puppeteer or scripted browser driving
      a provider's UI, whether local or hosted.
+   - **Consented Send interception exception (2026-09-23).** Explicitly authorized
+     by the user: the extension may handle a trusted Send/Enter gesture on the
+     active, visible ChatGPT or Claude page, retrieve context, visibly augment the
+     composer, and activate that page's Send control once. It may capture the new
+     completed assistant reply for that turn while the page remains active. This
+     is a narrow exception to scripted UI driving, not permission for headless
+     automation, archive scraping, background page reads, or provider network hooks.
+     It requires a new explicit extension opt-in; old capture consent is insufficient.
+     Assistant replies retain agent provenance and are never mined as user facts.
    - **No background reading.** Only pages the user has open and is looking at. Not
      their archive, not their other conversations.
 

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="560" viewBox="0 0 1200 560" fill="none">
+  <title>Your AI’s source of truth</title>
+  <desc>Your exports and notes enter Coleta. Context, sources, history and access rules stay together. Eligible context becomes available to connected assistants.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" stroke="#dce4d5" stroke-opacity=".45"/></pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="m1 1 4 3-4 3" stroke="#8a9e7c" stroke-width="1.5"/></marker>
+  </defs>
+  <rect width="1200" height="560" rx="24" fill="#f0f4eb"/>
+  <rect width="1200" height="560" rx="24" fill="url(#grid)"/>
+  <g font-family="Arial, sans-serif">
+    <text x="600" y="78" text-anchor="middle" fill="#243226" font-size="38" letter-spacing="-1.5">Your AI’s source of truth.</text>
+    <g font-size="12" letter-spacing="2" fill="#65775c" text-anchor="middle"><text x="205" y="160">COLLECT</text><text x="600" y="160">CONNECT</text><text x="995" y="160">CONTINUE</text></g>
+    <g stroke="#9daf90" stroke-width="1.5"><path d="M330 244H375Q395 244 395 270V316H446" marker-end="url(#arrow)"/><path d="M330 316H446" marker-end="url(#arrow)"/><path d="M330 388H375Q395 388 395 362V316"/><path d="M754 316H820Q840 316 840 290V244H870" marker-end="url(#arrow)"/><path d="M754 316H870" marker-end="url(#arrow)"/><path d="M820 316Q840 316 840 342V388H870" marker-end="url(#arrow)"/></g>
+    <g fill="#fffffc" stroke="#d5dfcc"><rect x="80" y="216" width="250" height="56" rx="12"/><rect x="80" y="288" width="250" height="56" rx="12"/><rect x="80" y="360" width="250" height="56" rx="12"/><rect x="870" y="216" width="250" height="56" rx="12"/><rect x="870" y="288" width="250" height="56" rx="12"/><rect x="870" y="360" width="250" height="56" rx="12"/></g>
+    <g fill="#34462e" font-size="17" text-anchor="middle"><text x="205" y="250">Claude export</text><text x="205" y="322">ChatGPT export</text><text x="205" y="394">Your own notes</text><text x="995" y="250">Claude</text><text x="995" y="322">ChatGPT</text><text x="995" y="394">Local model</text></g>
+    <rect x="450" y="193" width="300" height="246" rx="22" fill="#243a2c"/>
+    <text x="600" y="246" text-anchor="middle" fill="#f6f9ef" font-size="38" font-weight="700" letter-spacing="-2">coleta</text>
+    <g fill="#f5f8ee" fill-opacity=".08"><rect x="473" y="270" width="254" height="40" rx="8"/><rect x="473" y="320" width="254" height="40" rx="8"/></g>
+    <g fill="#eef4e5" font-size="15" text-anchor="middle"><text x="600" y="296">Facts · Preferences · Decisions</text><text x="600" y="346">Projects · Conversations</text></g>
+    <text x="600" y="404" text-anchor="middle" fill="#c1d2b4" font-size="13">Source + history + your rules</text>
+    <g fill="#65775c" font-size="13" text-anchor="middle"><text x="205" y="460">You choose what to bring</text><text x="995" y="460">Only eligible context travels</text></g>
+    <text x="600" y="522" text-anchor="middle" fill="#6b7c62" font-size="12">Illustrative flow · availability depends on the connection and your access policy</text>
+  </g>
+</svg>

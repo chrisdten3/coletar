@@ -4,13 +4,70 @@
     {
       "name": "coleta-real-data",
       "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
-      "runtimeArgs": ["-m", "uvicorn", "coletar.inspector.app:app", "--host", "127.0.0.1", "--port", "8789"],
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "coletar.inspector.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8789"
+      ],
       "port": 8789,
       "env": {
         "COLETAR_STORE_BACKEND": "postgres",
         "COLETAR_DATABASE_URL": "postgresql://coletar@localhost:5434/coletar",
         "COLETAR_DEFAULT_TENANT_ID": "tenant_v1"
       }
+    },
+    {
+      "name": "coleta-supabase-auth",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "coletar.inspector.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8790"
+      ],
+      "port": 8790,
+      "env": {
+        "COLETAR_STORE_BACKEND": "postgres",
+        "COLETAR_DATABASE_URL": "postgresql://coletar@localhost:5433/coletar",
+        "COLETAR_DEFAULT_TENANT_ID": "tenant_v1",
+        "COLETAR_IDENTITY_PROVIDER": "supabase",
+        "COLETAR_SUPABASE_URL": "https://dyfagpnjijccwirimmhd.supabase.co",
+        "COLETAR_SUPABASE_ANON_KEY": "placeholder-anon-key-for-local-render-check",
+        "COLETAR_OPEN_REGISTRATION": "true"
+      }
+    },
+    {
+      "name": "coleta-demo-banker",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": [
+        "-m",
+        "uvicorn",
+        "coletar.inspector.app:app",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8791"
+      ],
+      "port": 8791,
+      "env": {
+        "COLETAR_STORE_BACKEND": "postgres",
+        "COLETAR_DATABASE_URL": "postgresql://coletar@localhost:5433/coletar",
+        "COLETAR_DEFAULT_TENANT_ID": "tenant_demo_banker",
+        "COLETAR_IDENTITY_PROVIDER": "local"
+      }
+    },
+    {
+      "name": "coleta-hosted-rehearsal",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/scripts/serve_hosted_local.sh",
+      "runtimeArgs": [],
+      "port": 8792
     }
   ]
 }

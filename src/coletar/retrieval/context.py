@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING
 
 from coletar.retrieval.embedding import tokenize
 from coletar.retrieval.ranking import RANKING_VERSION, ScoreComponents, Scored
-from coletar.retrieval.strategy import PublishedOrder, Reranker
+from coletar.retrieval.strategy import Reranker, build_reranker
 from coletar.schema.objects import ContextObject, ObjectType, Provider, Scope
 from coletar.schema.tenancy import TenantId
 
@@ -245,16 +245,21 @@ async def retrieve(
     prompt assembly, so that is where it lives.
     """
     started = time.perf_counter()
-    # Over-fetch so dropping entities below cannot leave the block short.
+    # The candidate pool is deliberately wider than the block, and stays wide until
+    # after reranking. Narrowing to `top_k` first — which this did — leaves a
+    # reranker permuting the same five rows it was meant to rescue something from,
+    # which is indistinguishable from having no reranker at all. §5.1 separates
+    # candidate generation from reranking precisely so this stage can be generous.
     hits = await store.search(
-        tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k * 3
+        tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k * 4
     )
-    hits = [hit for hit in hits if hit.obj.type is not ObjectType.ENTITY][:top_k]
+    hits = [hit for hit in hits if hit.obj.type is not ObjectType.ENTITY]
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     rerank_started = time.perf_counter()
-    strategy = reranker or PublishedOrder()
-    hits = strategy.rerank(hits, limit=top_k)
+    # An explicit argument wins; otherwise the deployment's configured strategy.
+    strategy = reranker or build_reranker()
+    hits = await strategy.rerank(hits, query=query, limit=top_k)
     rerank_ms = (time.perf_counter() - rerank_started) * 1000.0
 
     assembly_started = time.perf_counter()

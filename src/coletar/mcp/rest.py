@@ -7,14 +7,14 @@ as two endpoints — this is a slice of the REST surface §9 owes anyway, brough
 forward because the composer bridge needs it.
 
 **These endpoints are the whole API the extension gets.** It can retrieve context and
-it can record something the user typed. There is deliberately nothing here for
-reading conversations, listing objects, or anything else a page-scraping tool would
-want, because the extension has no business doing any of that (§4.1).
+it can record consented turns, with assistant replies kept as evidence only. There is
+deliberately no endpoint for enumerating stored conversations or graph objects;
+provider-page observation stays in the explicitly consented, active-page extension.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from starlette.requests import Request
@@ -54,9 +54,14 @@ class SearchRequest(BaseModel):
 
 
 class CaptureRequest(BaseModel):
-    """A turn the user typed, for the extractor to judge."""
+    """A consented browser turn; assistant turns are retained as evidence only."""
 
     text: str
+    role: Literal["user", "assistant"] = "user"
+    turn_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[\w-]+$")
+    conversation_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[\w-]+$"
+    )
     project_id: str | None = None
     surface: str = "bridge"
 
@@ -238,8 +243,8 @@ async def capture(request: Request) -> JSONResponse:
     Collect-then-batch stores encrypted working material and makes no memory claim;
     the legacy heuristic must be selected explicitly.
 
-    Only the user's own words are ever offered here. The model's reply is not sent by
-    the bridge and cannot be mined by this endpoint.
+    Consented browser replies are encrypted evidence with agent provenance, never
+    inputs to the user-fact extractor. Identified turns are idempotent on retry.
     """
     principal = _require(SCOPE_WRITE)
     if isinstance(principal, JSONResponse):
@@ -257,14 +262,14 @@ async def capture(request: Request) -> JSONResponse:
     # in someone's browser against a page we do not control. If its stripping ever
     # fails, this is what stops retrieved memory being re-extracted as though the
     # user had typed it.
-    if INJECTION_MARKER in text:
+    if body.role == "user" and INJECTION_MARKER in text:
         text = text.split(INJECTION_MARKER)[-1].strip()
     if not text:
         return JSONResponse({"error": "bad_request", "message": "text is empty"}, 400)
-    if len(text) > MAX_CONTENT_CHARS:
+    if len(text) > (100_000 if body.turn_id else MAX_CONTENT_CHARS):
         return JSONResponse({"error": "bad_request", "message": "text too long"}, 400)
 
-    from coletar.capture import capture_turn
+    from coletar.capture import CaptureBusy, CaptureConflict, capture_turn, is_pending
     from coletar.config import get_settings
     from coletar.extraction import extract_memories
 
@@ -277,15 +282,40 @@ async def capture(request: Request) -> JSONResponse:
     # extracted memories and should be a decision, not a discovery.
     settings = get_settings()
     episode = None
+    if body.role == "assistant" and not body.turn_id:
+        return JSONResponse({"error": "bad_request", "message": "assistant needs turn_id"}, 400)
+    if body.turn_id and not settings.capture_turns:
+        return JSONResponse({"error": "capture_not_enabled", "capture_enabled": False}, 503)
     if settings.capture_turns:
-        episode = await capture_turn(
-            store,
-            principal.tenant_id,
-            text,
-            surface=surface,
-            scope=scope,
-            principal_id=principal.id,
-            detail={"surface": body.surface},
+        try:
+            episode = await capture_turn(
+                store,
+                principal.tenant_id,
+                text,
+                surface=surface,
+                scope=scope,
+                principal_id=principal.id,
+                detail={"surface": body.surface},
+                role=body.role,
+                turn_id=body.turn_id,
+                conversation_id=body.conversation_id,
+            )
+        except CaptureBusy as exc:
+            return JSONResponse({"error": "capture_busy", "message": str(exc)}, 409)
+        except CaptureConflict as exc:
+            return JSONResponse({"error": "capture_conflict", "message": str(exc)}, 409)
+    # Identified browser turns use encrypted retention only. Retrying must not run
+    # legacy extraction twice; model output must never enter user-fact extraction.
+    if episode is not None and body.turn_id:
+        return JSONResponse(
+            {
+                "extracted": [],
+                "count": 0,
+                "queued": is_pending(episode),
+                "episode_id": episode.id,
+                "capture_enabled": True,
+                "stored": True,
+            }
         )
 
     # Safe default: passive composer observation makes no inferred graph write.
@@ -321,9 +351,7 @@ async def capture(request: Request) -> JSONResponse:
                 },
                 status_code=503,
             )
-        return JSONResponse(
-            {"extracted": [], "count": 0, "queued": True, "episode_id": episode.id}
-        )
+        return JSONResponse({"extracted": [], "count": 0, "queued": True, "episode_id": episode.id})
 
     stored: list[dict[str, Any]] = []
     for memory in await extract_memories(user_text=text, scope=scope):
@@ -353,8 +381,12 @@ async def capture(request: Request) -> JSONResponse:
             caller_surface=surface,
         )
         stored.append(
-            {"id": result.object_id, "content": memory.content,
-             "kind": memory.kind, "created": result.created}
+            {
+                "id": result.object_id,
+                "content": memory.content,
+                "kind": memory.kind,
+                "created": result.created,
+            }
         )
     return JSONResponse({"extracted": stored, "count": len(stored)})
 

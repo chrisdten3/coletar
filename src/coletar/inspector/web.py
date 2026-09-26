@@ -168,18 +168,30 @@ def _sign_in_config() -> dict[str, Any]:
     trip during which the app does not know whether it is allowed to render — which
     is a flash of the workspace for someone who is about to be told to sign in.
 
-    The publishable key is the only Clerk value here and is meant to be public;
-    coleta reads no Clerk secret anywhere, because verification is a signature
-    check against a public JWKS.
+    **Every value here is publishable, and that is a property worth keeping.** A
+    Clerk publishable key and a Supabase anon key are both meant to reach a browser;
+    coleta reads neither provider's secret anywhere, because verification is a
+    signature check against a public JWKS. If a future provider needs a secret in
+    this dict, that is the signal that it does not fit the seam.
     """
     settings = get_settings()
     provider = settings.identity_provider
     return {
         "provider": provider if provider else LOCAL_IDENTITY,
+        # Clerk. Kept alongside Supabase rather than replaced: the provider is one
+        # setting, and a deployment must be able to move back without a redeploy of
+        # the client.
         "publishableKey": settings.clerk_publishable_key,
+        # Supabase Auth.
+        "supabaseUrl": settings.supabase_url,
+        "supabaseAnonKey": settings.supabase_anon_key,
         # Local development has no sign-in and must keep working with none; see
         # `coletar.inspector.auth`. This is what the client branches on.
         "required": provider not in {"", LOCAL_IDENTITY},
+        # Whether a stranger may create their own workspace. The client uses this to
+        # decide whether to offer a sign-up route at all, so that an invite-only
+        # deployment does not advertise a door that answers "not yet".
+        "openRegistration": settings.open_registration,
     }
 
 

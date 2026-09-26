@@ -28,8 +28,11 @@ from typing import Protocol, runtime_checkable
 
 from coletar.accounts.models import LOCAL_IDENTITY, ExternalIdentity
 
-#: Duplicated from `clerk.py` so this module can dispatch without importing it.
+#: Duplicated from the provider modules so this module can dispatch without
+#: importing either of them -- which is what keeps "nothing depends on a provider's
+#: library until one is chosen" true rather than aspirational.
 CLERK_IDENTITY = "clerk"
+SUPABASE_IDENTITY = "supabase"
 
 
 class IdentityError(RuntimeError):
@@ -92,9 +95,12 @@ def build_identity_provider(name: str, *, hosted: bool) -> IdentityProvider:
         from coletar.accounts.clerk import build_clerk_provider
 
         return build_clerk_provider()
-    # Supabase Auth lands here next. Kept as an explicit refusal rather than a
-    # silent fallback to `local`: a typo in this setting must not be the thing
-    # that opens a hosted workspace.
+    if name == SUPABASE_IDENTITY:
+        from coletar.accounts.supabase import build_supabase_provider
+
+        return build_supabase_provider()
+    # Kept as an explicit refusal rather than a silent fallback to `local`: a typo
+    # in this setting must not be the thing that opens a hosted workspace.
     raise IdentityError(
         f"Unknown identity provider {name!r}. Implement IdentityProvider and register "
         "it here; see this module's docstring for what that involves."

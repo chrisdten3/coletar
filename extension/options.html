@@ -28,23 +28,18 @@
   and a key. The floating button does the same thing and never collides.
 </p>
 
-<div class="row"><input id="recall" type="checkbox"><label for="recall" style="margin:0">Recall — <kbd>⌘⇧M</kbd> pulls memory into the box</label></div>
-<div class="row"><input id="capture" type="checkbox"><label for="capture" style="margin:0">Capture — offer what you type to the configured capture policy</label></div>
+<div class="row"><input id="automatic" type="checkbox"><label for="automatic" style="margin:0">Automatic context and conversation capture</label></div>
+<p class="note">I allow Coleta to add relevant memories to my prompt when I press the website’s normal Send button or Enter, submit it, and save my prompt and the completed reply from this active conversation. Added context is visible to the AI provider and may appear in the conversation.</p>
+<p class="note">If recall is unavailable, my prompt is sent without added memory. Capture retries are encrypted on this device for up to 24 hours and upload only while the same site is active. Turning this mode off clears unsent captures. Enable raw capture on the Coleta server to retain turns.</p>
+<div class="row"><input id="recall" type="checkbox"><label for="recall" style="margin:0">Manual recall — use the button or configured shortcut</label></div>
+<div class="row"><input id="capture" type="checkbox"><label for="capture" style="margin:0">Manual mode capture — save only what you type on Send</label></div>
 
 <button id="save">Save</button>
 <p id="status" class="note"></p>
 
 <div class="boundary">
   <strong>What this reads</strong>
-  <p class="note">
-    Only the box you type into. It never reads the assistant's replies and never reads
-    conversation history — there is no code path that could, because the composer is the
-    only element it looks up.
-  </p>
-  <p class="note">
-    Recall is manual and visible: memory is written into the box above your text, so you
-    read it and send it yourself. Capture offers what you typed to the server, where a
-    precision-first extractor usually decides nothing durable was in it.
-  </p>
+  <p class="note">Manual mode reads your composer only. Automatic mode also observes the new reply to the prompt you just sent, while this tab and window remain active. It does not read old conversations, other tabs, account cookies, or provider credentials.</p>
+  <p class="note">Leaving the page, stopping a response, or an unrecognized site layout can prevent reply capture. Stored assistant replies are evidence, not user facts; only user turns enter memory extraction. This integration is best effort and does not cover native or mobile apps.</p>
 </div>
 <script src="options.js"></script>

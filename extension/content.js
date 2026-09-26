@@ -1,250 +1,340 @@
-// coleta composer bridge.
-//
-// THE BOUNDARY, and it is the reason this extension is defensible:
-//
-//   This script reads the *composer* — the box you type into — and nothing else.
-//   It never reads the assistant's replies, and it never reads conversation
-//   history. Reading what you type into a text field is the category browser
-//   software has always occupied: password managers, text expanders, spell
-//   checkers. Reading the model's Output is what both providers' terms name, and
-//   this does not do it.
-//
-//   That is enforced structurally rather than promised. COMPOSERS below is the
-//   only DOM lookup in this file. There is no selector for a message, a response
-//   or a transcript, so there is no code path that could read one.
-//
-// It does two things, both from your own text:
-//   RECALL   pull relevant memory into the box, visibly, so you see it before sending
-//   CAPTURE  when explicitly enabled, offer what you typed to the configured
-//            capture policy; passive inference is otherwise off
-
-const COMPOSERS = [
-  'div[contenteditable="true"]',
-  "textarea",
-];
-
-const MARKER = "— coleta —";
-
-// Recognised but never written. An upgrade can land while an injected block is
-// still sitting in a composer, and MARKER is what keeps that block from being
-// captured back as though the user had typed it. Dropping the old spelling would
-// reopen exactly that for one message.
-const MARKERS = [MARKER, "— coletar —"];
-const marked = (text) => MARKERS.some((m) => text.includes(m));
-function stripMarked(text) {
-  for (const m of MARKERS) {
-    if (text.includes(m)) return text.split(m).pop().trim();
-  }
-  return text;
-}
-
-const settings = {
-  endpoint: "",
-  apiKey: "",
-  recall: true,
-  capture: false,
-  captureConsent: false,
-  // Chrome owns a lot of Cmd+Shift combinations on macOS — Cmd+Shift+M is the
-  // profile switcher, N is incognito, T reopens a tab. So the shortcut is
-  // configurable and defaults to one Chrome does not claim. The button below is the
-  // real affordance; this is for people who would rather not reach for the mouse.
-  shortcut: "Ctrl+Shift+M",
-};
-
-chrome.storage.sync.get(settings, (loaded) => Object.assign(settings, loaded));
-chrome.storage.onChanged.addListener((changes) => {
-  for (const [key, { newValue }] of Object.entries(changes)) settings[key] = newValue;
+// Automatic mode is explicitly consented. Only a trusted user Send/Enter starts
+// a turn. No archive access, background page reads, or provider network hooks.
+const settings = {endpoint:"", apiKey:"", recall:true, capture:false, captureConsent:false,
+  automatic:false, automaticConsent:false, shortcut:"Ctrl+Shift+M"};
+let ready = false;
+chrome.storage.sync.get(settings, (loaded) => { Object.assign(settings, loaded); ready = true; mount(); });
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "sync") return;
+  for (const [key, {newValue}] of Object.entries(changes)) settings[key] = newValue;
+  pending = null;
+  generation++;
+  mount();
 });
-
-// The single point at which this script touches the page. Everything else works
-// on the string it returns.
-function composer() {
-  for (const selector of COMPOSERS) {
-    const candidates = [...document.querySelectorAll(selector)];
-    const visible = candidates.filter((el) => el.offsetParent !== null && !el.disabled);
-    if (visible.length) return visible[visible.length - 1];
+const adapters = {
+  "chatgpt.com": {
+    composers: ['#prompt-textarea'],
+    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
+    stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]'],
+    replies: '[data-message-author-role="assistant"]',
+    text: '.markdown',
+  },
+  "claude.ai": {
+    composers: ['div[contenteditable="true"][data-lexical-editor="true"]', 'div.ProseMirror[contenteditable="true"]', 'div[contenteditable="true"][role="textbox"]'],
+    send: ['button[aria-label="Send message"]', 'button[data-testid="send-button"]'],
+    stop: ['button[aria-label="Stop response"]', 'button[aria-label="Stop generating"]'],
+    replies: '.font-claude-response',
+    text: null,
+  },
+};
+adapters["chat.openai.com"] = adapters["chatgpt.com"];
+const adapter = adapters[location.hostname];
+const active = () => document.visibilityState === "visible" && document.hasFocus();
+const visible = (el) => el && el.isConnected && el.getClientRects().length > 0;
+function find(selectors) {
+  for (const selector of selectors || []) {
+    const match = [...document.querySelectorAll(selector)].find(visible);
+    if (match) return match;
   }
   return null;
 }
-
-function readComposer(el) {
-  return (el.value !== undefined ? el.value : el.innerText || "").trim();
-}
-
-function writeComposer(el, text) {
+const composer = () => find(adapter?.composers);
+const read = (el) => (el.value !== undefined ? el.value : el.innerText || "").trim();
+async function write(el, text) {
+  try {
   if (el.value !== undefined) {
-    el.value = text;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+    if (setter) setter.call(el, text); else el.value = text;
+    el.dispatchEvent(new Event("input", {bubbles:true}));
   } else {
     el.focus();
-    // execCommand keeps the site's own editor state consistent; setting innerText
-    // directly leaves React frameworks believing the box is still empty.
-    document.execCommand("selectAll", false, null);
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    selection.removeAllRanges();
+    selection.addRange(range);
     document.execCommand("insertText", false, text);
   }
+    // Let the editor reconcile its input before deciding that insertion failed.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return el.isConnected && ColetaBridge.sameText(read(el), text);
+  } catch { return false; }
 }
-
-async function call(path, body) {
-  if (!settings.endpoint || !settings.apiKey) return null;
+let status = "Coleta ready";
+function report(text) {
+  status = text;
+  const el = document.getElementById("coleta-status");
+  if (el) el.textContent = text;
+}
+function mount() {
+  if (!ready || !adapter) return;
+  let panel = document.getElementById("coleta-bridge");
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.id = "coleta-bridge";
+    panel.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:2147483646;padding:10px 14px;border-radius:12px;background:#1e2e23;color:#eef4e8;font:12px system-ui;box-shadow:0 3px 20px #0002;max-width:300px";
+    const label = document.createElement("span");
+    label.id = "coleta-status";
+    label.setAttribute("role", "status");
+    label.setAttribute("aria-live", "polite");
+    panel.appendChild(label);
+    const button = document.createElement("button");
+    button.id = "coleta-recall";
+    button.type = "button";
+    button.textContent = "✦ Add memory";
+    button.style.cssText = "display:block;margin-top:8px;border:1px solid #7c9871;border-radius:20px;background:transparent;color:inherit;padding:6px 10px;cursor:pointer";
+    button.addEventListener("click", () => manualRecall());
+    panel.appendChild(button);
+    document.body.appendChild(panel);
+  }
+  const automatic = ColetaBridge.autoEnabled(settings);
+  document.getElementById("coleta-recall").style.display = automatic || !settings.recall ? "none" : "block";
+  report(automatic ? "Coleta automatic · ready" : status);
+}
+async function call(path, body, config = {...settings}, timeout = 4000) {
+  if (!config.endpoint || !config.apiKey) return {ok:false};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
   try {
-    const response = await fetch(settings.endpoint.replace(/\/$/, "") + path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": settings.apiKey },
-      body: JSON.stringify({ ...body, surface: location.hostname }),
+    const response = await fetch(config.endpoint.replace(/\/$/, "") + path, {
+      method:"POST", credentials:"omit", redirect:"error", signal:controller.signal,
+      headers:{"Content-Type":"application/json", "X-API-Key":config.apiKey},
+      body:JSON.stringify({...body, surface:location.hostname}),
     });
-    if (!response.ok) {
-      toast(response.status === 401 ? "coleta: key rejected" : `coleta: ${response.status}`);
-      return null;
+    const data = await response.json();
+    return {ok:response.ok, status:response.status, data};
+  } catch { return {ok:false}; }
+  finally { clearTimeout(timer); }
+}
+async function account(config) {
+  const bytes = new TextEncoder().encode(`${config.endpoint}\0${config.apiKey}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((v) => v.toString(16).padStart(2,"0")).join("");
+}
+async function queue(action, config, extra = {}) {
+  try {
+    return await chrome.runtime.sendMessage({type:"coleta-outbox", action, account:await account(config), ...extra});
+  } catch { return {ok:false}; }
+}
+let flushing = false;
+let retryAfter = 0;
+let retryDelay = 1000;
+async function flush() {
+  if (!active() || !ColetaBridge.autoEnabled(settings) || flushing || Date.now() < retryAfter) return;
+  flushing = true;
+  const config = {...settings};
+  const version = generation;
+  try {
+    const result = await queue("pending", config);
+    if (!result?.ok) return;
+    if (result.dropped) report("Coleta: expired unsent captures were removed");
+    for (const item of result.records) {
+      if (!active() || version !== generation || !ColetaBridge.autoEnabled(settings)) break;
+      const saved = await call("/v1/capture", item.body, config);
+      if (saved.ok && saved.data.stored) {
+        await queue("ack", config, {id:item.id});
+        retryDelay = 1000;
+      } else {
+        retryAfter = Date.now() + retryDelay;
+        retryDelay = Math.min(retryDelay * 2, 60_000);
+        report(saved.data?.error === "capture_not_enabled"
+          ? "Coleta: enable raw capture on the server · turn queued locally"
+          : "Coleta: capture pending · will retry on this site");
+        break;
+      }
     }
-    return await response.json();
-  } catch (err) {
-    toast("coleta: unreachable");
-    return null;
-  }
+  } finally { flushing = false; }
 }
-
-function toast(message) {
-  const el = document.createElement("div");
-  el.textContent = message;
-  el.style.cssText =
-    "position:fixed;bottom:20px;right:20px;z-index:2147483647;padding:8px 14px;" +
-    "border-radius:8px;background:#1c1c1c;color:#eee;font:13px system-ui;" +
-    "border:1px solid #444;opacity:0.95";
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 3200);
-}
-
-// RECALL. Explicit, and visible: the memory goes into the box above what you wrote,
-// so you read it and send it yourself. Nothing is added to a message you did not see.
-async function recall() {
-  if (!settings.endpoint || !settings.apiKey) {
-    toast("coleta: set the server and key in the extension options");
-    return;
-  }
+let manualBusy = false;
+async function manualRecall() {
+  if (!settings.recall || !active() || manualBusy) return;
   const el = composer();
-  if (!el) {
-    toast("coleta: could not find the prompt box on this page");
-    return;
-  }
-  const text = readComposer(el);
-  if (!text) {
-    toast("coleta: type something first, then press the button");
-    return;
-  }
-  if (marked(text)) {
-    toast("coleta: memory already added");
-    return;
-  }
-
-  // Terse: a person is about to read this in their own composer, and a
-  // confidence score is not something they can act on.
-  const data = await call("/v1/search", { query: text, top_k: 6, style: "terse" });
-  if (!data || !data.prompt_block) {
-    toast("coleta: nothing relevant");
-    return;
-  }
-  writeComposer(el, `${data.prompt_block}\n\n${MARKER}\n\n${text}`);
-  toast(`coleta: added ${data.results.length} memor${data.results.length === 1 ? "y" : "ies"}`);
+  if (!el || !read(el)) { report("Coleta: type a prompt first"); return; }
+  const snapshot = read(el);
+  const route = location.pathname;
+  const version = generation;
+  manualBusy = true;
+  report("Coleta: finding context…");
+  try {
+    const result = await call("/v1/search", {query:ColetaBridge.strip(snapshot).slice(0,4000), top_k:6, style:"terse"});
+    if (!active() || generation !== version || !el.isConnected || read(el) !== snapshot || location.pathname !== route) return;
+    if (!result.ok) { report("Coleta: unavailable · prompt unchanged"); return; }
+    const text = ColetaBridge.augment(ColetaBridge.strip(snapshot), result.data);
+    if (!await write(el, text)) { report("Coleta: editor changed · check your prompt"); return; }
+    report(result.data.results.length ? `Coleta: ${result.data.results.length} memories added` : "Coleta: no relevant memory");
+  } finally { manualBusy = false; }
 }
-
-// CAPTURE. The server policy is off by default. In collect-then-batch mode this
-// queues encrypted working material; it does not make a preliminary memory claim.
-let lastCaptured = "";
-async function capture() {
-  // The separate marker prevents an old stored `capture: true` default from being
-  // treated as consent after this safer default ships.
-  if (!settings.capture || !settings.captureConsent) return;
-  const el = composer();
-  if (!el) return;
-  let text = readComposer(el);
-  if (!text || text === lastCaptured) return;
-  // Never send back an injected block as though the user had typed it.
-  if (marked(text)) text = stripMarked(text);
-  if (!text) return;
-  lastCaptured = text;
-  const data = await call("/v1/capture", { text });
-  if (!data) return;
-  if (data.count) toast(`coleta: remembered ${data.count}`);
-  else if (data.queued) toast("coleta: queued for extraction");
-  else if (data.capture_enabled === false) warnCaptureInert();
+let generation = 0;
+let busy = false;
+let bypass = false;
+let pending = null;
+let lastRoute = location.pathname;
+function conversationId() {
+  return location.pathname.match(/\/(?:c|chat)\/([\w-]+)/)?.[1] || `new-${crypto.randomUUID()}`;
 }
-
-// Capture can be switched on here and off on the server, and until the server
-// started saying so the only symptom was silence on every send — the toggle looked
-// broken rather than unconfigured. Warned once per page, because the alternative is
-// a toast on every message the setting fails to capture.
-let warnedCaptureInert = false;
-function warnCaptureInert() {
-  if (warnedCaptureInert) return;
-  warnedCaptureInert = true;
-  toast("coleta: capture is on here but off on the server — nothing is being saved");
-}
-
-function matchesShortcut(event) {
-  const parts = (settings.shortcut || "").split("+").map((p) => p.trim().toLowerCase());
-  if (!parts.length) return false;
-  const key = parts[parts.length - 1];
-  if (event.key.toLowerCase() !== key) return false;
-  const want = (name) => parts.includes(name);
-  return (
-    want("ctrl") === event.ctrlKey &&
-    want("shift") === event.shiftKey &&
-    want("alt") === event.altKey &&
-    want("cmd") === event.metaKey
-  );
-}
-
-document.addEventListener(
-  "keydown",
-  (event) => {
-    const el = composer();
-    if (!el) return;
-    if (settings.recall && matchesShortcut(event)) {
-      event.preventDefault();
-      recall();
+function isNewChat(path) { return ["/", "/new", "/chat", "/chat/new"].includes(path); }
+async function intercept(event, el, button) {
+  if (busy) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+  const draft = read(el);
+  const original = ColetaBridge.strip(draft);
+  if (!original) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  busy = true;
+  pending = null;
+  const version = generation;
+  const route = location.pathname;
+  const config = {...settings};
+  const turn = {turn_id:crypto.randomUUID(), conversation_id:conversationId(), text:original, role:"user"};
+  const unchanged = () => active() && version === generation && ColetaBridge.autoEnabled(settings) &&
+    location.pathname === route && el.isConnected && read(el) === draft;
+  report("Coleta: finding context…");
+  try {
+    // Local durability precedes retrieval. Fail-open applies to both steps; a slow
+    // or unavailable extension/server never gets to hold the website indefinitely.
+    const queued = await ColetaBridge.bounded(queue("enqueue", config, {body:turn}), 100);
+    if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
+    const saved = await ColetaBridge.bounded(call("/v1/capture", turn, config, 200), 200);
+    if (saved?.ok && saved.data.stored && queued?.id) {
+      void queue("ack", config, {id:queued.id});
+    }
+    if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
+    const result = await ColetaBridge.bounded(call("/v1/search", {
+      query:original.slice(0,4000), top_k:6, style:"terse",
+    }, config, 400), 400);
+    if (!unchanged()) {
+      report("Coleta: draft changed or page left · send when ready");
       return;
     }
-    // Enter sends on both surfaces; read the box before the site clears it.
-    if (event.key === "Enter" && !event.shiftKey && document.activeElement === el) capture();
-  },
-  true,
-);
-
-// The button. A hidden shortcut is a feature nobody finds, and every modifier
-// combination worth having is already claimed by the browser or the page.
-function mountButton() {
-  if (document.getElementById("coleta-recall")) return;
-  const button = document.createElement("button");
-  button.id = "coleta-recall";
-  button.type = "button";
-  button.textContent = "✦ memory";
-  button.title = "Bring your portable memory into the box (coleta)";
-  button.style.cssText =
-    "position:fixed;bottom:22px;right:22px;z-index:2147483646;padding:8px 14px;" +
-    "border-radius:999px;background:#1c1c1c;color:#eee;font:13px system-ui;" +
-    "border:1px solid #4a4a4a;cursor:pointer;opacity:0.85";
-  button.addEventListener("mouseenter", () => (button.style.opacity = "1"));
-  button.addEventListener("mouseleave", () => (button.style.opacity = "0.85"));
-  button.addEventListener("click", (event) => {
-    event.preventDefault();
-    recall();
-  });
-  document.body.appendChild(button);
+    let augmented = result?.ok ? ColetaBridge.augment(original, result.data) : draft;
+    let injectionFailed = false;
+    if (augmented !== draft && !await write(el, augmented)) {
+      if (!active() || version !== generation || location.pathname !== route) return;
+      if (!await write(el, draft)) {
+        report("Coleta: could not restore your draft · please check it before sending");
+        return;
+      }
+      augmented = draft;
+      injectionFailed = true;
+    }
+    if (!active() || version !== generation || location.pathname !== route ||
+        !el.isConnected || !ColetaBridge.sameText(read(el), augmented)) {
+      report("Coleta: draft changed · send when ready");
+      return;
+    }
+    // React may replace the button when the editor changes. Re-resolve only the
+    // adapter's known Send control, never a generic submit/stop button.
+    const send = find(adapter.send);
+    if (!send || send.disabled || send.getAttribute("aria-disabled") === "true") {
+      if (ColetaBridge.sameText(read(el), augmented)) await write(el, draft);
+      report("Coleta: Send unavailable · prompt kept");
+      return;
+    }
+    pending = {turn, route, newChat:isNewChat(route), config, version,
+      before:new Set(document.querySelectorAll(adapter.replies)), node:null,
+      text:"", changed:Date.now(), started:Date.now(), sawStreaming:false};
+    bypass = true;
+    try { send.click(); } finally { bypass = false; }
+    report(injectionFailed ? "Coleta: memory insertion failed · sent original prompt" : !queued?.ok ? "Coleta: capture not confirmed · prompt sent" :
+      !result?.ok ? "Coleta unavailable · sent without added memory" :
+      result.data.results.length ? `Coleta: ${result.data.results.length} memories added` : "Coleta: no relevant memory");
+    void flush();
+  } finally { busy = false; }
 }
-
-// These are single-page apps that rebuild the DOM as you navigate, so the button
-// has to be re-mounted rather than added once.
-new MutationObserver(() => mountButton()).observe(document.body, {
-  childList: true,
-  subtree: false,
+function matchesShortcut(event) {
+  const parts = settings.shortcut.toLowerCase().split("+").map((s) => s.trim());
+  return event.key.toLowerCase() === parts.at(-1) &&
+    event.ctrlKey === parts.includes("ctrl") && event.shiftKey === parts.includes("shift") &&
+    event.altKey === parts.includes("alt") && event.metaKey === parts.includes("cmd");
+}
+function routeChanged() {
+  if (location.pathname === lastRoute) return;
+  if (pending?.newChat && /\/(?:c|chat)\/[\w-]+/.test(location.pathname)) {
+    pending.route = location.pathname;
+    pending.newChat = false;
+  } else { pending = null; generation++; }
+  lastRoute = location.pathname;
+}
+function handleSend(event) {
+  if (!ready || !adapter || bypass || !event.isTrusted || !active()) return;
+  if (event.type === "click" && event.target.closest?.("a[href]")) {
+    pending = null;
+    generation++;
+  }
+  routeChanged();
+  const el = composer();
+  if (!el) return;
+  if (event.type === "keydown" && settings.recall && matchesShortcut(event)) {
+    event.preventDefault();
+    void manualRecall();
+    return;
+  }
+  const send = find(adapter.send);
+  const stop = find(adapter.stop);
+  if (event.type === "click" && stop?.contains(event.target)) {
+    pending = null;
+    report("Coleta: interrupted reply not captured");
+    return;
+  }
+  if (busy && event.type === "keydown" && el.contains(event.target) &&
+      event.key === "Enter" && event.repeat && !event.isComposing && !event.shiftKey) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    return;
+  }
+  const trigger = event.type === "keydown" ? el.contains(event.target) && ColetaBridge.sendsOnEnter(event)
+    : send?.contains(event.target);
+  if (!trigger || !send || send.disabled || send.getAttribute("aria-disabled") === "true") return;
+  if (ColetaBridge.autoEnabled(settings)) void intercept(event, el, send);
+  else if (settings.capture && settings.captureConsent) {
+    const text = ColetaBridge.strip(read(el));
+    if (text) void call("/v1/capture", {text}).then((r) => {
+      if (!r.ok || r.data.capture_enabled === false) report("Coleta: capture unavailable");
+    });
+  }
+}
+document.addEventListener("keydown", handleSend, true);
+document.addEventListener("click", handleSend, true);
+async function observeReply() {
+  if (!active() || !ColetaBridge.autoEnabled(settings)) return;
+  routeChanged();
+  const turn = pending;
+  if (!turn || turn.version !== generation) return;
+  if (Date.now() - turn.started > 120_000) {
+    pending = null;
+    report("Coleta: reply completion not confirmed · not captured");
+    return;
+  }
+  const streaming = Boolean(find(adapter.stop));
+  turn.sawStreaming ||= streaming;
+  const nodes = [...document.querySelectorAll(adapter.replies)].filter((el) => visible(el) && !turn.before.has(el));
+  // Ambiguity (multiple replies, regenerated branches, navigation) loses recall,
+  // never causes an old answer to be attributed to this prompt.
+  if (nodes.length !== 1) return;
+  const node = nodes[0];
+  if (turn.node && node !== turn.node) { pending = null; return; }
+  turn.node = node;
+  const bodies = adapter.text ? [...node.querySelectorAll(adapter.text)] : [node];
+  const text = bodies.map((body) => body.innerText || "").join("\n\n").trim();
+  if (!text || text.length > 100_000) return;
+  if (text !== turn.text) { turn.text = text; turn.changed = Date.now(); return; }
+  // A quiet stream is not completion. Require observed native streaming controls
+  // to disappear as well as a stable text window; unknown adapters capture nothing.
+  if (streaming || !turn.sawStreaming || Date.now() - turn.changed < 1500) return;
+  pending = null;
+  const result = await queue("enqueue", turn.config, {body:{...turn.turn, role:"assistant", text}});
+  report(result?.ok ? "Coleta: reply queued for capture" : "Coleta: reply capture failed");
+  void flush();
+}
+document.addEventListener("visibilitychange", () => {
+  if (!active()) { pending = null; generation++; }
 });
-mountButton();
-
-document.addEventListener(
-  "click",
-  (event) => {
-    const button = event.target.closest?.('button[type="submit"], button[aria-label*="end" i]');
-    if (button) capture();
-  },
-  true,
-);
+window.addEventListener("blur", () => { pending = null; generation++; });
+window.addEventListener("popstate", () => { pending = null; generation++; lastRoute = location.pathname; });
+// Poll only a foreground page. No DOM read occurs while another tab/window is active.
+setInterval(() => {
+  if (!active()) return;
+  if (!document.getElementById("coleta-bridge")) mount();
+  void observeReply();
+  void flush();
+}, 500);

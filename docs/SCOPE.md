@@ -148,11 +148,15 @@ This is the part v0.1 and the first pass of v0.2 left as a one-line MCP bullet, 
 There are two permitted mechanisms. **Capture-by-tool-call** exposes the canonical
 store as a hosted remote MCP server and lets the provider's model call it through an
 official integration point. **Consent-based client capture** runs in the user's own
-browser session and can read the composer text the user is actively submitting. It
-must not read provider output, other conversations, archives, or pages in the
-background, and it must never forward or replay a session credential. This is the
-same boundary as a password manager or spelling extension: the user is browsing;
-coletar is not impersonating them from a server.
+browser session. Manual mode reads the submitted composer text. With a separate
+explicit automatic-mode opt-in (amended 2026-09-23), the extension may handle the
+user's normal Send/Enter, retrieve and visibly insert context, activate Send once,
+and capture only that turn's new completed reply on the active, visible page.
+Assistant replies are encrypted agent-authored evidence, excluded from user-fact
+extraction. Other conversations, archives, background page reads, provider network
+interception and session-credential forwarding/replay remain prohibited. This is
+client-side assistance under the user's own action, not server impersonation.
+
 
 **Per-provider connector reality, as of today:**
 
@@ -373,7 +377,7 @@ Publish the weighting. If it's a black-box percentage, it's not a differentiator
 
 Concretely, this means:
 
-1. **Connect** — for Migration mode: OAuth-style flow where the provider supports it (Claude's memory export/import), a deep-link-then-desktop-folder-watcher flow for ChatGPT (point the user to the export button, they click it once, everything after that — detecting, validating, parsing the ZIP — is automated), one-click for local models if a supported runtime (Ollama, LM Studio) is detected on the machine. For Live Sync mode: a connector setup flow per §3.1 and an explicit consent control for the composer extension. The flow must never automate a provider UI, replay a session credential, read model output or other conversations, or read any page in the background. Reading the active user's submitted composer text locally is the narrow permitted exception, not permission to inspect the account.
+1. **Connect** — for Migration mode: OAuth-style flow where the provider supports it (Claude's memory export/import), a deep-link-then-desktop-folder-watcher flow for ChatGPT (point the user to the export button, they click it once, everything after that — detecting, validating, parsing the ZIP — is automated), one-click for local models if a supported runtime (Ollama, LM Studio) is detected on the machine. For Live Sync mode: a connector setup flow per §3.1 and an explicit consent control for the composer extension. With a separate explicit automatic-mode opt-in, the extension may intercept the user’s normal Send/Enter action, visibly augment the composer, activate Send once, and capture only the new completed reply on that active, visible page. Assistant output is retained as encrypted, agent-authored evidence and is excluded from user-memory extraction. This narrow exception does not permit headless automation, provider network hooks, session replay, archive reads, other conversations, or background page reading. Manual mode remains composer-only.
 2. **Context Inspector** — review extracted objects before anything is compiled anywhere. Edit, merge, retire, adjust scope. Retirement removes an object from retrieval and compilation without erasing its history. This is the trust-building screen; skip it and you're just another "give us your ChatGPT history" product.
 3. **Compile** — pick a destination, get a Migration Manifest + Continuity Score, get a real native artifact (a Claude Project link, a ChatGPT Custom GPT config, a local model's profile file) — not a zip of markdown.
 4. **Dashboard** — the Mem0-style observability/compression view, but framed as "your memory," not "your API usage."
