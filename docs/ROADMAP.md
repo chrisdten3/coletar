@@ -898,6 +898,80 @@ write path that bypasses the Store and Event Log.
 
 ---
 
+## M9 — History as an observability surface
+
+SCOPE §6, §8.2. A view over the Event/Revision Log, not a second data model — the
+same discipline as M4: the log already records what a metrics backend records, and
+nothing was reading it that way.
+
+The reframe: **facts are series, changes are events, retrievals are telemetry.**
+Every revision event carries a full `after` snapshot (a decision made in M1.3 so a
+single row could be replayed on its own), which makes the log a materialised time
+series. `coletar.history` replays it.
+
+- [x] **`HistoryQuery`, a typed grammar** (`history/query.py`). Every filter is an
+      enum that already exists in the schema, so the graph's own vocabulary is the
+      query language. Two metric families, kept apart because they make different
+      claims: *flow* counts events in a bucket, *stock* measures replayed object
+      state at the end of one. A stock metric's headline is its latest bucket, not
+      a sum — adding "214 active objects in March" to "230 in April" produces 444
+      of nothing.
+- [x] **The rollup engine** (`history/rollup.py`). One forward pass over the log
+      per query, serving both families. Filters match the object *as it was at the
+      event*, never as it is now: a chart of "writes that were low-confidence"
+      must count a write that was later corroborated upwards, and matching against
+      today's row silently rewrites history to agree with the present.
+- [x] **Every point cites its events.** A `SeriesPoint` carries the ids it counted
+      and the UI opens them. Constraint #4 applies to a number on a chart exactly
+      as it applies to an object: one we cannot explain should not exist.
+- [x] **One fact as a series** (`object_lifetime`). Follows `supersedes` in both
+      directions, because a user asking "how has this changed" means the statement
+      and not the row — "the launch is 10 October" becoming "24 October" is one
+      fact with two ids.
+- [x] **Reach, answered rather than inferred** (`reach_report`). Locality says which
+      surfaces *may* read an object; this is what they did read. The gap runs both
+      ways: context nothing has read is not earning its place, and a read from a
+      surface whose reach was later revoked is a propagation bug with a date on it.
+- [x] **Ideas over time** (`history/clusters.py`). Cluster mass per bucket, over the
+      same embeddings retrieval uses. Deliberately *not* a model scoring memories
+      for sentiment or theme: extraction here is precision-over-recall because a
+      wrong memory costs trust, and a wrong chart costs more, since it carries the
+      authority of a number and nobody audits an axis. The join threshold is a
+      percentile of the graph's own similarity distribution, not a constant — the
+      absolute cosine is a property of the embedder, and `embedding_backend` is a
+      config value that changes under this module.
+- [x] **English compiles to a query, and the query is shown** (`history/nl.py`).
+      Rules, not a model: the grammar is closed, so a vocabulary match covers the
+      questions people ask, runs offline, costs nothing, and is auditable line by
+      line. The compiler reports what it matched *and* what it ignored, so the UI
+      can say "I did not understand 'flaky'" instead of quietly answering a
+      different question. **No provider call, and therefore no new subprocessor.**
+- [x] **Demo personas have a past.** Events are dated to the object rather than to
+      the seed run, and each persona gets an import burst, six months of topic
+      writes, reads, reviews, corroborations, corrections, retirements and reach
+      changes. Before this, every demo graph spread over months while its log
+      spread over four seconds, so any question about history answered "it all
+      happened just now".
+
+Deferred, and named here so the stubs have somewhere to point:
+
+- [ ] **Model-assisted compilation.** `QuestionCompiler` is the seam;
+      `nl.model_compiler_unavailable` raises rather than silently falling back,
+      because a user who enabled a model backend and got keyword matching would
+      have no way to tell. Whatever produces the query, the user is shown the
+      query.
+- [ ] **Watches evaluated server-side.** Saved questions currently live in browser
+      prefs with a fingerprint of the answer they had when saved, so "has this
+      moved" is answerable on the next visit. Telling someone *before* they look
+      needs a job and a notification channel.
+- [ ] **Bucketing pushed into SQL.** The engine replays the log in one pass in
+      Python, which is correct and bounded by `_SCAN_LIMIT`. A `date_trunc` and a
+      `GROUP BY` behind a new `Store` method is the move when a tenant's log
+      outgrows one pass; nothing above `rollup` would change, which is the reason
+      the grammar is typed.
+
+---
+
 ## M10 — recorded, deliberately not started
 
 **Nothing here begins until the pre-product gate in [TODO.md](TODO.md) is closed.**

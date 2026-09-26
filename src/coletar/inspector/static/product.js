@@ -548,6 +548,61 @@ function humanEvent(e) {
     }[e.type] || e.type
   );
 }
+
+/* One fact, as a series. The graph-level charts answer "what is happening to my
+   context"; this answers "what happened to this sentence" -- and it is the same
+   data, because every revision event carries a full snapshot. Confidence on the
+   y-axis makes a fact that was corroborated upward look different from one that
+   was quietly rewritten. */
+let objectLife = null,
+  objectLifeId = null;
+
+function lifetimePanel(id) {
+  if (objectLifeId !== id) return `<div class="panel"><span class="eyebrow">Life of this fact</span><p class="small muted">Reading the revision log…</p></div>`;
+  if (!objectLife) return "";
+  const pts = objectLife.points;
+  if (pts.length < 1) return "";
+  const series = [
+    {
+      key: "confidence",
+      points: pts.map((p) => ({ at: p.at, value: p.confidence, event_ids: [p.event_id] })),
+    },
+  ];
+  const chainNote =
+    objectLife.chain.length > 1
+      ? `<span class="badge">${objectLife.chain.length} versions across ${objectLife.chain.length} ids</span>`
+      : "";
+  return `<div class="panel lifetime"><div class="row between wrap"><span class="eyebrow">Life of this fact</span><span class="mono muted">${pts.length} ${pts.length === 1 ? "step" : "steps"} · ${objectLife.reads.length} reads ${chainNote}</span></div>
+  ${pts.length > 1 ? chart(series, { label: "confidence over time", height: 120, min_max: 1 }) : ""}
+  <ol class="life-steps">${pts
+    .map(
+      (p) =>
+        `<li><span class="mono muted">${time(p.at)}</span><strong>${esc(String(p.event).replace(/\./g, " "))}</strong>${p.changed ? `<div class="history-diff"><del>${esc(String(p.previous).slice(0, 90))}</del><span>→</span><ins>${esc(p.content.slice(0, 90))}</ins></div>` : `<p class="small">${esc(p.content.slice(0, 120))}</p>`}<span class="mono muted">${esc(p.actor)} · ${esc(p.provider)} · confidence ${p.confidence.toFixed(2)}${p.reads_since ? ` · read ${p.reads_since}× since the previous step` : ""}</span></li>`,
+    )
+    .join("")}</ol>
+  ${objectLife.reads.length ? `<details class="life-reads"><summary>${objectLife.reads.length} recorded reads</summary><ul>${objectLife.reads
+      .slice(0, 20)
+      .map(
+        (r) =>
+          `<li><span class="mono">${time(r.at)}</span> ${tag(r.provider)} <span class="mono muted">${r.query_text ? esc(r.query_text) : `digest ${esc(r.query_digest || "—")}`}</span></li>`,
+      )
+      .join("")}</ul></details>` : ""}
+  <p class="caption">Every step is an event in the append-only log, and a correction that replaced this statement is followed into the same series rather than shown as an unrelated object.</p></div>`;
+}
+
+async function loadLifetime(id) {
+  if (objectLifeId === id) return;
+  objectLifeId = id;
+  objectLife = null;
+  try {
+    objectLife = await api(`/history/object/${encodeURIComponent(id)}`);
+  } catch {
+    // A fact with no recorded revisions is not an error; the panel hides.
+    objectLife = null;
+  }
+  if (routeOf() === "object") render();
+}
+
 function detail(id) {
   const o = objById(id);
   if (!o)
@@ -566,7 +621,7 @@ function detail(id) {
   const sourceIds = o.provenance.source_object_ids || [];
   return shell(
     "Object",
-    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div><div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || "<li>No recorded events in this window.</li>"}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p></section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
+    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div>${lifetimePanel(id)}<div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || "<li>No recorded events in this window.</li>"}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p></section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
       ["claude", "Claude · web, Desktop & Code"],
       ["chatgpt", "ChatGPT"],
       ["local", "Local model"],
@@ -645,79 +700,437 @@ function capture() {
     `<div class="row between mb"><div><h2>Captured, not yet remembered.</h2><p class="muted">Your submitted turns are kept as encrypted source material until extraction runs.</p></div><span class="badge">${episodes.length} pending</span></div>${episodes.map((o) => `<article class="panel mb"><div class="row between"><h3>${tag(o.provenance.provider)} <span class="badge">awaiting extraction</span></h3><span class="mono muted">${time(o.created_at)}</span></div><p class="capture-content">${esc(o.content)}</p><div class="row between wrap"><span class="capture-lock">${icon("lock")} Encrypted at rest · only your submitted turn</span><a class="btn" href="#/object/${encodeURIComponent(o.id)}">Inspect source</a></div></article>`).join("") || empty("The capture queue is clear", "Submitted turns will appear here when consented capture is enabled.", '<a class="btn" href="#/surfaces">Set up a surface</a>')}<div class="columns mt"><section class="panel"><span class="eyebrow">What happens next</span><h3 class="mt">Capture now. Judge later.</h3><p class="muted">The configured background worker extracts durable context, grounds it in the source turn, and records its provenance. ${connections?.capture_enabled ? "OpenAI receives candidate turns only; stored memories are not sent. Run a batch below or wait for the daily schedule." : "Extraction does not run in this page."}</p>${connections?.capture_enabled ? '<button class="primary mt" data-action="process-captures">Process pending turns with OpenAI</button>' : ""}<a href="#/review">Open the review queue →</a></section><section class="panel"><span class="eyebrow">Your control</span><h3 class="mt">Only turns you submit.</h3><p class="muted">coleta does not read assistant replies, other conversations, or background tabs. Capture requires explicit consent in the extension.</p><a href="#/surfaces">Manage surfaces →</a></section></div>`,
   );
 }
-/* The strip is a fixed five-stage legend, so the marker is placed by where the
-   record time falls between the earliest event and now — not by pixel guesswork. */
-function asOfOffset() {
-  const events = state.events
-    .map((e) => Date.parse(e.at))
-    .filter(Number.isFinite);
-  if (!events.length || !auditResult) return 50;
-  const first = Math.min(...events);
-  const last = Math.max(Math.max(...events), Date.now());
-  const at = Date.parse(auditResult.at);
-  if (!(last > first)) return 50;
-  // Kept off the ends so the marker's label never collides with a stage name.
-  return Math.min(Math.max(((at - first) / (last - first)) * 100, 10), 90);
+/* --- History: context as an observability surface (SCOPE §6) ---------------
+   The page answers three shapes of question. What has been happening to my
+   graph (series over the event log), what is any one fact's life (a series of
+   one object), and what has actually been read (the retrieval traces). The
+   bitemporal two-date query that used to be the whole page is still here, at
+   the bottom, because it answers a real question -- it is just not the first
+   one anybody has. */
+
+let historyTab = "overview",
+  historyWindow = 90,
+  historyDash = null,
+  historyAsk = null,
+  historyIdeas = null,
+  historyReach = null,
+  historyCites = null,
+  historyBusy = false,
+  historyError = "";
+
+const HISTORY_PALETTE = [
+  "#2d6e5d",
+  "#a8562a",
+  "#4f8f79",
+  "#7a6cae",
+  "#a55e1b",
+  "#8fb8a8",
+  "#a24837",
+  "#6f6a5c",
+  "#828078",
+];
+
+/** Stable colour per series key, so "claude" is the same green on every chart
+    on the page rather than whichever colour its rank happened to earn. */
+function seriesColor(key, index) {
+  const named = {
+    claude: "#2d6e5d",
+    chatgpt: "#4f8f79",
+    local: "#a8562a",
+    coletar: "#828078",
+    gemini: "#7a6cae",
+    user: "#2d6e5d",
+    model: "#a8562a",
+    job: "#7a6cae",
+    connector: "#4f8f79",
+    migration: "#a55e1b",
+    system: "#828078",
+    compiler: "#6f6a5c",
+  };
+  return named[key] || HISTORY_PALETTE[index % HISTORY_PALETTE.length];
 }
-function audit() {
+
+const shortDate = (iso) =>
+  new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+
+/** A multi-series line chart as inline SVG.
+
+    Hand-rolled rather than charted with a library: the whole page is six small
+    charts of the same shape, and a dependency whose reason does not survive
+    being said out loud does not go in. Points carry their event ids so a click
+    can open the rows behind the number. */
+function chart(series, opts = {}) {
+  const height = opts.height || 150;
+  const width = 640;
+  const pad = { l: 34, r: 8, t: 10, b: 18 };
+  const points = series[0]?.points || [];
+  if (!points.length) return `<div class="chart-empty">No data in this window.</div>`;
+
+  const max = Math.max(
+    opts.min_max || 1,
+    ...series.flatMap((s) => s.points.map((p) => p.value)),
+  );
+  const x = (i) =>
+    pad.l + (i / Math.max(points.length - 1, 1)) * (width - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - v / max) * (height - pad.t - pad.b);
+
+  const gridlines = [0, 0.5, 1]
+    .map(
+      (f) =>
+        `<line class="grid" x1="${pad.l}" x2="${width - pad.r}" y1="${y(max * f)}" y2="${y(max * f)}"/>` +
+        `<text class="axis" x="${pad.l - 6}" y="${y(max * f) + 3}" text-anchor="end">${
+          Number.isInteger(max * f) ? max * f : (max * f).toFixed(2)
+        }</text>`,
+    )
+    .join("");
+
+  const paths = series
+    .map((s, si) => {
+      const color = seriesColor(s.key, si);
+      const line = s.points
+        .map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`)
+        .join("");
+      const area =
+        series.length === 1
+          ? `<path class="area" d="${line}L${x(s.points.length - 1).toFixed(1)},${y(0)}L${x(0).toFixed(1)},${y(0)}Z" fill="${color}" opacity="0.10"/>`
+          : "";
+      const dots = s.points
+        .map((p, i) =>
+          p.value
+            ? `<circle class="pt" cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="8" fill="transparent" ${
+                p.event_ids?.length
+                  ? `data-cite="${esc(p.event_ids.join(","))}" data-cite-label="${esc(
+                      `${s.key === "all" ? "" : s.key + " · "}${shortDate(p.at)} · ${p.value}`,
+                    )}"`
+                  : ""
+              }><title>${esc(s.key)} · ${esc(shortDate(p.at))} · ${p.value}</title></circle>`
+            : "",
+        )
+        .join("");
+      return `${area}<path class="line" d="${line}" stroke="${color}" fill="none"/>${dots}`;
+    })
+    .join("");
+
+  const labels = [0, Math.floor(points.length / 2), points.length - 1]
+    .filter((i, n, a) => a.indexOf(i) === n && points[i])
+    .map(
+      (i) =>
+        `<text class="axis" x="${x(i)}" y="${height - 4}" text-anchor="${i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"}">${esc(shortDate(points[i].at))}</text>`,
+    )
+    .join("");
+
+  const legend =
+    series.length > 1
+      ? `<div class="chart-legend">${series
+          .map(
+            (s, si) =>
+              `<span><i style="background:${seriesColor(s.key, si)}"></i>${esc(s.key)} <b>${s.points.reduce((a, p) => a + p.value, 0)}</b></span>`,
+          )
+          .join("")}</div>`
+      : "";
+
+  return `<div class="chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(opts.label || "series")}" preserveAspectRatio="none">${gridlines}${paths}${labels}</svg>${legend}</div>`;
+}
+
+function panel(title, payload, note) {
+  if (!payload) return "";
+  const value = payload.is_stock
+    ? Math.round(payload.headline * 100) / 100
+    : payload.headline;
+  return `<article class="panel hist-panel"><div class="row between"><h3>${esc(title)}</h3><span class="mono muted">${esc(String(value))} <small>${esc(payload.headline_label)}</small></span></div>${chart(payload.series, { label: title, height: 130 })}${note ? `<p class="caption">${note}</p>` : ""}</article>`;
+}
+
+async function loadHistory(force) {
+  if (historyBusy) return;
+  if (historyDash && !force) return;
+  historyBusy = true;
+  historyError = "";
+  try {
+    historyDash = await api(`/history/dashboard?window_days=${historyWindow}`);
+  } catch (error) {
+    historyError = error.message;
+  } finally {
+    historyBusy = false;
+    if (routeOf() === "audit") render();
+  }
+}
+
+async function loadIdeas(force) {
+  if (historyIdeas && !force) return;
+  try {
+    historyIdeas = await api(`/history/ideas?window_days=${Math.max(historyWindow, 120)}`);
+  } catch (error) {
+    historyError = error.message;
+  }
+  if (routeOf() === "audit") render();
+}
+
+async function loadReach(force) {
+  if (historyReach && !force) return;
+  try {
+    historyReach = await api("/history/reach");
+  } catch (error) {
+    historyError = error.message;
+  }
+  if (routeOf() === "audit") render();
+}
+
+/** The compiled-query panel. This is the honesty mechanism: whatever produced
+    the query, the user sees the query, what was read out of their sentence,
+    and what was ignored. */
+function compiledPanel(ask) {
+  const q = ask.query;
+  const unmatched = ask.unmatched?.length
+    ? `<p class="caption amber">Not understood, and not used: ${ask.unmatched.map((w) => `<code>${esc(w)}</code>`).join(" ")}</p>`
+    : "";
+  const metrics = [
+    "writes",
+    "revisions",
+    "retirements",
+    "supersessions",
+    "corroborations",
+    "reviews",
+    "rescopes",
+    "retrievals",
+    "objects_served",
+    "active_objects",
+    "mean_confidence",
+    "never_read",
+    "unreviewed",
+  ];
+  const groups = [
+    "none",
+    "actor",
+    "provider",
+    "object_type",
+    "memory_kind",
+    "extraction_method",
+    "sensitivity",
+    "locality_mode",
+    "scope",
+    "surface",
+  ];
+  const sel = (name, options, value) =>
+    `<label class="q-field"><span class="eyebrow">${esc(name.replace("_", " "))}</span><select name="${name}">${options
+      .map(
+        (o) =>
+          `<option value="${o}" ${o === value ? "selected" : ""}>${esc(String(o).replace(/_/g, " "))}</option>`,
+      )
+      .join("")}</select></label>`;
+
+  return `<form id="query-form" class="panel compiled">
+    <div class="row between wrap"><span class="eyebrow">Compiled query · editable</span><span class="mono muted">${esc(ask.compiler)}</span></div>
+    <p class="compiled-sentence">${esc(ask.explanation)}</p>
+    <div class="q-fields">
+      ${sel("metric", metrics, q.metric)}
+      ${sel("group_by", groups, q.group_by)}
+      ${sel("bucket", ["day", "week", "month"], q.bucket)}
+      <label class="q-field"><span class="eyebrow">window days</span><input name="window_days" type="number" min="1" max="730" value="${q.window_days}"></label>
+      <label class="q-field"><span class="eyebrow">contains</span><input name="contains" type="text" value="${esc(q.filter?.contains || "")}" placeholder="any text"></label>
+    </div>
+    ${ask.matched?.length ? `<div class="q-read">${ask.matched.map((m) => `<span><code>${esc(m.phrase)}</code> → ${esc(m.meaning)}</span>`).join("")}</div>` : ""}
+    ${unmatched}
+    <div class="row"><button class="primary">${icon("audit")} Re-run</button><button type="button" class="quiet" data-action="watch-save">Save as watch</button></div>
+  </form>`;
+}
+
+function askResult() {
+  if (!historyAsk) return "";
+  const r = historyAsk.result;
+  const warn = historyAsk.understood
+    ? ""
+    : `<div class="notice warning">${icon("lock")} Nothing in that question matched the query vocabulary, so this is the default view rather than an answer. Edit the compiled query below, or try an example.</div>`;
+  const cites = historyCites
+    ? `<div class="panel cites"><div class="row between"><b>Events behind ${esc(historyCites.label)}</b><button class="quiet small" data-action="cites-close">${icon("close")}</button></div><ol class="timeline">${historyCites.events
+        .map(
+          (e) =>
+            `<li><strong>${esc(String(e.type).replace(/\./g, " "))}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.object_id ? ` · <a href="#/object/${encodeURIComponent(e.object_id)}">${esc(e.object_id)}</a>` : ""}</span>${e.after?.content ? `<p class="small">${esc(String(e.after.content).slice(0, 140))}</p>` : ""}</li>`,
+        )
+        .join("")}</ol></div>`
+    : "";
+  return `${warn}${compiledPanel(historyAsk)}<article class="panel hist-panel wide-chart"><div class="row between"><h3>${esc(r.explanation)}</h3><span class="mono">${esc(String(Math.round(r.headline * 100) / 100))} <small>${esc(r.headline_label)}</small></span></div>${chart(r.series, { label: r.explanation, height: 190 })}<p class="caption">${r.events_scanned} events replayed${r.truncated ? " · window reached the log scan limit, so this is a partial view" : ""}. Click a point to read the events it counted.</p></article>${cites}`;
+}
+
+function overviewTab() {
+  if (historyError)
+    return `<div class="notice warning">${icon("lock")} ${esc(historyError)}</div>`;
+  if (!historyDash) return `<div class="inset"><p>Reading the revision log…</p></div>`;
+  const p = historyDash.panels;
+  return `<div class="hist-grid">
+    ${panel("Writes, by who", p.writes_by_actor, "Model-authored context growing faster than your corrections is the thing to watch.")}
+    ${panel("Reads, by assistant", p.retrievals_by_provider, "One graph, several assistants. A per-product memory cannot draw this chart.")}
+    ${panel("How context arrived", p.method_mix, "Imported prose and explicit statements are not the same quality of fact.")}
+    ${panel("Graph size", p.active_objects, "Active objects at the end of each bucket, replayed from the log.")}
+    ${panel("Corrections", p.corrections, "How often the graph contradicts itself. A flat zero usually means nobody is reading it.")}
+    ${panel("Mean confidence", p.confidence, "Drifting down means extraction is getting less sure, not that you are.")}
+  </div>`;
+}
+
+function ideasTab() {
+  if (!historyIdeas) return `<div class="inset"><p>Clustering…</p></div>`;
+  const d = historyIdeas;
+  if (!d.clusters.length)
+    return empty(
+      "No topics to chart yet",
+      "Idea clustering needs a few dozen related objects. Import a history or keep writing.",
+    );
+  const movers = (d.movers || [])
+    .map(
+      (m) =>
+        `<span class="mover ${m.delta > 0 ? "up" : m.delta < 0 ? "down" : ""}">${m.delta > 0 ? "↑" : m.delta < 0 ? "↓" : "→"} ${esc(m.label)} <b>${m.from} → ${m.to}</b></span>`,
+    )
+    .join("");
+  const series = d.series.map((s) => ({
+    key: s.label,
+    points: s.points.map((p) => ({ at: p.at, value: p.value, event_ids: [] })),
+  }));
+  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Cluster mass · active objects per ${esc(d.bucket)}</span><span class="mono muted">${d.clustered}/${d.total} clustered · ${esc(d.embedder)}</span></div>${chart(series.slice(0, 6), { label: "idea mass", height: 200 })}${movers ? `<div class="movers">${movers}</div>` : ""}<p class="caption">Topics are derived from the same embeddings retrieval uses, never from a model asked to judge sentiment — every point is a set of objects you can open. Join threshold ${d.threshold} (${esc(d.threshold_source)}), chosen from this graph's own similarity distribution. With the <code>${esc(d.embedder)}</code> embedder these cluster on shared vocabulary rather than shared meaning.</p></div>
+  <div class="hist-grid">${d.clusters
+    .slice(0, 8)
+    .map(
+      (c) =>
+        `<article class="panel idea"><div class="row between"><b>${esc(c.label)}</b><span class="mono muted">${c.size}</span></div><p class="small">${esc(c.exemplar.slice(0, 120))}</p><div class="row wrap small muted"><span class="badge">coherence ${c.coherence.toFixed(2)}</span><span class="mono">${shortDate(c.first_seen)} → ${shortDate(c.last_seen)}</span></div><div class="row wrap">${c.object_ids
+          .slice(0, 6)
+          .map(
+            (id) =>
+              `<a class="mono small" href="#/object/${encodeURIComponent(id)}">${esc(id.slice(0, 12))}</a>`,
+          )
+          .join("")}</div></article>`,
+    )
+    .join("")}</div>`;
+}
+
+function reachTab() {
+  if (!historyReach) return `<div class="inset"><p>Reading traces…</p></div>`;
+  const d = historyReach;
+  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Reads by assistant</span><span class="mono muted">${d.never_read} of ${d.total} never read</span></div><div class="row wrap">${Object.entries(
+    d.by_surface,
+  )
+    .map(
+      ([who, n]) =>
+        `<span class="badge">${tag(who)} <b>${number(n)}</b></span>`,
+    )
+    .join("")}</div><p class="caption">Locality says which surfaces <em>may</em> read an object. This is what they did read. The gap runs both ways: context nothing has read is not earning its place, and a read from a surface whose reach was later revoked is a propagation bug with a date on it.</p></div>
+  <div class="panel table-wrap"><table><thead><tr><th>Fact</th><th>Reach</th><th>Read by</th><th>Last read</th></tr></thead><tbody>${d.rows
+    .slice(0, 60)
+    .map(
+      (r) =>
+        `<tr class="${r.never_read ? "withheld-row" : ""}"><td><a href="#/object/${encodeURIComponent(r.object_id)}">${esc(r.content.slice(0, 80))}</a></td><td><span class="mono ${r.locality_mode === "local_only" ? "amber" : "muted"}">${esc(r.locality_mode)}${r.allowed.length ? ` · ${esc(r.allowed.join(", "))}` : ""}</span></td><td>${
+          Object.keys(r.read_by).length
+            ? Object.entries(r.read_by)
+                .map(([w, n]) => `${tag(w)}<span class="mono muted">${n}</span>`)
+                .join(" ")
+            : '<span class="mono muted">never</span>'
+        }</td><td class="mono">${r.last_read ? time(r.last_read) : "—"}</td></tr>`,
+    )
+    .join("")}</tbody></table></div>`;
+}
+
+function asOfTab() {
   const snapshots = auditResult?.objects || [];
   const changed = snapshots.filter((o) => {
     const current = objById(o.id);
     return (
-      current &&
-      (current.content !== o.content ||
-        JSON.stringify(current.locality) !== JSON.stringify(o.locality) ||
-        current.retired_at ||
-        state.objects.some((n) => n.supersedes === o.id))
+      !current ||
+      current.content !== o.content ||
+      JSON.stringify(current.locality) !== JSON.stringify(o.locality) ||
+      current.retired_at ||
+      state.objects.some((n) => n.supersedes === o.id)
     );
   });
-  const traces = state.events
-    .filter((e) => e.type === "retrieval.trace")
-    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  return `<form id="audit-form" class="panel date-form"><label><span class="eyebrow">As of — record time</span><input aria-label="Record time" name="at" type="date" value="${auditAt}" required><p class="small">when the graph was asked</p></label><label><span class="eyebrow">In force — valid time</span><input aria-label="Valid time" name="valid" type="date" value="${auditValid}" required><p class="small">when the fact itself applied</p></label><button class="primary">${icon("audit")} Run query</button></form>
+  <div class="audit-heading">${auditResult ? `What the graph believed on ${date(auditResult.at)}, about facts in force on ${date(auditResult.valid)}. ${changed.length} ${changed.length === 1 ? "object differs" : "objects differ"} from today.` : "Two dates. One explainable history."}</div>
+  <div class="columns asymmetric"><section><h2>What changed since</h2>${
+    auditResult
+      ? changed.length
+        ? changed
+            .map((o) => {
+              const now = objById(o.id),
+                replacement = state.objects.find((n) => n.supersedes === o.id);
+              return `<div class="inset change"><span class="badge">then</span> <span class="mono muted">${date(auditResult.at)}</span><p>${esc(o.content)}</p><span class="mono green">↓ ${replacement ? "superseded; no longer retrieved" : now.retired_at ? "retired; history retained" : JSON.stringify(now.locality) !== JSON.stringify(o.locality) ? "reach changed" : "corrected in place"}</span>${replacement || now.content !== o.content ? `<p>${esc((replacement || now).content)}</p>` : ""}</div>`;
+            })
+            .join("")
+        : empty(
+            "No differences in this snapshot",
+            "Facts at the selected dates match the current state, or no facts existed yet.",
+          )
+      : `<div class="inset"><p>Run a query to reconstruct the graph from its revision log.</p><span class="mono muted">Record dates are interpreted at the end of the selected UTC day.</span></div>`
+  }${auditResult ? `<h2 class="mt">In force at that time <span class="muted">${snapshots.length}</span></h2>${snapshots.map(card).join("")}` : ""}</section>
+  <section><h2>Export</h2><p class="muted">A JSON snapshot covering both selected time axes.</p><button class="wide mt" data-action="audit-export" ${auditResult ? "" : "disabled"}>${icon("download")} Export audit snapshot</button><p class="caption">This prototype export is not cryptographically signed.</p></section></div>`;
+}
+
+
+/** Saved questions, re-run on open. The metric-dashboard move: a chart you
+    visit is a chart you forget, and the interesting ones are the ones that
+    tell you when they moved. */
+function watchesPanel() {
+  const saved = prefs.watches || [];
+  if (!saved.length) return "";
+  return `<div class="panel watches"><span class="eyebrow">Watches</span><ul class="watch-list">${saved
+    .map(
+      (w) =>
+        `<li><button class="link" data-watch="${esc(w.question)}">${esc(w.question)}</button><span class="mono muted">${esc(w.explanation)}</span><span class="badge">was ${esc(String(w.headline))}</span><button class="quiet small" data-action="watch-drop" data-id="${esc(w.question)}" aria-label="Remove watch">${icon("close")}</button></li>`,
+    )
+    .join("")}</ul><p class="caption">Saved in this browser and re-run when you ask. Server-side evaluation, and telling you before you look, is M9.</p></div>`;
+}
+
+function audit() {
+  const tabs = [
+    ["overview", "Overview"],
+    ["ideas", "Ideas over time"],
+    ["reach", "Who has read this"],
+    ["asof", "As of / in force"],
+  ];
+  const windows = [30, 90, 180, 365];
+  const examples = (historyDash?.examples || [])
+    .slice(0, 5)
+    .map(
+      (q) =>
+        `<button type="button" class="chip" data-example="${esc(q)}">${esc(q)}</button>`,
+    )
+    .join("");
+
   return shell(
     "Audit",
-    `<form id="audit-form" class="panel date-form"><label><span class="eyebrow">As of — record time</span><input aria-label="Record time" name="at" type="date" value="${auditAt}" required><p class="small">when the graph was asked</p></label><label><span class="eyebrow">In force — valid time</span><input aria-label="Valid time" name="valid" type="date" value="${auditValid}" required><p class="small">when the fact itself applied</p></label><button class="primary">${icon("audit")} Run query</button></form><div class="audit-heading">${auditResult ? `What the graph believed on ${date(auditResult.at)}, about facts in force on ${date(auditResult.valid)}. ${changed.length} ${changed.length === 1 ? "object differs" : "objects differ"} from today.` : "Two dates. One explainable history."}</div><div class="panel event-strip">${auditResult ? `<span class="as-of" style="left:${asOfOffset()}%"><i>as of ${esc(date(auditResult.at))}</i></span>` : ""}${[
-      ["written", "green"],
-      ["reviewed", "green"],
-      ["edited", "green"],
-      ["reach restricted", "amber"],
-      ["superseded", "green"],
-    ]
-      .map(([x, tone]) => `<span class="${tone}-dot">${x}</span>`)
-      .join(
-        "",
-      )}</div><div class="columns asymmetric"><section><h2>What changed since</h2>${
-      auditResult
-        ? changed.length
-          ? changed
-              .map((o) => {
-                const now = objById(o.id),
-                  replacement = state.objects.find(
-                    (n) => n.supersedes === o.id,
-                  );
-                return `<div class="inset change"><span class="badge">then</span> <span class="mono muted">${date(auditResult.at)}</span><p>${esc(o.content)}</p><span class="mono green">↓ ${replacement ? "superseded; no longer retrieved" : now.retired_at ? "retired; history retained" : JSON.stringify(now.locality) !== JSON.stringify(o.locality) ? "reach changed" : "corrected in place"}</span>${replacement || now.content !== o.content ? `<p>${esc((replacement || now).content)}</p>` : ""}</div>`;
-              })
-              .join("")
-          : empty(
-              "No differences in this snapshot",
-              "Facts at the selected dates match the current state, or no facts existed yet.",
-            )
-        : `<div class="inset"><p>Run a query to reconstruct the graph from its revision log.</p><span class="mono muted">Record dates are interpreted at the end of the selected UTC day.</span></div>`
-    }${auditResult ? `<h2 class="mt">In force at that time <span class="muted">${snapshots.length}</span></h2>${snapshots.map(card).join("")}` : ""}</section><section><h2>Who has read this</h2><p class="muted">Every read is logged, so “which assistant has seen this fact” is answerable rather than inferred. Query text appears only for traces whose caller opted in; the rest show a digest.</p><div class="panel table-wrap"><table><thead><tr><th>Surface</th><th>Read</th><th>In answer to</th></tr></thead><tbody>${
-      traces
-        .slice(0, 12)
-        .map((e) => {
-          const returned = (e.detail.returned_ids || []).length;
-          // A surface that asked and got nothing back is a reach decision, not a
-          // gap in the log; the reference shows it as an attempt.
-          const withheld = !returned && e.detail.withheld;
-          return `<tr class="${withheld ? "withheld-row" : ""}"><td>${tag(e.detail.surface)}</td><td class="mono">${withheld ? "—" : time(e.at)}</td><td>${withheld ? `<span class="amber mono">withheld — ${esc(e.detail.withheld)} attempts, 0 reads</span>` : `${e.detail.query_text ? `<span class="quoted">${esc(e.detail.query_text)}</span>` : `<span class="mono muted">digest ${esc(e.detail.query_digest || "—")}</span>`} <span class="mono muted">· ${returned} returned</span>`}</td></tr>`;
-        })
-        .join("") ||
-      '<tr><td colspan="3" class="muted">No retrievals recorded in this workspace.</td></tr>'
-    }</tbody></table></div><button class="wide mt" data-action="audit-export" ${auditResult ? "" : "disabled"}>${icon("download")} Export audit snapshot</button><p class="caption">JSON snapshot covering both selected time axes. This prototype export is not cryptographically signed. Showing the latest 2,000 workspace events.</p></section></div>`,
+    `<form id="ask-form" class="panel ask">
+      <label class="ask-row"><span class="sr-only">Ask about your context history</span>
+        <input name="question" type="text" autocomplete="off" placeholder="Ask: how many memories did I write per week last quarter" value="${esc(historyAsk?.question || "")}">
+        <button class="primary">${icon("search")} Ask</button></label>
+      <p class="small muted">Your question compiles to a typed query before anything runs, and the query is shown so you can correct it. Nothing here reads your memories into a model.</p>
+      ${examples ? `<div class="chips">${examples}</div>` : ""}
+    </form>
+    ${askResult()}
+    ${watchesPanel()}
+    <div class="row between wrap hist-controls">
+      <div class="tabs" role="tablist">${tabs
+        .map(
+          ([id, label]) =>
+            `<button role="tab" aria-selected="${historyTab === id}" class="${historyTab === id ? "active" : ""}" data-htab="${id}">${esc(label)}</button>`,
+        )
+        .join("")}</div>
+      ${
+        historyTab === "asof"
+          ? ""
+          : `<div class="tabs small">${windows
+              .map(
+                (w) =>
+                  `<button class="${historyWindow === w ? "active" : ""}" data-hwindow="${w}">${w}d</button>`,
+              )
+              .join("")}</div>`
+      }
+    </div>
+    ${
+      historyTab === "overview"
+        ? overviewTab()
+        : historyTab === "ideas"
+          ? ideasTab()
+          : historyTab === "reach"
+            ? reachTab()
+            : asOfTab()
+    }`,
   );
 }
+
 /* The reference shows Migrate with a score already on it. Compute it from the
    real compiler the moment the gate allows, instead of making the user ask. */
 function autoPreview() {
@@ -1506,6 +1919,12 @@ function downloadBlob(blob, name) {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+const digest = (text) => {
+  let h = 5381;
+  for (let i = 0; i < text.length; i++) h = ((h << 5) + h + text.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+};
+
 async function runAction(action, id) {
   if (action === "process-captures") {
     const result = await api("/process-captures", {});
@@ -1593,6 +2012,44 @@ async function runAction(action, id) {
       }),
       "coleta-audit-snapshot.json",
     );
+    return;
+  }
+  if (action === "cites-close") {
+    historyCites = null;
+    render();
+    return;
+  }
+  if (action === "watch-save") {
+    // A watch is the saved question plus a fingerprint of the answer it had
+    // when it was saved, so "has this moved" is answerable on the next visit
+    // without keeping a second copy of the series. Browser-side, like every
+    // other pref here -- server-side evaluation and notification is M9.
+    if (!historyAsk) return;
+    const fingerprint = JSON.stringify(
+      historyAsk.result.series.map((s) => [s.key, s.points.map((p) => p.value)]),
+    );
+    prefs.watches = [
+      ...(prefs.watches || []).filter(
+        (w) => JSON.stringify(w.query) !== JSON.stringify(historyAsk.query),
+      ),
+      {
+        question: historyAsk.question,
+        explanation: historyAsk.result.explanation,
+        query: historyAsk.query,
+        headline: historyAsk.result.headline,
+        fingerprint: digest(fingerprint),
+        saved_at: new Date().toISOString(),
+      },
+    ].slice(-12);
+    savePrefs();
+    toast("Saved as a watch. It will re-run when you open History.");
+    render();
+    return;
+  }
+  if (action === "watch-drop") {
+    prefs.watches = (prefs.watches || []).filter((w) => w.question !== id);
+    savePrefs();
+    render();
     return;
   }
   if (action === "new-key") {
@@ -1766,6 +2223,122 @@ async function enterWorkspace() {
   go(destination);
 }
 
+
+/* History bindings. Kept out of `bind` because the page has its own async
+   lifecycle: four panels, three of them lazily fetched, and a render triggered
+   by whichever finishes. */
+function bindHistory() {
+  if (routeOf() === "object") {
+    const id = decodeURIComponent(location.hash.replace(/^#\/object\//, ""));
+    if (id) loadLifetime(id);
+    return;
+  }
+  if (routeOf() !== "audit") return;
+
+  // Fetch what the visible tab needs, and nothing else. The clustering pass
+  // embeds every object in the workspace, so it must not run because someone
+  // opened the page to look at a bar chart.
+  if (historyTab === "overview") loadHistory();
+  if (historyTab === "ideas") loadIdeas();
+  if (historyTab === "reach") loadReach();
+
+  document.querySelectorAll("[data-htab]").forEach((b) => {
+    b.onclick = () => {
+      historyTab = b.dataset.htab;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-hwindow]").forEach((b) => {
+    b.onclick = () => {
+      historyWindow = Number(b.dataset.hwindow);
+      historyDash = null;
+      historyIdeas = null;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-example]").forEach((b) => {
+    b.onclick = () => askHistory(b.dataset.example);
+  });
+  document.querySelectorAll("[data-watch]").forEach((b) => {
+    b.onclick = () => askHistory(b.dataset.watch);
+  });
+
+  const askForm = $("#ask-form");
+  if (askForm)
+    askForm.onsubmit = (e) => {
+      e.preventDefault();
+      const question = String(new FormData(e.target).get("question") || "").trim();
+      if (question) askHistory(question);
+    };
+
+  // Editing the compiled query runs it directly, bypassing the compiler: a
+  // correction the user made by hand must not be re-interpreted.
+  const queryForm = $("#query-form");
+  if (queryForm)
+    queryForm.onsubmit = async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      const edited = {
+        ...historyAsk.query,
+        metric: String(f.get("metric")),
+        group_by: String(f.get("group_by")),
+        bucket: String(f.get("bucket")),
+        window_days: Number(f.get("window_days")) || 90,
+        filter: {
+          ...historyAsk.query.filter,
+          contains: String(f.get("contains") || "") || null,
+        },
+      };
+      try {
+        const result = await api("/history/query", edited);
+        historyAsk = {
+          ...historyAsk,
+          query: edited,
+          explanation: result.explanation,
+          matched: [],
+          unmatched: [],
+          understood: true,
+          compiler: "edited by hand",
+          result,
+        };
+        historyCites = null;
+        render();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+
+  // A citation: the events a point on a chart counted.
+  document.querySelectorAll("[data-cite]").forEach((dot) => {
+    dot.style.cursor = "pointer";
+    dot.onclick = async () => {
+      try {
+        const { events } = await api("/history/events", {
+          event_ids: dot.dataset.cite.split(","),
+        });
+        historyCites = { label: dot.dataset.citeLabel, events };
+        render();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  });
+}
+
+async function askHistory(question) {
+  historyBusy = true;
+  historyCites = null;
+  try {
+    historyAsk = await api("/history/ask", { question });
+    historyAsk.question = question;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    historyBusy = false;
+    render();
+  }
+}
+
 function bind() {
   document.querySelectorAll("[data-sign-out]").forEach(
     (b) =>
@@ -1934,6 +2507,7 @@ function bind() {
         b.disabled = false;
       }
     };
+  bindHistory();
   if ($("#audit-form"))
     $("#audit-form").onsubmit = async (e) => {
       e.preventDefault();

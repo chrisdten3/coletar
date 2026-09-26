@@ -68,6 +68,14 @@
       "runtimeExecutable": "/Users/chrisdten/Developer/coletar/scripts/serve_hosted_local.sh",
       "runtimeArgs": [],
       "port": 8792
+    },
+    {
+      "name": "coleta-history-demo",
+      "runtimeExecutable": "/Users/chrisdten/Developer/coletar/.venv/bin/python",
+      "runtimeArgs": [
+        "scripts/serve_history_demo.py"
+      ],
+      "port": 8795
     }
   ]
 }

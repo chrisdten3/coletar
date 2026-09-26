@@ -39,12 +39,16 @@ the happy path is a demo that answers no questions:
 
 from __future__ import annotations
 
+import hashlib
+import random
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from coletar.capture import capture_turn
+from coletar.retrieval.trace import ComponentVersions, RetrievalTrace, query_digest
+from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
     GLOBAL_SCOPE,
     ContextObject,
@@ -105,8 +109,34 @@ class Workspace:
     def days_ago(self, days: float) -> datetime:
         return self._now - timedelta(days=days)
 
-    async def _put(self, role: str, obj: ContextObject) -> ContextObject:
-        stored = await self._store.put_object(self._tenant, obj)
+    async def _put(
+        self,
+        role: str,
+        obj: ContextObject,
+        *,
+        actor: Actor = Actor.USER,
+        event_type: EventType | None = None,
+        at: datetime | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> ContextObject:
+        # The event is dated to the object, not to the seed run. Without this
+        # every demo workspace has a graph spread over months and a log spread
+        # over four seconds, so any question about history answers "it all
+        # happened just now" -- which is the one answer that makes an
+        # observability surface useless. `put_object` fills before/after.
+        stored = await self._store.put_object(
+            self._tenant,
+            obj,
+            event=Event(
+                type=event_type
+                or (EventType.OBJECT_CREATED if obj.version == 1 else EventType.OBJECT_UPDATED),
+                object_id=obj.id,
+                actor=actor,
+                provider=obj.provenance.provider,
+                at=at or obj.updated_at,
+                detail={"type": str(obj.type), "scope": str(obj.scope), **(detail or {})},
+            ),
+        )
         self.result.objects[role] = stored.id
         kind = str(obj.type)
         self.result.counts[kind] = self.result.counts.get(kind, 0) + 1
@@ -258,6 +288,174 @@ class Workspace:
         for role in roles:
             await self.link(role, project_role, EdgeType.BELONGS_TO)
 
+    # -- History. ----------------------------------------------------------
+    #
+    # Everything below exists so the observability surface has something to
+    # observe. A persona built only from `node` and `memory` is a graph with no
+    # past: every object appears at once, nothing is ever read, and every chart
+    # of it is one spike on the day the seed ran. These write the *rest* of a
+    # workspace's life -- the reads, the confirmations, the corrections, the
+    # reach changes -- at the times they would have happened.
+
+    async def current(self, role: str) -> ContextObject | None:
+        """The stored object behind a role, for a generator that needs to read
+        what it is about to correct."""
+        object_id = self.result.objects.get(role)
+        if object_id is None:
+            return None
+        return await self._store.get_object(self._tenant, object_id)
+
+    async def mark(
+        self,
+        role: str,
+        event_type: EventType,
+        *,
+        days_ago: float,
+        actor: Actor = Actor.USER,
+        provider: Provider = Provider.COLETAR,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """A non-revision event: it happened *to* the object without changing it.
+
+        Review and corroboration deliberately do not touch the row (§2, and
+        `REVISION_EVENTS`): looking at a fact, or hearing it again, is a fact
+        about its history rather than a new version of it.
+        """
+        await self._store.append_event(
+            self._tenant,
+            Event(
+                type=event_type,
+                object_id=self.result.objects[role],
+                actor=actor,
+                provider=provider,
+                at=self.days_ago(days_ago),
+                detail=detail or {},
+            ),
+        )
+        key = str(event_type)
+        self.result.counts[key] = self.result.counts.get(key, 0) + 1
+
+    async def review(self, *roles: str, days_ago: float = 1) -> None:
+        for offset, role in enumerate(roles):
+            # Spread across the sitting, so the review feed is a session rather
+            # than a single timestamp repeated.
+            await self.mark(
+                role,
+                EventType.OBJECT_REVIEWED,
+                days_ago=days_ago - offset * 0.004,
+                actor=Actor.USER,
+            )
+
+    async def corroborate(
+        self, role: str, *, days_ago: float, provider: Provider, note: str = ""
+    ) -> None:
+        """The same fact, heard again on another surface. Raises no version and
+        writes no row; it is the graph's evidence that a memory is still true."""
+        await self.mark(
+            role,
+            EventType.OBJECT_CORROBORATED,
+            days_ago=days_ago,
+            actor=Actor.MODEL,
+            provider=provider,
+            detail={"surface": str(provider), "note": note} if note else {"surface": str(provider)},
+        )
+
+    async def rescope(
+        self, role: str, *, days_ago: float, locality: Locality, reason: str
+    ) -> None:
+        """A reach change, as its own event type, because "who may read this"
+        changing is the one edit a user is most likely to be asked to justify."""
+        object_id = self.result.objects[role]
+        current = await self._store.get_object(self._tenant, object_id)
+        if current is None:
+            return
+        before = str(current.locality.mode)
+        current.locality = locality
+        await self._put(
+            role,
+            current,
+            actor=Actor.USER,
+            event_type=EventType.OBJECT_RESCOPED,
+            at=self.days_ago(days_ago),
+            detail={
+                "field": "locality",
+                "from": before,
+                "to": str(locality.mode),
+                "reason": reason,
+            },
+        )
+
+    async def retire(self, role: str, *, days_ago: float, reason: str) -> None:
+        """Retired, never deleted (constraint #6). The row stays readable and the
+        chart it appears in keeps its shape before the retirement date."""
+        object_id = self.result.objects[role]
+        current = await self._store.get_object(self._tenant, object_id)
+        if current is None:
+            return
+        when = self.days_ago(days_ago)
+        current.retired_at = when
+        await self._put(
+            role,
+            current,
+            actor=Actor.USER,
+            event_type=EventType.OBJECT_RETIRED,
+            at=when,
+            detail={"reason": reason},
+        )
+
+    async def trace(
+        self,
+        *,
+        days_ago: float,
+        surface: str,
+        provider: Provider,
+        roles: list[str],
+        query: str,
+        record_query_text: bool = False,
+        withheld: int = 0,
+        principal: str | None = None,
+        latency_ms: float = 42.0,
+    ) -> None:
+        """One recorded read.
+
+        Built through `RetrievalTrace.as_detail` rather than as a hand-written
+        dict so a seeded trace and a real one are the same shape. A demo whose
+        telemetry has a field the product does not write is a demo that will
+        show a column the real workspace leaves blank.
+        """
+        returned = [self.result.objects[r] for r in roles if r in self.result.objects]
+        detail = RetrievalTrace(
+            query_digest=query_digest(query),
+            scope="any",
+            surface=surface,
+            provider=str(provider),
+            principal=principal,
+            top_k=12,
+            token_budget=2000,
+            versions=ComponentVersions(
+                embedder=self._store.embedder_model, backend="demo"
+            ),
+            returned_ids=returned,
+            token_estimate=sum(40 for _ in returned),
+            stage_ms={"narrow": round(latency_ms * 0.3, 1), "rank": round(latency_ms * 0.7, 1)},
+            # §11: the text is recorded only when the caller opted in, per call.
+            # Most demo traces show only a digest, because most real ones do.
+            query_text=query if record_query_text else None,
+        ).as_detail()
+        if withheld:
+            detail["withheld"] = withheld
+        await self._store.append_event(
+            self._tenant,
+            Event(
+                type=EventType.RETRIEVAL_TRACE,
+                actor=Actor.CONNECTOR,
+                provider=provider,
+                at=self.days_ago(days_ago),
+                detail=detail,
+            ),
+        )
+        self.result.counts["retrieval.trace"] = self.result.counts.get("retrieval.trace", 0) + 1
+
 
 @dataclass(frozen=True)
 class Persona:
@@ -280,6 +478,352 @@ def _only(*surfaces: Provider) -> Locality:
     """Readable by these surfaces and no others. The product's central claim (§10)
     is that context travels; this is the per-object opt-out from that."""
     return Locality(mode=LocalityMode.LOCAL_ONLY, surfaces=frozenset(surfaces))
+
+
+# ---------------------------------------------------------------------------
+# Traffic and backfill.
+#
+# A persona's hand-written facts are the interesting part of a demo graph and
+# about two percent of a real one. The rest is volume: months of ordinary
+# writes, and the reads that make those writes worth keeping. These generate
+# that volume deterministically, because a demo whose charts change shape on
+# every seed run cannot be demoed twice.
+# ---------------------------------------------------------------------------
+
+
+def _rng_for(key: str) -> random.Random:
+    """A stable stream per persona. Seeded from the name rather than a literal
+    so adding a persona never reshuffles an existing one's history."""
+    digest = hashlib.sha256(key.encode("utf-8")).digest()
+    return random.Random(int.from_bytes(digest[:8], "big"))
+
+
+def _pick(rng: random.Random, weights: dict[Any, float]) -> Any:
+    total = sum(weights.values())
+    cut = rng.random() * total
+    for value, weight in weights.items():
+        cut -= weight
+        if cut <= 0:
+            return value
+    return next(iter(weights))
+
+
+@dataclass(frozen=True)
+class Topic:
+    """One thread of a working life, as the sentences it produces.
+
+    Grouped by topic on purpose: the idea-clustering view charts the mass of a
+    theme over time, and it can only be shown working against a graph whose
+    themes actually rise and fall. `weight_curve` is what makes them do that.
+    """
+
+    label: str
+    scope: Scope
+    sentences: list[str]
+    kinds: list[MemoryKind]
+    #: Relative activity at the start and end of the window. (1.0, 0.1) is a
+    #: project winding down; (0.1, 1.0) is one ramping up.
+    weight_curve: tuple[float, float] = (1.0, 1.0)
+    locality: Locality | None = None
+    sensitivity: Sensitivity = Sensitivity.NORMAL
+
+
+@dataclass(frozen=True)
+class TrafficProfile:
+    """How one persona's workspace is written to and read from over time."""
+
+    key: str
+    days: int
+    topics: list[Topic]
+    #: Which assistant asks, and how often. The whole point of a portable graph
+    #: is that this is a distribution rather than a constant.
+    providers: dict[Provider, float]
+    surfaces: dict[str, float]
+    #: Mean writes and reads on a working day, before seasonality.
+    writes_per_day: float = 1.6
+    reads_per_day: float = 7.0
+    #: Share of traces whose caller opted into recording the query text (§11).
+    query_text_share: float = 0.35
+    questions: list[str] = field(default_factory=list)
+
+
+def _seasonal(rng: random.Random, day: int, days: int, base: float) -> int:
+    """Events on one day: fewer at weekends, more as the workspace matures."""
+    when = day
+    weekday = (when % 7) < 5
+    ramp = 0.45 + 0.55 * (1.0 - day / max(days, 1))
+    mean = base * ramp * (1.0 if weekday else 0.22)
+    # Poisson via inversion; small means, so the loop is short.
+    limit, total, probability = 0, rng.random(), 2.718281828 ** (-mean)
+    cumulative = probability
+    while total > cumulative and limit < 20:
+        limit += 1
+        probability *= mean / limit
+        cumulative += probability
+    return limit
+
+
+def _hour_jitter(rng: random.Random) -> float:
+    """A fraction of a day inside working hours, so timestamps do not all land
+    at midnight and the day/week buckets are not suspiciously clean."""
+    return rng.uniform(8.0, 19.0) / 24.0
+
+
+async def backfill_topics(w: Workspace, profile: TrafficProfile) -> list[str]:
+    """Write each topic's sentences across the window, following its curve.
+
+    Returns the roles created, so the traffic pass has something to return from
+    searches. Confidence and extraction method vary because the Context
+    Inspector's job is to explain differences, and a graph where every object
+    scored 0.92 gives it nothing to explain.
+    """
+    rng = _rng_for(profile.key + ":writes")
+    roles: list[str] = []
+    counter = 0
+
+    for topic in profile.topics:
+        start_weight, end_weight = topic.weight_curve
+        for index, sentence in enumerate(topic.sentences):
+            # Position within the topic's own run, mapped onto the window.
+            position = index / max(len(topic.sentences) - 1, 1)
+            weight = start_weight + (end_weight - start_weight) * position
+            # A low-weight stretch produces sparser writes: skip some of them
+            # rather than compressing, so the quiet period shows up on the chart
+            # as a gap instead of the same run of writes squeezed together.
+            if rng.random() > min(1.0, 0.4 + 0.6 * weight):
+                continue
+            day = profile.days * (1.0 - position * rng.uniform(0.82, 1.0))
+            method = _pick(
+                rng,
+                {
+                    ExtractionMethod.EXPLICIT_STATEMENT: 5.0,
+                    ExtractionMethod.ACCOUNT_EXPORT_PARSE: 2.0,
+                    ExtractionMethod.PROVIDER_CURATED: 1.2,
+                },
+            )
+            provider = _pick(rng, profile.providers)
+            # Mined prose is the less certain pile; `default_confidence`
+            # already scores that method lower, and the spread here is what
+            # gives the Context Inspector a difference to explain.
+            centre = 0.78 if method is ExtractionMethod.ACCOUNT_EXPORT_PARSE else 0.9
+            confidence = round(min(0.99, max(0.34, rng.gauss(centre, 0.12))), 2)
+            counter += 1
+            role = f"bf_{profile.key}_{counter:03d}"
+            await w.memory(
+                role,
+                sentence,
+                kind=rng.choice(topic.kinds),
+                scope=topic.scope,
+                locality=topic.locality,
+                sensitivity=topic.sensitivity,
+                method=method,
+                origin=OriginType.USER
+                if method is ExtractionMethod.EXPLICIT_STATEMENT
+                else OriginType.AGENT,
+                provider=provider,
+                confidence=confidence,
+                days_ago=max(0.5, day - _hour_jitter(rng)),
+            )
+            roles.append(role)
+
+    return roles
+
+
+def _fragment(rng: random.Random, sentence: str) -> str:
+    """A sentence as export mining would actually have recovered it.
+
+    On a real 17,881-turn export the mined half was 42% fragments under 45
+    characters against a median of 125 for provider-curated memories. A demo
+    whose imported memories are as clean as its explicit ones hides the single
+    most important thing the Context Inspector has to show a user, which is that
+    those two piles are not the same quality of fact.
+    """
+    words = sentence.rstrip(".").split()
+    if len(words) > 7 and rng.random() < 0.45:
+        cut = rng.randint(3, max(4, len(words) // 2))
+        return " ".join(words[:cut])
+    return sentence.rstrip(".")
+
+
+async def import_burst(w: Workspace, profile: TrafficProfile) -> list[str]:
+    """The day the user imported their provider export.
+
+    One acquisition event, hundreds of objects, all stamped
+    `ACCOUNT_EXPORT_PARSE` at a visibly lower confidence -- which is what the
+    real import flow produces (§8.1, §11: the user clicks their own export
+    button and the file lands). It is the spike every `extraction_method` chart
+    in this product should open with, and without it the method breakdown is a
+    flat line that explains nothing.
+    """
+    rng = _rng_for(profile.key + ":import")
+    # Late in the window, because importing is what someone does on their first
+    # day -- so it sits near the oldest end of the history.
+    landed = profile.days * rng.uniform(0.86, 0.94)
+    provider = _pick(rng, {Provider.CHATGPT: 3.0, Provider.CLAUDE: 2.0})
+
+    roles: list[str] = []
+    counter = 0
+    for topic in profile.topics:
+        for sentence in topic.sentences:
+            if rng.random() > 0.62:
+                continue
+            counter += 1
+            role = f"imp_{profile.key}_{counter:03d}"
+            text = _fragment(rng, sentence)
+            await w.memory(
+                role,
+                text,
+                kind=rng.choice([MemoryKind.FACT, MemoryKind.FACT, MemoryKind.INFERENCE]),
+                scope=topic.scope,
+                locality=topic.locality,
+                sensitivity=topic.sensitivity,
+                method=ExtractionMethod.ACCOUNT_EXPORT_PARSE,
+                origin=OriginType.AGENT,
+                provider=provider,
+                # Mined prose is the low-confidence pile by construction, and
+                # `default_confidence` already scores this method at 0.60.
+                confidence=round(min(0.86, max(0.32, rng.gauss(0.58, 0.13))), 2),
+                # The whole archive lands within one sitting, not over months.
+                days_ago=max(0.5, landed - rng.uniform(0.0, 0.35)),
+            )
+            roles.append(role)
+    return roles
+
+
+async def simulate_traffic(
+    w: Workspace, profile: TrafficProfile, roles: list[str]
+) -> None:
+    """Months of reads, reviews and confirmations over an existing graph.
+
+    Reads are the telemetry half of the thesis: "which assistant has seen this
+    fact" is only answerable because every retrieval appends a trace, and a demo
+    with no traces shows that table empty and the claim unmade.
+    """
+    if not roles:
+        return
+    rng = _rng_for(profile.key + ":reads")
+    questions = profile.questions or ["what do you know about my work"]
+
+    for day in range(profile.days):
+        for _ in range(_seasonal(rng, day, profile.days, profile.reads_per_day)):
+            # A search returns a few related objects, not a random scatter: the
+            # neighbourhood is what a vector index would have given back.
+            anchor = rng.randrange(len(roles))
+            span = rng.randint(1, 5)
+            hit = [roles[i] for i in range(anchor, min(anchor + span, len(roles)))]
+            provider = _pick(rng, profile.providers)
+            await w.trace(
+                days_ago=max(0.02, day + _hour_jitter(rng)),
+                surface=_pick(rng, profile.surfaces),
+                provider=provider,
+                roles=hit,
+                query=rng.choice(questions),
+                record_query_text=rng.random() < profile.query_text_share,
+                principal=f"key_{str(provider)[:6]}",
+                latency_ms=round(rng.gauss(48, 14), 1),
+            )
+
+        # A search that matched only restricted context returns nothing and
+        # still happened. The table shows it as an attempt, because "no rows"
+        # and "reach said no" are different facts about the same graph.
+        if rng.random() < 0.05:
+            await w.trace(
+                days_ago=max(0.02, day + _hour_jitter(rng)),
+                surface=_pick(rng, profile.surfaces),
+                provider=_pick(rng, profile.providers),
+                roles=[],
+                query=rng.choice(questions),
+                withheld=rng.randint(1, 3),
+            )
+
+    # Confirmations: the same fact heard again on another surface.
+    for role in rng.sample(roles, k=min(len(roles), max(4, len(roles) // 6))):
+        await w.corroborate(
+            role,
+            days_ago=rng.uniform(1, profile.days * 0.7),
+            provider=_pick(rng, profile.providers),
+            note="repeated on another surface",
+        )
+
+    # Review is a gate the user walks through in sittings, not continuously.
+    reviewable = [r for r in roles if rng.random() < 0.72]
+    for index, role in enumerate(reviewable):
+        through = 1 - index / max(len(reviewable), 1)
+        await w.review(role, days_ago=max(0.4, profile.days * through * 0.9))
+
+    # Corrections. A graph that never contradicts itself is a graph nobody is
+    # using, and the supersession rate is one of the few honest signals of
+    # whether extraction is drifting -- so the demo has to have some.
+    generated = [r for r in roles if r.startswith("bf_")]
+    for role in rng.sample(generated, k=min(len(generated), max(3, len(generated) // 9))):
+        original = w.result.objects.get(role)
+        if original is None:
+            continue
+        source = await w.current(role)
+        if source is None or source.supersedes is not None:
+            continue
+        when = rng.uniform(1.5, profile.days * 0.55)
+        await w.memory(
+            f"{role}_fix",
+            _revise_sentence(rng, source.content),
+            kind=MemoryKind.CORRECTION,
+            scope=source.scope,
+            locality=source.locality if source.locality.mode is LocalityMode.LOCAL_ONLY else None,
+            sensitivity=source.sensitivity,
+            method=ExtractionMethod.EXPLICIT_STATEMENT,
+            origin=OriginType.USER,
+            provider=_pick(rng, profile.providers),
+            confidence=round(min(0.99, source.confidence + rng.uniform(0.03, 0.12)), 2),
+            supersedes=original,
+            days_ago=when,
+        )
+
+    # Retirements: context that stopped being true rather than being wrong.
+    for role in rng.sample(generated, k=min(len(generated), max(2, len(generated) // 16))):
+        if role.endswith("_fix"):
+            continue
+        await w.retire(
+            role,
+            days_ago=rng.uniform(1.0, profile.days * 0.4),
+            reason="no longer relevant to an active project",
+        )
+
+    # Reach changes: the edit a user is most likely to be asked to justify.
+    for role in rng.sample(generated, k=min(len(generated), max(2, len(generated) // 20))):
+        await w.rescope(
+            role,
+            days_ago=rng.uniform(1.0, profile.days * 0.6),
+            locality=_only(Provider.LOCAL),
+            reason="held back from hosted assistants after review",
+        )
+
+
+#: Small, deterministic edits that read like a real correction rather than a
+#: string with "(updated)" appended. Keyed on what the sentence contains, so a
+#: correction lands on something the sentence actually claimed.
+_REVISIONS: tuple[tuple[str, str], ...] = (
+    ("two weeks", "three weeks"),
+    ("15 minutes", "10 minutes"),
+    ("hourly", "every 30 minutes"),
+    ("60 minutes", "75 minutes"),
+    ("three hours", "two hours"),
+    ("two working days", "one working day"),
+    ("Postgres 16", "Postgres 17"),
+    ("30 days", "45 days"),
+    ("Thursdays", "Tuesdays"),
+    ("two years", "three years"),
+    ("November", "January"),
+    ("three levels", "two levels"),
+)
+
+
+def _revise_sentence(rng: random.Random, content: str) -> str:
+    for old, new in _REVISIONS:
+        if old in content:
+            return content.replace(old, new)
+    # Nothing numeric to move, so the correction narrows the claim instead --
+    # which is what most real corrections do.
+    return f"{content.rstrip('.')}, as of the most recent review."
 
 
 # ---------------------------------------------------------------------------
@@ -1393,6 +1937,317 @@ async def _build_banker(w: Workspace) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Traffic profiles.
+#
+# One per persona, and the topics are chosen to make the idea-over-time view
+# answerable rather than decorative: in each profile something is winding down
+# while something else is ramping up, so "is this topic growing" has a true
+# answer that the chart can be checked against.
+# ---------------------------------------------------------------------------
+
+_ENGINEER_TRAFFIC = TrafficProfile(
+    key="engineer",
+    days=190,
+    providers={Provider.CLAUDE: 5.0, Provider.CHATGPT: 3.5, Provider.LOCAL: 1.2},
+    surfaces={"mcp": 7.0, "proxy": 2.0, "cli": 1.0},
+    reads_per_day=8.0,
+    questions=[
+        "what did we decide about the ledger cutover",
+        "how do we handle idempotency keys",
+        "what is the on-call escalation path",
+        "which Postgres version are we targeting",
+        "what did I say about the hiring loop",
+        "remind me what the rollback plan is",
+        "what are my code review preferences",
+        "who owns the settlement service",
+    ],
+    topics=[
+        Topic(
+            label="ledger rewrite",
+            scope=_project("proj_ledger_rewrite"),
+            kinds=[MemoryKind.FACT, MemoryKind.GOAL],
+            weight_curve=(1.0, 0.25),
+            sentences=[
+                "The ledger rewrite replaces the double-entry tables, not the reporting views.",
+                "Cutover is gated on the settlement service reaching 99.95% over a full week.",
+                "We write to both ledgers during the dual-write window and read from the old one.",
+                "Idempotency keys are the client's request id, not a server-generated UUID.",
+                "The reconciliation job runs hourly during dual-write and nightly after.",
+                "We are not migrating the 2019 archive; it stays queryable in the old schema.",
+                "Rollback means flipping the read path back, not restoring a backup.",
+                "The ledger team owns the settlement service after the cutover, not payments.",
+                "Postgres 16 is the target; the 15 pin was a staging artefact.",
+                "Money amounts are stored as integer minor units, never as numeric.",
+                "Currency conversion happens at capture time and is recorded on the entry.",
+                "The dual-write window is two weeks, extended only by an explicit decision.",
+                "Partial failures during dual-write are retried, never silently dropped.",
+                "We agreed not to add a new queue for the rewrite; existing Kafka topics only.",
+                "The cutover runbook lives in the ledger repo, not the ops wiki.",
+                "Schema changes during dual-write need sign-off from both teams.",
+                "Reporting views are frozen for the duration of the cutover.",
+                "The old ledger stays writable for 30 days after cutover as an escape hatch.",
+            ],
+        ),
+        Topic(
+            label="on-call and reliability",
+            scope=_project("proj_oncall"),
+            kinds=[MemoryKind.FACT, MemoryKind.INSTRUCTION, MemoryKind.PREFERENCE],
+            weight_curve=(0.7, 0.9),
+            sentences=[
+                "On-call escalates to the secondary after 15 minutes without acknowledgement.",
+                "Page only on customer-visible symptoms; queue depth alerts go to a channel.",
+                "The settlement service has its own rotation, separate from platform.",
+                "Post-incident reviews happen within two working days or they do not happen.",
+                "We do not page for a single failed reconciliation run; two consecutive ones page.",
+                "Runbook links go in the alert payload, not in a separate wiki page.",
+                "Severity 1 means money is wrong or stuck; everything else is at most a 2.",
+                "The on-call handover note is required even when the week was quiet.",
+                "Dashboards live in Grafana; alert rules live in the service repo.",
+                "Silences longer than 24 hours need a linked ticket.",
+                "I prefer incident timelines written in UTC with local times in brackets.",
+                "The escalation policy changed in April: platform lead is now the third step.",
+                "We stopped paging on p99 latency alone after the March false-positive run.",
+                "Every incident gets a one-line summary before anyone writes the long version.",
+            ],
+        ),
+        Topic(
+            label="hiring loop",
+            scope=_project("proj_hiring"),
+            kinds=[MemoryKind.PREFERENCE, MemoryKind.INSTRUCTION, MemoryKind.GOAL],
+            weight_curve=(0.15, 1.0),
+            sentences=[
+                "The systems interview is 60 minutes and always has a written component.",
+                "We stopped asking the distributed-locking question; it selected for trivia.",
+                "Two strong yeses and no strong no is a hire; anything else goes to committee.",
+                "Debrief notes are written before the debrief, not during it.",
+                "Candidates get the take-home brief only after the first call, never before.",
+                "I want the loop to include one person from outside the hiring team.",
+                "We are hiring for the settlement service first, platform second.",
+                "The bar for staff is independent judgement under ambiguity, not output volume.",
+                "Interview feedback is due within 24 hours or the slot is not counted.",
+                "We do not do whiteboard algorithm rounds any more.",
+                "The take-home is capped at three hours and we say so in writing.",
+                "Referrals skip the recruiter screen but not the technical screen.",
+                "Panel composition is fixed before the first candidate enters the loop.",
+                "I am the hiring manager for the two staff roles opened in August.",
+            ],
+        ),
+        Topic(
+            label="working preferences",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.PREFERENCE, MemoryKind.INSTRUCTION],
+            weight_curve=(0.9, 0.6),
+            sentences=[
+                "I want code review comments to name the risk, not just the style issue.",
+                "Prefer explicit types over inference in anything crossing a module boundary.",
+                "Do not suggest a dependency without a reason that survives being said aloud.",
+                "I read diffs before descriptions; lead with the change, not the context.",
+                "Write commit messages in the imperative mood.",
+                "I prefer one long function to five that are only called once each.",
+                "Tests that need a comment to explain the assertion are testing the wrong thing.",
+                "Use UTC everywhere in code; localise only at the display boundary.",
+                "I would rather have a failing test than a skipped one.",
+                "Ask before refactoring something I did not mention.",
+            ],
+        ),
+        Topic(
+            label="context portability",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.GOAL, MemoryKind.FACT],
+            weight_curve=(0.1, 1.0),
+            sentences=[
+                "I want the same project context in Claude and ChatGPT without re-explaining it.",
+                "Switching assistants mid-task currently costs me about ten minutes of setup.",
+                "The decisions I lose are the ones made in whichever tool I had open.",
+                "I keep a scratch file of context purely to paste into new chats.",
+                "What I actually want is one memory that every tool reads from.",
+                "Per-product memory features only remember what was said to that product.",
+                "I would trade some recall for being able to see why a fact was kept.",
+            ],
+        ),
+    ],
+)
+
+_LAWYER_TRAFFIC = TrafficProfile(
+    key="lawyer",
+    days=190,
+    providers={Provider.CLAUDE: 4.0, Provider.LOCAL: 4.5, Provider.CHATGPT: 1.0},
+    surfaces={"mcp": 6.0, "cli": 3.0, "proxy": 1.0},
+    reads_per_day=6.0,
+    query_text_share=0.18,
+    questions=[
+        "what is my preferred drafting style for indemnities",
+        "what did we agree on governing law",
+        "summarise the position on the limitation clause",
+        "what are the filing deadlines on this matter",
+        "how do I usually structure a witness statement",
+    ],
+    topics=[
+        Topic(
+            label="drafting style",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.PREFERENCE, MemoryKind.INSTRUCTION],
+            weight_curve=(1.0, 0.8),
+            sentences=[
+                "Defined terms are capitalised and listed once, at the front.",
+                "I do not use 'shall' in new drafts; obligations take 'must'.",
+                "Indemnities are drafted as standalone clauses, never nested in warranties.",
+                "Cross-references use clause numbers, never 'above' or 'below'.",
+                "Every limitation of liability gets a carve-out list in the same clause.",
+                "Numbered sub-paragraphs stop at three levels.",
+                "I prefer a short recitals section that states the commercial purpose.",
+                "Boilerplate goes last and is never the first thing negotiated.",
+                "Time periods are stated in business days with the jurisdiction named.",
+                "Draft notes to the client are written in plain English, not clause language.",
+                "I want the counterparty's changes tracked and summarised before I read them.",
+                "Never let an entire agreement clause sit above the dispute resolution clause.",
+            ],
+        ),
+        Topic(
+            label="Harrow matter",
+            scope=_project("proj_harrow"),
+            kinds=[MemoryKind.FACT, MemoryKind.GOAL],
+            weight_curve=(1.0, 0.2),
+            sensitivity=Sensitivity.SENSITIVE,
+            locality=_only(Provider.LOCAL),
+            sentences=[
+                "The Harrow dispute turns on whether the variation was agreed orally.",
+                "Our client's position is that the site meeting minutes are the best record.",
+                "The limitation period expires in the second week of November.",
+                "Counsel's preliminary view is that quantum is the weaker half of the claim.",
+                "We are not pleading fraud; the evidence does not support it.",
+                "Disclosure is scheduled before the costs budget is filed.",
+                "The governing law clause points to England and Wales despite the Irish entity.",
+                "Witness statements are limited to the variation question.",
+                "Settlement authority runs to the figure discussed on the September call.",
+                "The expert is instructed on causation only, not on quantum.",
+            ],
+        ),
+        Topic(
+            label="Meridian matter",
+            scope=_project("proj_meridian"),
+            kinds=[MemoryKind.FACT, MemoryKind.GOAL],
+            weight_curve=(0.1, 1.0),
+            sensitivity=Sensitivity.SENSITIVE,
+            locality=_only(Provider.LOCAL),
+            sentences=[
+                "Meridian is a contractual dispute over a services agreement termination.",
+                "The termination notice was served two days outside the contractual window.",
+                "Our argument is that the cure period was never validly triggered.",
+                "The client wants a commercial outcome, not a judgment.",
+                "Mediation is listed for the first week of the new quarter.",
+                "The counterparty has changed solicitors twice since the claim was issued.",
+                "We hold the original signed agreement; they rely on an unsigned version.",
+                "Costs to date are approaching the budgeted figure for the whole phase.",
+                "The committee chair wants a four-sentence update before each call.",
+            ],
+        ),
+        Topic(
+            label="practice management",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.PREFERENCE, MemoryKind.INSTRUCTION, MemoryKind.GOAL],
+            weight_curve=(0.5, 1.0),
+            sentences=[
+                "Time is recorded the same day; nothing is reconstructed at month end.",
+                "Client updates go out on Thursdays unless something has moved.",
+                "I review the matter list every Monday morning before anything else.",
+                "Privileged material never goes to a hosted assistant.",
+                "Draft correspondence is always reviewed by a second pair of eyes.",
+                "I want deadlines in the calendar with a two-week warning, not a two-day one.",
+                "Supervision notes for the junior are written monthly.",
+            ],
+        ),
+    ],
+)
+
+_BANKER_TRAFFIC = TrafficProfile(
+    key="banker",
+    days=190,
+    providers={Provider.CHATGPT: 4.0, Provider.CLAUDE: 3.0, Provider.LOCAL: 3.0},
+    surfaces={"mcp": 6.5, "proxy": 2.5, "cli": 1.0},
+    reads_per_day=6.5,
+    query_text_share=0.15,
+    topics=[
+        Topic(
+            label="sector view",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.FACT, MemoryKind.INFERENCE],
+            weight_curve=(0.8, 1.0),
+            sentences=[
+                "Software multiples in the mid-market have compressed about two turns this year.",
+                "Strategic buyers are moving faster than sponsors in this cycle.",
+                "Carve-outs are taking longer to sign than platform deals.",
+                "Data-centre adjacency is the theme every board wants covered.",
+                "The IPO window reopened for profitable growth, not for growth alone.",
+                "Debt markets will support five turns for a recurring-revenue business.",
+                "Management presentations are running shorter than they did last year.",
+                "Cross-border approvals are the schedule risk nobody prices correctly.",
+                "Sponsors are asking for longer exclusivity than they did in the spring.",
+            ],
+        ),
+        Topic(
+            label="Kestrel deal",
+            scope=_project("proj_kestrel"),
+            kinds=[MemoryKind.FACT, MemoryKind.GOAL],
+            weight_curve=(1.0, 0.15),
+            sensitivity=Sensitivity.RESTRICTED,
+            locality=_only(Provider.LOCAL),
+            sentences=[
+                "Kestrel is a take-private of a listed software business.",
+                "The consortium is two sponsors plus a sovereign co-investor.",
+                "Diligence flagged a customer concentration issue in the top five accounts.",
+                "The board wants a premium in the low thirties to recommend.",
+                "Announcement is targeted for the week after the quarterly results.",
+                "Financing is committed subject to the usual certain-funds conditions.",
+                "The management team is rolling a meaningful share of their equity.",
+            ],
+        ),
+        Topic(
+            label="Tessera deal",
+            scope=_project("proj_tessera"),
+            kinds=[MemoryKind.FACT, MemoryKind.GOAL],
+            weight_curve=(0.1, 1.0),
+            sentences=[
+                "Tessera announced on the fourth, so the restriction lapsed on announcement.",
+                "The buyer is a strategic acquirer in the same vertical.",
+                "Synergy case rests on consolidating two overlapping sales organisations.",
+                "Regulatory review is expected to be a phase-one clearance.",
+                "The earn-out is two years and tied to net revenue retention.",
+                "Integration planning started before signing, which is unusual for them.",
+            ],
+        ),
+        Topic(
+            label="working preferences",
+            scope=GLOBAL_SCOPE,
+            kinds=[MemoryKind.PREFERENCE, MemoryKind.INSTRUCTION],
+            weight_curve=(0.9, 0.7),
+            sentences=[
+                "Every model output gets a sources line or it does not go in the deck.",
+                "I want the comps table sorted by EV/EBITDA, not alphabetically.",
+                "Never put a live deal name into a hosted assistant.",
+                "Client-ready pages are checked by a second person before they leave.",
+                "I prefer one page of judgement to ten pages of output.",
+                "Numbers in a deck are rounded consistently or not at all.",
+                "Deal code names are used in every internal document, including drafts.",
+            ],
+        ),
+    ],
+    questions=[
+        "what is the status of the Tessera integration case",
+        "what are current software multiples",
+        "what did I say about deck formatting",
+        "which deals are restricted right now",
+    ],
+)
+
+TRAFFIC_BY_KEY: dict[str, TrafficProfile] = {
+    "engineer": _ENGINEER_TRAFFIC,
+    "lawyer": _LAWYER_TRAFFIC,
+    "banker": _BANKER_TRAFFIC,
+}
+
+
 PERSONAS: tuple[Persona, ...] = (
     Persona(
         key="engineer",
@@ -1436,14 +2291,37 @@ PERSONAS_BY_KEY = {p.key: p for p in PERSONAS}
 
 
 async def build_persona(
-    store: Store, tenant_id: TenantId, persona: Persona, *, now: datetime | None = None
+    store: Store,
+    tenant_id: TenantId,
+    persona: Persona,
+    *,
+    now: datetime | None = None,
+    with_history: bool = True,
 ) -> DemoResult:
     """Build one persona's graph into `tenant_id`.
 
     Not idempotent: it mints fresh ids on every call, exactly as `seed.seed` does.
     Running it twice into one tenant gives you two of everything, so the caller is
     responsible for deciding a tenant is empty first.
+
+    `with_history` adds the backfill and the traffic: a few hundred writes spread
+    across six months and the reads that went with them. It is separable because
+    the tests that assert on a persona's hand-written facts should not have to
+    count past a generated corpus, and because it is the slow half.
     """
     workspace = Workspace(store, tenant_id, now=now or _now())
     await persona.build(workspace)
+
+    profile = TRAFFIC_BY_KEY.get(persona.key)
+    if with_history and profile is not None:
+        # Curated facts first, generated volume second, reads over both: the
+        # traffic pass has to be able to return the hand-written objects too, or
+        # the interesting facts are the only ones nothing ever read.
+        curated = [role for role in workspace.result.objects if not role.startswith("ep_")]
+        # Order is the story: the import lands first, the user writes over it for
+        # six months, and the reads run across the whole span.
+        imported = await import_burst(workspace, profile)
+        generated = await backfill_topics(workspace, profile)
+        await simulate_traffic(workspace, profile, curated + imported + generated)
+
     return workspace.result

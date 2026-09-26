@@ -30,6 +30,17 @@ from coletar.compiler.continuity import WEIGHTS
 from coletar.config import get_settings
 from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
 from coletar.extraction import extract_memories
+from coletar.history.clusters import cluster_mass, movers
+from coletar.history.nl import EXAMPLE_QUESTIONS, compile_question
+from coletar.history.query import (
+    MAX_WINDOW_DAYS,
+    Bucket,
+    GroupBy,
+    HistoryQuery,
+    Metric,
+    QueryResult,
+)
+from coletar.history.rollup import object_lifetime, reach_report, run_query
 from coletar.ingest import remember
 from coletar.inspector.auth import Tenant
 from coletar.inspector.review import edit, mark_reviewed, review_status
@@ -591,6 +602,149 @@ async def audit(owner: Tenant, at: datetime, valid: datetime | None = None) -> d
         "objects": [o.model_dump(mode="json") for o in objects if o.type is not ObjectType.EPISODE],
         "signed": False,
     }
+
+
+# ---------------------------------------------------------------------------
+# History as an observability surface (SCOPE §6).
+#
+# Read-only, all of it. Nothing under /web-api/history appends an event: a
+# dashboard that writes to the log it reads becomes its own largest data source
+# within a week, and every chart on it starts describing the act of looking.
+# ---------------------------------------------------------------------------
+
+
+def _result_payload(result: QueryResult) -> dict[str, Any]:
+    payload = result.model_dump(mode="json")
+    payload["headline"] = result.headline
+    payload["headline_label"] = result.headline_label
+    payload["is_stock"] = result.query.metric.is_stock
+    return payload
+
+
+@router.post("/web-api/history/query")
+async def history_query(owner: Tenant, query: HistoryQuery) -> dict[str, Any]:
+    """Execute a typed query. The client sends the same object the compiler
+    emits, so an edited query and a compiled one take identical paths."""
+    return _result_payload(await run_query(build_store(), owner, query))
+
+
+class AskInput(BaseModel):
+    question: str = Field(min_length=1, max_length=400)
+
+
+@router.post("/web-api/history/ask")
+async def history_ask(owner: Tenant, body: AskInput) -> dict[str, Any]:
+    """Natural language in; a query, its result, and an account of the
+    translation out.
+
+    The compiled query is returned whether or not it was understood, because
+    "here is what I thought you meant" is the answer to a question the compiler
+    got wrong, and silently charting something else is not.
+    """
+    compiled = compile_question(body.question)
+    payload = compiled.as_dict()
+    payload["result"] = _result_payload(
+        await run_query(build_store(), owner, compiled.query)
+    )
+    return payload
+
+
+@router.get("/web-api/history/dashboard")
+async def history_dashboard(owner: Tenant, window_days: int = 90) -> dict[str, Any]:
+    """The standing panels, in one round trip.
+
+    Four queries rather than one endpoint per chart: the page opens with all of
+    them, and four HTTP calls to build one view is how a dashboard ends up
+    feeling slower than the log it reads.
+    """
+    store = build_store()
+    window = max(7, min(window_days, MAX_WINDOW_DAYS))
+    bucket = Bucket.DAY if window <= 31 else Bucket.WEEK
+    panels = {
+        "writes_by_actor": HistoryQuery(
+            metric=Metric.WRITES, group_by=GroupBy.ACTOR, bucket=bucket, window_days=window
+        ),
+        "retrievals_by_provider": HistoryQuery(
+            metric=Metric.RETRIEVALS,
+            group_by=GroupBy.PROVIDER,
+            bucket=bucket,
+            window_days=window,
+        ),
+        "method_mix": HistoryQuery(
+            metric=Metric.WRITES,
+            group_by=GroupBy.EXTRACTION_METHOD,
+            bucket=bucket,
+            window_days=window,
+        ),
+        "active_objects": HistoryQuery(
+            metric=Metric.ACTIVE_OBJECTS, bucket=bucket, window_days=window
+        ),
+        "corrections": HistoryQuery(
+            metric=Metric.SUPERSESSIONS, bucket=bucket, window_days=window
+        ),
+        "confidence": HistoryQuery(
+            metric=Metric.MEAN_CONFIDENCE, bucket=bucket, window_days=window
+        ),
+    }
+    return {
+        "window_days": window,
+        "bucket": str(bucket),
+        "panels": {
+            name: _result_payload(await run_query(store, owner, query))
+            for name, query in panels.items()
+        },
+        "examples": EXAMPLE_QUESTIONS,
+    }
+
+
+@router.get("/web-api/history/object/{object_id}")
+async def history_object(owner: Tenant, object_id: str) -> dict[str, Any]:
+    """One fact as a series: every step of its life, and every read of it."""
+    store = build_store()
+    lifetime = await object_lifetime(store, owner, object_id)
+    if not lifetime.points:
+        raise HTTPException(404, "No recorded history for that object.")
+    payload = lifetime.as_dict()
+    current = await store.get_object(owner, object_id)
+    payload["current"] = current.model_dump(mode="json") if current else None
+    return payload
+
+
+@router.get("/web-api/history/reach")
+async def history_reach(owner: Tenant, limit: int = 200) -> dict[str, Any]:
+    """Which assistant has actually been served which fact."""
+    return await reach_report(build_store(), owner, limit=min(limit, 500))
+
+
+@router.get("/web-api/history/ideas")
+async def history_ideas(
+    owner: Tenant, window_days: int = 180, bucket: str = "week"
+) -> dict[str, Any]:
+    """Topic clusters, and each one's active mass per bucket."""
+    payload = await cluster_mass(
+        build_store(),
+        owner,
+        bucket=Bucket(bucket) if bucket in {b.value for b in Bucket} else Bucket.WEEK,
+        window_days=max(28, min(window_days, MAX_WINDOW_DAYS)),
+    )
+    payload["movers"] = movers(payload)
+    return payload
+
+
+@router.post("/web-api/history/events")
+async def history_events(owner: Tenant, body: dict[str, Any]) -> dict[str, Any]:
+    """The rows behind a number.
+
+    This is what makes a citation a citation rather than a decoration: a point
+    on a chart carries the ids of the events it counted, and this returns them.
+    """
+    wanted = {str(i) for i in (body.get("event_ids") or [])[:200]}
+    if not wanted:
+        return {"events": []}
+    events = await build_store().list_events(owner, limit=200_000)
+    found = [e.model_dump(mode="json") for e in events if e.id in wanted]
+    found.sort(key=lambda e: str(e["at"]))
+    return {"events": found}
 
 
 async def compile_package(
