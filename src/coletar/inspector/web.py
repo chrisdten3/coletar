@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -66,8 +67,10 @@ from coletar.schema.objects import (
 )
 from coletar.schema.tenancy import TenantId
 from coletar.store import build_store
-from coletar.store.base import Store
+from coletar.store.base import SchemaBehind, Store
 from coletar.temporal import graph_as_of
+
+logger = logging.getLogger(__name__)
 
 
 async def same_origin(request: Request) -> None:
@@ -765,8 +768,34 @@ async def get_pricing(owner: Tenant) -> dict[str, Any]:
     made them per-origin -- the same workspace on two ports priced on one and
     showed an empty state on the other -- and meant the Cost view was blank
     until someone filled in a form, which is to say blank.
+
+    The published half of this answer is static and always available, so a
+    storage failure costs the caller their *overrides* and nothing else. It is
+    not allowed to cost them the endpoint: this is read on every render of the
+    Cost view and of Settings, and a 500 here took both pages down along with
+    the History tabs that share their error state. `overrides_available` says
+    which of the two answers this is, because the page has to be able to tell a
+    user that a negotiated rate cannot be saved right now rather than quietly
+    showing them list prices as though they had never entered one.
     """
-    return resolve(await build_store().get_setting(owner, SETTING_KEY)).as_dict()
+    stored: dict[str, Any] | None = None
+    available = True
+    try:
+        stored = await build_store().get_setting(owner, SETTING_KEY)
+    except SchemaBehind:
+        # Known and named: this deployment's schema is behind its build. It is a
+        # warning rather than an exception log because there is no stack worth
+        # reading -- the fix is an operational one, and the store has already
+        # said which migration is missing.
+        logger.warning("pricing overrides unreadable; serving published prices")
+        available = False
+    except Exception:
+        # Anything else is unexpected, so it keeps its traceback. The response is
+        # the same either way: the published table is static, so a storage
+        # failure costs the caller their overrides and not the endpoint.
+        logger.exception("pricing overrides unreadable; serving published prices")
+        available = False
+    return {**resolve(stored).as_dict(), "overrides_available": available}
 
 
 class PricingInput(BaseModel):
@@ -800,8 +829,14 @@ async def put_pricing(owner: Tenant, body: PricingInput) -> dict[str, Any]:
     stored: dict[str, Any] = {"routing": body.routing, "rates": body.rates}
     if body.comparison:
         stored["comparison"] = body.comparison
-    await build_store().put_setting(owner, SETTING_KEY, stored)
-    return resolve(stored).as_dict()
+    try:
+        await build_store().put_setting(owner, SETTING_KEY, stored)
+    except SchemaBehind as error:
+        # 503 rather than 500: the request is well-formed and will work once the
+        # deployment's schema catches up. The detail is shown to the user, so it
+        # says what is wrong instead of "Request failed. Please try again."
+        raise HTTPException(503, str(error)) from error
+    return {**resolve(stored).as_dict(), "overrides_available": True}
 
 
 @router.get("/web-api/history/threads")

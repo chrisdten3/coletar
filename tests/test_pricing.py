@@ -173,3 +173,110 @@ async def test_writing_a_setting_appends_no_event():
     before = len(await store.list_events(TENANT, limit=100))
     await store.put_setting(TENANT, SETTING_KEY, {"rates": {"claude-sonnet-5": 1.0}})
     assert len(await store.list_events(TENANT, limit=100)) == before
+
+
+# ---------------------------------------------------------------------------
+# What the endpoint does when the store cannot answer.
+#
+# The deployment hit this: `tenant_setting` arrived in migration 014 and the
+# hosted database had not been migrated, so every read of a tenant's overrides
+# raised. A view whose other half is a static published table went down with it,
+# and took the whole History page's error state with it.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def local_app(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    import coletar.accounts
+    import coletar.store
+    from coletar.config import get_settings
+    from coletar.inspector.app import app as inspector_app
+    from coletar.store import reset_store
+
+    monkeypatch.delenv("COLETAR_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("COLETAR_IDENTITY_PROVIDER", "local")
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_STORE_PATH", str(tmp_path / "graph.json"))
+    get_settings.cache_clear()
+    monkeypatch.setattr(coletar.store, "_singleton", InMemoryStore())
+    coletar.accounts.reset_directory()
+    try:
+        # Loopback: the local shell's no-sign-in shortcut is unavailable off it.
+        with TestClient(inspector_app, base_url="http://localhost") as client:
+            yield client
+    finally:
+        get_settings.cache_clear()
+        reset_store()
+        coletar.accounts.reset_directory()
+
+
+def test_pricing_serves_published_prices_when_overrides_cannot_be_read(
+    local_app, monkeypatch
+):
+    """The published table is static. Losing the stored overrides must cost the
+    caller their overrides and not the endpoint."""
+    import coletar.store
+
+    async def unreadable(*args, **kwargs):
+        raise RuntimeError('relation "tenant_setting" does not exist')
+
+    monkeypatch.setattr(coletar.store._singleton, "get_setting", unreadable)
+
+    response = local_app.get("/web-api/pricing")
+    assert response.status_code == 200
+    body = response.json()
+    # Published prices, and an honest flag saying they are all there is.
+    assert body["overrides_available"] is False
+    assert body["overrides"] == {}
+    assert body["rates"][str(Provider.CLAUDE)] == BY_MODEL[DEFAULT_ROUTING["claude"]].input_per_mtok
+
+
+def test_a_schema_that_is_behind_reads_as_unavailable_not_as_unset(
+    local_app, monkeypatch
+):
+    """The distinction the typed error exists for. `None` already means "this
+    tenant never wrote one", and a caller that cannot tell that apart from "the
+    table is not there" shows published defaults as though they were the user's
+    own saved settings."""
+    import coletar.store
+    from coletar.store.base import SchemaBehind
+
+    async def behind(*args, **kwargs):
+        raise SchemaBehind("This workspace's settings table has not been created yet.")
+
+    monkeypatch.setattr(coletar.store._singleton, "get_setting", behind)
+
+    body = local_app.get("/web-api/pricing").json()
+    assert body["overrides_available"] is False
+    # An unset setting is the other case, and it is not this one.
+    assert local_app.get("/web-api/pricing").status_code == 200
+
+
+def test_pricing_says_so_when_the_overrides_are_real(local_app):
+    response = local_app.get("/web-api/pricing")
+    assert response.status_code == 200
+    assert response.json()["overrides_available"] is True
+
+
+def test_saving_a_rate_onto_a_schema_that_is_behind_refuses_loudly(
+    local_app, monkeypatch
+):
+    """The read degrades; the write must not. Telling someone their negotiated
+    rate is stored when it went nowhere is the worse failure of the two."""
+    import coletar.store
+    from coletar.store.base import SchemaBehind
+
+    async def behind(*args, **kwargs):
+        raise SchemaBehind("This workspace's settings table has not been created yet.")
+
+    monkeypatch.setattr(coletar.store._singleton, "put_setting", behind)
+
+    response = local_app.put(
+        "/web-api/pricing",
+        json={"routing": {"claude": "claude-opus-5"}, "rates": {}},
+        headers={"origin": "http://localhost"},
+    )
+    assert response.status_code == 503
+    assert "settings table" in response.json()["detail"]

@@ -714,9 +714,55 @@ let historyTab = "overview",
   historyAsk = null,
   historyIdeas = null,
   historyReach = null,
-  historyCites = null,
-  historyBusy = false,
-  historyError = "";
+  historyCites = null;
+
+/* --- Panel fetch state, and why a failure has to be remembered -------------
+   Every loader on this page ends in `render()`, and `render` re-runs
+   `bindHistory`, which calls the loaders again. On success that terminates:
+   the value is cached and the next call returns early. On failure there was
+   nothing to cache, so a loader that only remembers its successes turns the
+   pair into a loop -- re-fetch, re-render, re-fetch -- as fast as the server
+   can answer. That is not a slow page. It is a thousand identical 500s in the
+   console, a main thread with no time left to run a click handler, and
+   navigation that appears to have stopped working because nothing else ever
+   gets a turn. `autoPreview` learned this with `previewFailed`; this is the
+   same rule for the five panels that share this page.
+
+   Failures are recorded per panel rather than in one shared `historyError`,
+   because the panels are independent: Cost's prices failing to load is no
+   reason to replace the Overview charts, which loaded, with a warning about
+   something else. */
+const panelBusy = {};
+const panelErrors = {};
+
+/** Forget a panel's recorded failure, so the next call may fetch again. */
+const forget = (...keys) => keys.forEach((key) => delete panelErrors[key]);
+
+/**
+ * Fetch one panel's data at most once, and not again after it has failed.
+ *
+ * `force` is the user asking for it again -- a Try again button, or a control
+ * whose change invalidates what was fetched. Nothing else re-fetches, which is
+ * what keeps `render` -> `bindHistory` -> loader from closing into a loop.
+ */
+async function loadPanel(key, have, force, run, routes) {
+  if (panelBusy[key]) return;
+  if (!force && (have || panelErrors[key])) return;
+  panelBusy[key] = true;
+  forget(key);
+  try {
+    await run();
+  } catch (error) {
+    panelErrors[key] = error.message || "Request failed. Please try again.";
+  } finally {
+    panelBusy[key] = false;
+    if ((routes || ["audit"]).includes(routeOf())) render();
+  }
+}
+
+/** A failed panel, with the one affordance that can fix it. */
+const panelFailure = (key) =>
+  `<div class="notice warning">${icon("lock")} ${esc(panelErrors[key])} <button class="quiet small" data-retry="${esc(key)}">Try again</button></div>`;
 
 const HISTORY_PALETTE = [
   "#2d6e5d",
@@ -862,40 +908,22 @@ function panel(title, payload, note) {
   return `<article class="panel hist-panel"><div class="row between"><h3>${esc(title)}</h3><span class="mono muted">${esc(String(value))} <small>${esc(payload.headline_label)}</small></span></div>${chart(payload.series, { label: title, height: 130, min_max: 1 })}${note ? `<p class="caption">${note}</p>` : ""}</article>`;
 }
 
-async function loadHistory(force) {
-  if (historyBusy) return;
-  if (historyDash && !force) return;
-  historyBusy = true;
-  historyError = "";
-  try {
+const loadHistory = (force) =>
+  loadPanel("dashboard", historyDash, force, async () => {
     historyDash = await api(`/history/dashboard?window_days=${historyWindow}`);
-  } catch (error) {
-    historyError = error.message;
-  } finally {
-    historyBusy = false;
-    if (routeOf() === "audit") render();
-  }
-}
+  });
 
-async function loadIdeas(force) {
-  if (historyIdeas && !force) return;
-  try {
-    historyIdeas = await api(`/history/ideas?window_days=${Math.max(historyWindow, 120)}`);
-  } catch (error) {
-    historyError = error.message;
-  }
-  if (routeOf() === "audit") render();
-}
+const loadIdeas = (force) =>
+  loadPanel("ideas", historyIdeas, force, async () => {
+    historyIdeas = await api(
+      `/history/ideas?window_days=${Math.max(historyWindow, 120)}`,
+    );
+  });
 
-async function loadReach(force) {
-  if (historyReach && !force) return;
-  try {
+const loadReach = (force) =>
+  loadPanel("reach", historyReach, force, async () => {
     historyReach = await api("/history/reach");
-  } catch (error) {
-    historyError = error.message;
-  }
-  if (routeOf() === "audit") render();
-}
+  });
 
 /** The compiled-query panel. This is the honesty mechanism: whatever produced
     the query, the user sees the query, what was read out of their sentence,
@@ -974,8 +1002,7 @@ function askResult() {
 }
 
 function overviewTab() {
-  if (historyError)
-    return `<div class="notice warning">${icon("lock")} ${esc(historyError)}</div>`;
+  if (panelErrors.dashboard) return panelFailure("dashboard");
   if (!historyDash) return `<div class="inset"><p>Reading the revision log…</p></div>`;
   const p = historyDash.panels;
   return `<div class="hist-grid">
@@ -989,6 +1016,7 @@ function overviewTab() {
 }
 
 function ideasTab() {
+  if (panelErrors.ideas) return panelFailure("ideas");
   if (!historyIdeas) return `<div class="inset"><p>Clustering…</p></div>`;
   const d = historyIdeas;
   if (!d.clusters.length)
@@ -1023,6 +1051,7 @@ function ideasTab() {
 }
 
 function reachTab() {
+  if (panelErrors.reach) return panelFailure("reach");
   if (!historyReach) return `<div class="inset"><p>Reading traces…</p></div>`;
   const d = historyReach;
   return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Reads by assistant</span><span class="mono muted">${d.never_read} of ${d.total} never read</span></div><div class="row wrap">${Object.entries(
@@ -1107,15 +1136,18 @@ let threadSuggestions = null,
    they were checked, plus whatever this tenant has overridden. */
 let priceBook = null;
 
-async function loadPricing(force) {
-  if (priceBook && !force) return;
-  try {
-    priceBook = await api("/pricing");
-  } catch (error) {
-    historyError = error.message;
-  }
-  if (routeOf() === "audit" || routeOf() === "settings") render();
-}
+const loadPricing = (force) =>
+  loadPanel(
+    "pricing",
+    priceBook,
+    force,
+    async () => {
+      priceBook = await api("/pricing");
+    },
+    // Settings prices the same catalogue, so a failure has to reach that page
+    // too rather than leaving its table saying "Loading prices…" forever.
+    ["audit", "settings"],
+  );
 
 /** USD per million input tokens for one assistant's measured traffic. */
 const rateFor = (provider) => Number(priceBook?.rates?.[provider] ?? 0);
@@ -1123,15 +1155,20 @@ const rateFor = (provider) => Number(priceBook?.rates?.[provider] ?? 0);
 const modelLabel = (model) =>
   priceBook?.catalogue?.find((m) => m.model === model)?.label || model;
 
-async function loadThreads(force) {
-  if (threadSuggestions && !force) return;
-  try {
+const loadThreads = (force) =>
+  loadPanel("threads", threadSuggestions, force, async () => {
     threadSuggestions = await api("/history/threads");
-  } catch (error) {
-    historyError = error.message;
-  }
-  if (routeOf() === "audit") render();
-}
+  });
+
+/** Panel key -> its loader, for the Try again button. Declared after the
+    loaders it names; `panelFailure` only ever emits a key from this map. */
+const RETRY = {
+  dashboard: loadHistory,
+  ideas: loadIdeas,
+  reach: loadReach,
+  pricing: loadPricing,
+  threads: loadThreads,
+};
 
 async function openThread(subject, anchorIds) {
   threadBusy = true;
@@ -1191,6 +1228,7 @@ function threadView() {
 function choicesTab() {
   if (threadBusy && !threadReport)
     return `<div class="inset"><p>Following the thread…</p></div>`;
+  if (panelErrors.threads) return panelFailure("threads");
   if (!threadSuggestions) return `<div class="inset"><p>Looking for recorded changes…</p></div>`;
   const list = threadSuggestions.suggestions || [];
   if (!list.length)
@@ -1220,6 +1258,9 @@ function choicesTab() {
    the user's, from Settings. The server ships tokens and stays out of the
    arithmetic, so this cannot drift from the number in the sidebar. */
 function costTab() {
+  // Two fetches feed this tab, and they fail for different reasons. Say which.
+  if (panelErrors.dashboard) return panelFailure("dashboard");
+  if (panelErrors.pricing) return panelFailure("pricing");
   if (!historyDash || !priceBook)
     return `<div class="inset"><p>Reading the revision log…</p></div>`;
   const tokens = historyDash.panels.tokens_by_provider;
@@ -1544,8 +1585,9 @@ function settings() {
             : null;
           return `<tr><td>${tag(m.model)}${m.note ? `<span class="sr-only"> ${esc(m.note)}</span>` : ""}</td><td>${m.model === "local" ? '<span class="mono">$0.00</span>' : `<input type="number" min="0" step="0.01" aria-label="${esc(m.label)} price per million input tokens" data-rate="${esc(m.model)}" value="${rate}">`}</td><td class="mono">$${((total / 1000000) * rate).toFixed(2)}</td><td class="mono ${!delta ? "muted" : delta < 0 ? "green" : "amber"}">${delta ? `${delta > 0 ? "+" : "−"}${Math.abs(delta)}%` : "published"}</td></tr>`;
         })
-        .join("") || '<tr><td colspan="4" class="muted">Loading prices…</td></tr>'
-    }</tbody></table></div><p class="caption">Published list prices, checked on the date above and shipped with the app — not a live feed, and not an invoice. Input tokens only: coleta measures the context it hands to a model, never the reply. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
+        .join("") ||
+      `<tr><td colspan="4" class="muted">${panelErrors.pricing ? esc(panelErrors.pricing) : "Loading prices…"}</td></tr>`
+    }</tbody></table></div>${panelErrors.pricing ? panelFailure("pricing") : priceBook && priceBook.overrides_available === false ? `<div class="notice warning">${icon("info")} Your workspace's stored rates could not be read, so these are published prices. A negotiated rate entered now will not save.</div>` : ""}<p class="caption">Published list prices, checked on the date above and shipped with the app — not a live feed, and not an invoice. Input tokens only: coleta measures the context it hands to a model, never the reply. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
       isPublic()
         ? `<h2 class="mt">Workspace access</h2><div class="notice warning">${icon("info")} This workspace is served without a password. Anyone with the link can read every object — including ones marked restricted — and can add, edit, retire and import. Keep private context out of it.</div><p class="caption">Connector bearer keys are a separate authority and still gate the MCP and REST endpoints. The scheduled extraction batch still requires its own credential.</p>`
         : ""
@@ -2465,6 +2507,13 @@ async function enterWorkspace() {
    lifecycle: four panels, three of them lazily fetched, and a render triggered
    by whichever finishes. */
 function bindHistory() {
+  // The only thing that re-fetches a panel that failed. Everything else on this
+  // page leaves a recorded failure alone, which is what keeps a broken endpoint
+  // from re-rendering the page out from under whoever is reading it. Bound
+  // before the route checks because Settings shows this button too.
+  document.querySelectorAll("[data-retry]").forEach((b) => {
+    b.onclick = () => RETRY[b.dataset.retry]?.(true);
+  });
   if (routeOf() === "settings") loadPricing();
   if (routeOf() === "object") {
     const id = decodeURIComponent(location.hash.replace(/^#\/object\//, ""));
@@ -2496,6 +2545,10 @@ function bindHistory() {
       historyWindow = Number(b.dataset.hwindow);
       historyDash = null;
       historyIdeas = null;
+      // A new window is a new question, so a panel that failed on the old one
+      // is allowed to try again. Without this the recorded failure would
+      // outlive the request that caused it.
+      forget("dashboard", "ideas");
       render();
     };
   });
@@ -2590,7 +2643,6 @@ function bindHistory() {
 }
 
 async function askHistory(question) {
-  historyBusy = true;
   historyCites = null;
   try {
     historyAsk = await api("/history/ask", { question });
@@ -2598,7 +2650,6 @@ async function askHistory(question) {
   } catch (error) {
     toast(error.message, true);
   } finally {
-    historyBusy = false;
     render();
   }
 }

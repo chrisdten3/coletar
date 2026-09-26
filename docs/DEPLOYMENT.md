@@ -54,8 +54,10 @@ Inspector forms. Web writes still enforce same-origin browser requests, which su
 as defence in depth alongside the bearer token rather than as the only check.
 
 The startup refuses an in-memory store.
-Supabase is the canonical Postgres store. Its eight migrations were checked against
-the ledger; pending migrations 004–007 and new migration 008 were applied on 2026-09-08. The project had
+Supabase is the canonical Postgres store. Migrations 004–008 were applied on
+2026-09-08 after checking the ledger; the ones added since are applied by hand
+per the section below, and `schema_migration` is the only record of which have
+actually landed — this document is not. The project had
 been paused and was resumed before validation. Managed backups and a tested restore
 procedure remain follow-up work.
 
@@ -120,6 +122,40 @@ larger than five turns needs additional manual runs or a more frequent worker.
 Uploaded exports currently use deterministic pattern extraction on the hosted server,
 without model calls. The hosted limit is 4 MB per upload to fit Vercel's 4.5 MB body
 limit; local imports retain the 20 MB UI limit. Large background imports remain work.
+
+## Migrations are a manual step on this host, and a live failure mode
+
+**Nothing applies migrations automatically here.** The container host ran
+`coletar migrate` as a Fly release command before a new version took traffic
+(see [DEPLOYMENT_FLY.md](DEPLOYMENT_FLY.md)); Vercel has no equivalent hook, and
+the app deliberately does not run DDL from a serverless cold start, where a
+dozen instances would race the same ledger. So a deploy can put a build in front
+of users that expects a table the database does not have.
+
+That is not hypothetical. `tenant_setting` arrived in migration 014 with
+server-side pricing; the build shipped, the migration did not, and every request
+to `/web-api/pricing` answered 500 until it was applied.
+
+**Before deploying a build that adds a migration**, apply it first, from a
+checkout with the production DSN:
+
+```bash
+COLETAR_DATABASE_URL="$(grep ^COLETAR_DATABASE_URL .env.vercel | cut -d= -f2-)" \
+  COLETAR_STORE_BACKEND=postgres uv run coletar migrate
+```
+
+The runner is ledgered and checksummed, so a re-run is a no-op and an edited
+migration that has already been applied is refused rather than reapplied.
+
+The app is built to survive the gap rather than to depend on remembering. The
+store raises a typed `SchemaBehind` rather than pretending the setting was never
+written, and the two callers do different things with it: `GET /web-api/pricing`
+serves the published table and marks the answer `overrides_available: false`, so
+Settings can say the stored rates could not be read; `PUT` refuses with a 503
+naming the cause, because a write that reports success for a value that went
+nowhere is worse than a failure. Neither is a substitute for running the
+migration. Grep the function logs for `tenant_setting is missing` to confirm
+whether a deployment is in this state.
 
 ## Deployment and operation
 

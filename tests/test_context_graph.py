@@ -10,12 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-# `TestClient`'s default host is `testserver`, which the sign-in gate correctly
-# treats as a deployment rather than a laptop (see
-# `coletar.inspector.auth.local_mode`). These tests simulate a local workspace,
-# so they say so; without it every workspace request answers 503.
-LOCAL = "http://localhost"
-
 from coletar.schema.objects import (
     ContextObject,
     Edge,
@@ -28,6 +22,12 @@ from coletar.schema.objects import (
     Provider,
 )
 from coletar.schema.tenancy import tenant_id
+
+# `TestClient`'s default host is `testserver`, which the sign-in gate correctly
+# treats as a deployment rather than a laptop (see
+# `coletar.inspector.auth.local_mode`). These tests simulate a local workspace,
+# so they say so; without it every workspace request answers 503.
+LOCAL = "http://localhost"
 
 TENANT = tenant_id("tenant_graph_test")
 

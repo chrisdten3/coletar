@@ -27,11 +27,13 @@ from taste:
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
 import numpy as np
+import psycopg
 from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -55,7 +57,9 @@ from coletar.schema.objects import (
     object_from_record,
 )
 from coletar.schema.tenancy import CrossTenantError, TenantId
-from coletar.store.base import Lease, ReadReceipt
+from coletar.store.base import Lease, ReadReceipt, SchemaBehind
+
+logger = logging.getLogger(__name__)
 
 #: Always qualified, and every query below aliases `context_object` as `o`. The
 #: search query joins against a candidate CTE that also has an `id`, so an
@@ -594,12 +598,29 @@ class PostgresStore:
 
     async def get_setting(self, tenant_id: TenantId, key: str) -> dict[str, Any] | None:
         pool = await self._get_pool()
-        async with pool.connection() as conn, conn.cursor() as cur:
-            await cur.execute(
-                "SELECT value FROM tenant_setting WHERE tenant_id = %s AND key = %s",
-                (tenant_id, key),
+        try:
+            async with pool.connection() as conn, conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT value FROM tenant_setting WHERE tenant_id = %s AND key = %s",
+                    (tenant_id, key),
+                )
+                row = await cur.fetchone()
+        except psycopg.errors.UndefinedTable as error:
+            # A deployment running ahead of its schema. Raised as its own type
+            # rather than returned as None, because None already means something
+            # here -- "this tenant has never written one" -- and a caller that
+            # cannot tell the two apart will show a user published defaults as
+            # though they were that user's own settings. Callers that would
+            # rather degrade than fail still can, and can say which they did.
+            logger.warning(
+                "tenant_setting is missing; %r cannot be read. "
+                "Apply pending migrations with `coletar migrate`.",
+                key,
             )
-            row = await cur.fetchone()
+            raise SchemaBehind(
+                "This workspace's settings table has not been created yet. "
+                "Apply pending migrations (`coletar migrate`) and try again."
+            ) from error
         if row is None:
             return None
         value = row[0]
@@ -611,19 +632,29 @@ class PostgresStore:
         from psycopg.types.json import Jsonb
 
         pool = await self._get_pool()
-        async with pool.connection() as conn, conn.cursor() as cur:
-            # Upsert rather than delete-then-insert: a setting is read on every
-            # render of the view that uses it, and a window where the row does
-            # not exist would show a user the published default mid-save.
-            await cur.execute(
-                """
-                INSERT INTO tenant_setting (tenant_id, key, value, updated_at)
-                VALUES (%s, %s, %s, now())
-                ON CONFLICT (tenant_id, key)
-                DO UPDATE SET value = EXCLUDED.value, updated_at = now()
-                """,
-                (tenant_id, key, Jsonb(value)),
-            )
+        try:
+            async with pool.connection() as conn, conn.cursor() as cur:
+                # Upsert rather than delete-then-insert: a setting is read on every
+                # render of the view that uses it, and a window where the row does
+                # not exist would show a user the published default mid-save.
+                await cur.execute(
+                    """
+                    INSERT INTO tenant_setting (tenant_id, key, value, updated_at)
+                    VALUES (%s, %s, %s, now())
+                    ON CONFLICT (tenant_id, key)
+                    DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+                    """,
+                    (tenant_id, key, Jsonb(value)),
+                )
+        except psycopg.errors.UndefinedTable as error:
+            # The read degrades to defaults; a write must not. Reporting success
+            # for a value that went nowhere would have the user believe their
+            # negotiated rate is stored, and discover otherwise the next time
+            # they open the page.
+            raise SchemaBehind(
+                "This workspace's settings table has not been created yet. "
+                "Apply pending migrations (`coletar migrate`) and try again."
+            ) from error
 
     async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         pool = await self._get_pool()

@@ -70,6 +70,23 @@ from coletar.schema.objects import ContextObject, Edge, ObjectType, Provider, Sc
 from coletar.schema.tenancy import TenantId
 
 
+class SchemaBehind(RuntimeError):
+    """The database is missing a table a shipped migration creates.
+
+    Its own type because it is the one store failure that is not a bug in the
+    code and not an outage: the deployment is running a build newer than the
+    schema it was pointed at. A caller can act on that -- a read of optional
+    configuration can fall back to its defaults, and a write must refuse loudly
+    rather than report a save that went nowhere -- but only if it can tell this
+    apart from "the database is unreachable".
+
+    Platforms with a release command (`fly.toml` runs `coletar migrate` before
+    a new version takes traffic) cannot reach this state. Vercel has no such
+    hook, so the hosted deployment's migrations are applied by hand, and a
+    forgotten one is a live failure mode rather than a hypothetical.
+    """
+
+
 class Lease(BaseModel):
     """One worker's exclusive claim on one named job, for a bounded time.
 
@@ -316,6 +333,10 @@ class Store(Protocol):
         Returns a copy. The same discipline as every other read here: a caller
         mutating what it was handed must not change stored state behind the
         store's back.
+
+        Raises `SchemaBehind` when the backing table does not exist, rather than
+        reporting it as None: "never written" and "cannot be read" lead to
+        different answers, and only one of them is the user's own setting.
         """
         ...
 
@@ -327,6 +348,10 @@ class Store(Protocol):
         No event is appended. The Event/Revision Log is the provenance record
         for the *graph* (§5), and filling it with "the user changed a price"
         would make the observability feed mostly about its own configuration.
+
+        Raises `SchemaBehind` when the backing table does not exist. A write has
+        no defensible fallback: returning quietly would tell the caller their
+        value is stored when it is nowhere.
         """
         ...
 
