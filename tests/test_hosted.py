@@ -378,7 +378,11 @@ def test_shell_tells_the_client_sign_in_is_required(hosted):
 
 
 def test_local_shell_asks_for_no_sign_in(monkeypatch, tmp_path):
-    """Local development has no login and must keep working with none."""
+    """Local development has no login and must keep working with none.
+
+    Asked over loopback, because that is now the condition: the shortcut is
+    unavailable off the laptop by construction, not by configuration.
+    """
     import json
     import re
 
@@ -396,7 +400,7 @@ def test_local_shell_asks_for_no_sign_in(monkeypatch, tmp_path):
     monkeypatch.setattr(coletar.store, "_singleton", InMemoryStore())
     coletar.accounts.reset_directory()
     try:
-        with _TestClient(local_app) as client:
+        with _TestClient(local_app, base_url="http://localhost") as client:
             html = client.get("/app").text
             # And the workspace itself still answers without any credential.
             assert client.get("/web-api/state").status_code == 200

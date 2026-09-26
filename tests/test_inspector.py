@@ -287,7 +287,7 @@ def _get(path: str = "/") -> str:
 
     from coletar.inspector.app import app
 
-    response = TestClient(app).get(path)
+    response = TestClient(app, base_url="http://localhost").get(path)
     assert response.status_code == 200
     return response.text
 
@@ -344,7 +344,7 @@ async def test_page_shows_a_refusal_instead_of_swallowing_it(live_store: None) -
 
     from coletar.inspector.app import app
 
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     response = client.post(
         "/merge", data={"survivor_id": obj.id, "absorbed_id": obj.id}, follow_redirects=True
     )
@@ -405,7 +405,7 @@ async def test_agentic_page_shows_and_can_erase_pending_raw_turn(live_store: Non
     assert "Pending extraction: 1" in page
     assert "erase raw turn" in page
 
-    response = TestClient(app).post(
+    response = TestClient(app, base_url="http://localhost").post(
         "/erase-episode", data={"object_id": episode.id}, follow_redirects=True
     )
     assert response.status_code == 200
@@ -451,7 +451,7 @@ async def test_library_filters_and_detail_are_tenant_scoped(live_store: None) ->
     other = Memory.from_write("A different tenant's private fact.")
     await store.put_object(TENANT, own)
     await store.put_object(tenant_id("other-web-tenant"), other)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert own.content in client.get("/?q=fixed&view=preference").text
     assert own.content not in client.get("/?q=missing").text
     assert "No matching context" in client.get("/?q=missing").text
@@ -475,7 +475,7 @@ async def test_web_detail_escapes_textarea_and_search_input(live_store: None) ->
 
     obj = Memory.from_write('</textarea><script>alert("stored")</script>')
     await build_store().put_object(TENANT, obj)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     detail = client.get(f"/objects/{obj.id}").text
     assert "<script>alert" not in detail
     assert "&lt;/textarea&gt;" in detail
@@ -494,7 +494,7 @@ async def test_product_review_compile_and_reach_flow(live_store: None) -> None:
     from coletar.inspector.app import app
     from coletar.store import build_store
 
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert client.get("/app").status_code == 200
     created = client.post(
         "/web-api/memories",
@@ -539,7 +539,7 @@ async def test_product_import_recognises_both_providers_and_user_turns(live_stor
 
     from coletar.inspector.app import app
 
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     for provider in ["claude", "chatgpt"]:
         path = (
             Path(__file__).parent / "fixtures" / "export_sources" / provider / "conversations.json"
@@ -568,7 +568,7 @@ async def test_product_conflict_resolution_and_temporal_snapshot(live_store: Non
     from coletar.inspector.app import app
     from coletar.store import build_store
 
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert client.post("/web-api/sample").status_code == 200
     assert client.post("/web-api/sample").status_code == 409
     response = client.post(
@@ -595,7 +595,7 @@ async def test_product_refuses_cross_origin_mutations_and_other_tenant(live_stor
 
     other = Memory.from_write("Other tenant secret")
     await build_store().put_object(tenant_id("other-web-tenant"), other)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert other.id not in str(client.get("/web-api/state").json())
     assert client.post(f"/web-api/objects/{other.id}", json={"action": "review"}).status_code == 404
     assert (
@@ -634,7 +634,7 @@ async def test_design_sample_populates_review_and_read_log(live_store: None) -> 
 
     from coletar.inspector.app import app
 
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert client.post("/web-api/sample").status_code == 200
     state = client.get("/web-api/state").json()
 
@@ -668,9 +668,14 @@ async def test_design_sample_populates_review_and_read_log(live_store: None) -> 
 
 def test_app_shell_stamps_its_asset_digest() -> None:
     """A deploy that changes the client without changing its URL reaches nobody."""
-    from coletar.inspector.web import _STATIC, _app_html
+    from fastapi.testclient import TestClient
 
-    html = _app_html()
+    from coletar.inspector.app import app
+    from coletar.inspector.web import _STATIC
+
+    # `_app_html` reads the request host: the sign-in gate is loopback-only, so
+    # the shell cannot be rendered without knowing who asked.
+    html = TestClient(app, base_url="http://localhost").get("/app").text
     assert "__ASSETS__" not in html
     digest = re.search(r"product\.js\?v=([0-9a-f]{12})", html)
     assert digest is not None
@@ -694,7 +699,7 @@ async def test_design_sample_loads_over_retired_only_history(live_store: None) -
     store = build_store()
     old = Memory.from_write("Cleared out of the workspace")
     await store.put_object(TENANT, old)
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://localhost")
     assert client.post("/web-api/sample").status_code == 409
 
     await store.retire_object(TENANT, old.id, reason="test_cleared")

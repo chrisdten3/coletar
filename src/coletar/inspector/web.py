@@ -43,7 +43,7 @@ from coletar.history.query import (
 from coletar.history.rollup import object_lifetime, reach_report, run_query
 from coletar.history.threads import DEFAULT_MAX_OBJECTS, run_thread, suggest_threads
 from coletar.ingest import remember
-from coletar.inspector.auth import Tenant
+from coletar.inspector.auth import Tenant, local_mode
 from coletar.inspector.review import edit, mark_reviewed, review_status
 from coletar.pricing import BY_MODEL, SETTING_KEY, resolve
 from coletar.retrieval.trace import ComponentVersions, RetrievalTrace, query_digest
@@ -174,7 +174,7 @@ def _asset_signature() -> tuple[tuple[str, int, int], ...]:
     return tuple(out)
 
 
-def _sign_in_config() -> dict[str, Any]:
+def _sign_in_config(request: Request) -> dict[str, Any]:
     """What the shell needs to know before it can decide whether to ask for a login.
 
     Stamped into the HTML rather than fetched, because the alternative is a round
@@ -198,9 +198,14 @@ def _sign_in_config() -> dict[str, Any]:
         # Supabase Auth.
         "supabaseUrl": settings.supabase_url,
         "supabaseAnonKey": settings.supabase_anon_key,
-        # Local development has no sign-in and must keep working with none; see
-        # `coletar.inspector.auth`. This is what the client branches on.
-        "required": provider not in {"", LOCAL_IDENTITY},
+        # What the client branches on, and now the same condition the server
+        # enforces rather than a second opinion about it. It used to read
+        # `provider not in {"", LOCAL_IDENTITY}` while the server asked whether
+        # `public_url` was set, so the two could disagree: a deployment could
+        # hide its sign-in link while still gating the API, or vice versa.
+        # `local_mode` is loopback-only, so a deployed host always gets a
+        # sign-in and no environment variable can turn that off.
+        "required": not local_mode(request),
         # Whether a stranger may create their own workspace. The client uses this to
         # decide whether to offer a sign-up route at all, so that an invite-only
         # deployment does not advertise a door that answers "not yet".
@@ -221,7 +226,7 @@ def _render_app_html(signature: tuple[tuple[str, int, int], ...], config: str) -
     )
 
 
-def _app_html() -> str:
+def _app_html(request: Request) -> str:
     """The shell, stamped with a digest of its own assets.
 
     Browsers cache /static aggressively, and a deploy that changes the client
@@ -236,12 +241,12 @@ def _app_html() -> str:
     """
     # The config is part of the cache key: a deployment that switches identity
     # provider without restarting must not keep serving the old shell.
-    return _render_app_html(_asset_signature(), json.dumps(_sign_in_config()))
+    return _render_app_html(_asset_signature(), json.dumps(_sign_in_config(request)))
 
 
 @router.get("/app", include_in_schema=False)
-async def product_app() -> HTMLResponse:
-    return HTMLResponse(_app_html())
+async def product_app(request: Request) -> HTMLResponse:
+    return HTMLResponse(_app_html(request))
 
 
 @router.get("/web-api/state", response_model=Snapshot)

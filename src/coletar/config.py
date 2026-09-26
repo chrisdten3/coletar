@@ -65,9 +65,12 @@ class Settings(BaseSettings):
     # unaffected.
     public_url: str = ""
     # Which identity provider vouches for an account. "local" trusts whoever can
-    # reach the port, which is a laptop assumption and is refused when `public_url`
-    # is set. Clerk and Supabase Auth plug in here; see `coletar.accounts.identity`
-    # for the whole of what adopting one involves.
+    # reach the port, which is a laptop assumption -- so it applies *only* on
+    # loopback, decided per request from the host rather than from this setting
+    # (`coletar.inspector.auth.local_mode`). Off the laptop there is no value
+    # here that turns sign-in off; leaving it unset makes a deployment refuse to
+    # serve a workspace rather than open one. Clerk and Supabase Auth plug in
+    # here; see `coletar.accounts.identity` for what adopting one involves.
     identity_provider: str = "local"
 
     # --- Clerk ------------------------------------------------------------

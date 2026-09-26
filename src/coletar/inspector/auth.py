@@ -10,12 +10,20 @@ the wrong one for a deployment with more than one user: every request resolved t
 the same graph regardless of who sent it. Replacing it with a dependency is most of
 what "add accounts" mechanically means here.
 
-**Local development keeps the old behaviour deliberately.** With
-`COLETAR_IDENTITY_PROVIDER=local` there is no sign-in, no directory lookup and no
-account -- the configured tenant is served as before. That is not a gap left open:
-the local provider is *refused outright* the moment `COLETAR_PUBLIC_URL` is set (see
-`build_identity_provider`), so this shortcut cannot survive into a hosted
-deployment. It is what keeps the zero-infrastructure store dogfoodable on day one.
+**Local development keeps the old behaviour deliberately.** On loopback, with no
+provider configured, there is no sign-in, no directory lookup and no account --
+the configured tenant is served as before. It is what keeps the
+zero-infrastructure store dogfoodable on day one.
+
+**The host decides that, not a setting.** `local_mode` reads the request, so the
+shortcut is unavailable off the laptop by construction. This replaced a rule
+that keyed on `COLETAR_PUBLIC_URL`, which had a gap worth naming: a deployment
+shipped with *neither* that variable nor an identity provider served an open
+workspace behind a homepage with no sign-in link on it -- a missing lock that
+looked like a missing link, and a state a platform's per-environment variable
+scoping makes easy to reach by accident. A deployed host now always gets a
+sign-in, and if nothing can answer it the API refuses loudly instead of falling
+open.
 
 **Hosted fails closed.** No credential is 401, a bad one is 401, and an
 uninvited-but-authentic one is 403 with a different message, because "your sign-in
@@ -55,8 +63,54 @@ def presented_credential(request: Request) -> str | None:
     return request.cookies.get(SESSION_COOKIE) or None
 
 
-def local_mode() -> bool:
-    """True when there is no identity provider because none was asked for."""
+#: Hosts on which the no-sign-in shortcut is allowed at all: the loopback
+#: interface, and the `.localhost` names browsers resolve to it.
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _hostname(raw: str) -> str:
+    """A bare hostname from a Host header, with any port and brackets removed."""
+    raw = raw.strip()
+    if raw.startswith("["):  # [::1]:8000
+        return raw[1 : raw.index("]")].lower() if "]" in raw else raw.lower()
+    return (raw.rsplit(":", 1)[0] if raw.count(":") == 1 else raw).lower()
+
+
+def request_host(request: Request) -> str:
+    """The host the browser actually asked for, through any proxy in front of us.
+
+    `x-forwarded-host` first because that is what a platform sets to the public
+    domain; `request.url.hostname` behind a proxy is an internal address and
+    would read as "not localhost" for the wrong reason, or as localhost when the
+    proxy is on the same box -- which is the reading that would matter.
+    """
+    forwarded = request.headers.get("x-forwarded-host", "").split(",")[0]
+    raw = forwarded.strip() or request.headers.get("host", "") or (request.url.hostname or "")
+    return _hostname(raw)
+
+
+def is_loopback(request: Request) -> bool:
+    host = request_host(request)
+    return host in _LOOPBACK or host.endswith(".localhost")
+
+
+def local_mode(request: Request) -> bool:
+    """True only on loopback, and only when no provider was asked for.
+
+    **The host decides first, and no environment variable can overrule it.** The
+    previous version keyed on settings alone, so a deployment that shipped
+    without `COLETAR_IDENTITY_PROVIDER` served an open workspace and a homepage
+    with no sign-in on it -- the failure looked like a missing link rather than a
+    missing lock. Reading the request instead means the shortcut is unavailable
+    off the laptop by construction, which is the property `LocalIdentityProvider`
+    already assumed it had: it trusts whoever can reach the port, and that is
+    only a safe assumption when the port is loopback.
+
+    Settings still matter in the other direction: running locally *with* a real
+    provider configured is a sign-in, because that is the point of testing it.
+    """
+    if not is_loopback(request):
+        return False
     settings = get_settings()
     return settings.identity_provider in {"", LOCAL_IDENTITY} and not settings.public_url
 
@@ -67,9 +121,20 @@ async def current_account(request: Request) -> Account | None:
     None is *only* returned in local mode. In a hosted deployment this either
     returns an account or raises -- there is no anonymous path left.
     """
-    if local_mode():
+    if local_mode(request):
         return None
     settings = get_settings()
+    if settings.identity_provider in {"", LOCAL_IDENTITY}:
+        # Remote host, no real provider. `LocalIdentityProvider.verify` returns
+        # an identity for *any* credential including none, so reaching
+        # `resolve_account` here would hand the workspace to whoever asked.
+        # Refusing is the only safe answer, and a loud one: a deployment missing
+        # this setting should be obviously broken rather than quietly open.
+        raise HTTPException(
+            503,
+            "This deployment has no identity provider configured. Set "
+            "COLETAR_IDENTITY_PROVIDER before serving a workspace off localhost.",
+        )
     try:
         account = await resolve_account(
             presented_credential(request),
