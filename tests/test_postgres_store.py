@@ -358,3 +358,32 @@ async def test_acquiring_a_lease_writes_no_event(store: PostgresStore):
     await store.acquire_lease(TENANT, "batch", owner="a", ttl_seconds=60)
     await store.release_lease(TENANT, "batch", owner="a")
     assert len(await store.list_events(TENANT, limit=1000)) == before
+
+
+async def test_settings_round_trip_and_stay_per_tenant(store: PostgresStore) -> None:
+    """Backend parity for migration 014.
+
+    The point of moving pricing out of browser storage was that the server could
+    hold it, so "the server can hold it" has to be true on the backend a real
+    deployment runs, not only on the in-process one.
+    """
+    from coletar.schema.tenancy import tenant_id
+
+    first = tenant_id("tenant_setting_a")
+    second = tenant_id("tenant_setting_b")
+
+    assert await store.get_setting(first, "pricing") is None
+
+    await store.put_setting(first, "pricing", {"rates": {"claude-sonnet-5": 1.25}})
+    assert await store.get_setting(first, "pricing") == {
+        "rates": {"claude-sonnet-5": 1.25}
+    }
+    assert await store.get_setting(second, "pricing") is None
+
+    # Upsert, not insert: a second write replaces rather than conflicting, and
+    # there is no window where the row is missing and the view silently falls
+    # back to the published price mid-save.
+    await store.put_setting(first, "pricing", {"routing": {"claude": "claude-opus-5"}})
+    assert await store.get_setting(first, "pricing") == {
+        "routing": {"claude": "claude-opus-5"}
+    }

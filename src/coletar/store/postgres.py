@@ -592,6 +592,39 @@ class PostgresStore:
             row = await cur.fetchone()
         return Lease(**row) if row is not None else None
 
+    async def get_setting(self, tenant_id: TenantId, key: str) -> dict[str, Any] | None:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute(
+                "SELECT value FROM tenant_setting WHERE tenant_id = %s AND key = %s",
+                (tenant_id, key),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        value = row[0]
+        return dict(value) if isinstance(value, dict) else None
+
+    async def put_setting(
+        self, tenant_id: TenantId, key: str, value: dict[str, Any]
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor() as cur:
+            # Upsert rather than delete-then-insert: a setting is read on every
+            # render of the view that uses it, and a window where the row does
+            # not exist would show a user the published default mid-save.
+            await cur.execute(
+                """
+                INSERT INTO tenant_setting (tenant_id, key, value, updated_at)
+                VALUES (%s, %s, %s, now())
+                ON CONFLICT (tenant_id, key)
+                DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+                """,
+                (tenant_id, key, Jsonb(value)),
+            )
+
     async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         pool = await self._get_pool()
         async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:

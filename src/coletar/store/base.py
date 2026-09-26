@@ -60,7 +60,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
@@ -303,6 +303,31 @@ class Store(Protocol):
 
     async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
         """The current lease, expired or not, for operational visibility."""
+        ...
+
+    async def get_setting(self, tenant_id: TenantId, key: str) -> dict[str, Any] | None:
+        """One tenant's stored workspace setting, or None if never written.
+
+        Settings are workspace configuration, not graph content: a rate card has
+        no provenance, no locality and nothing to compile, so it does not become
+        a ContextObject (§2 cuts both ways -- memory is not a special case, and
+        things which are not memory stay out of the graph).
+
+        Returns a copy. The same discipline as every other read here: a caller
+        mutating what it was handed must not change stored state behind the
+        store's back.
+        """
+        ...
+
+    async def put_setting(
+        self, tenant_id: TenantId, key: str, value: dict[str, Any]
+    ) -> None:
+        """Write one tenant's setting, replacing any previous value.
+
+        No event is appended. The Event/Revision Log is the provenance record
+        for the *graph* (§5), and filling it with "the user changed a price"
+        would make the observability feed mostly about its own configuration.
+        """
         ...
 
     async def append_event(self, tenant_id: TenantId, event: Event) -> None: ...

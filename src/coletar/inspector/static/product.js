@@ -1098,13 +1098,30 @@ let threadSuggestions = null,
   threadReport = null,
   threadBusy = false;
 
-/** Which Settings rate row prices each provider's traffic. The rates are the
-    user's own and live in browser prefs; this view only multiplies. */
-const PROVIDER_RATE_ROW = { claude: 1, chatgpt: 2, local: 3, coletar: 3, gemini: 2 };
-const rateFor = (provider) => {
-  const row = PROVIDER_RATE_ROW[provider];
-  return row === undefined || row === 3 ? 0 : Number(prefs.rates?.[row] ?? 0);
-};
+/* Prices come from the server now, not from this browser.
+
+   They used to live in `prefs.rates`, which is per-origin: the same workspace
+   served on two ports priced on one and showed an empty state on the other.
+   Worse, the view was blank until someone filled in a form, so for most people
+   it was simply blank. The server ships published input prices with the date
+   they were checked, plus whatever this tenant has overridden. */
+let priceBook = null;
+
+async function loadPricing(force) {
+  if (priceBook && !force) return;
+  try {
+    priceBook = await api("/pricing");
+  } catch (error) {
+    historyError = error.message;
+  }
+  if (routeOf() === "audit" || routeOf() === "settings") render();
+}
+
+/** USD per million input tokens for one assistant's measured traffic. */
+const rateFor = (provider) => Number(priceBook?.rates?.[provider] ?? 0);
+
+const modelLabel = (model) =>
+  priceBook?.catalogue?.find((m) => m.model === model)?.label || model;
 
 async function loadThreads(force) {
   if (threadSuggestions && !force) return;
@@ -1203,47 +1220,72 @@ function choicesTab() {
    the user's, from Settings. The server ships tokens and stays out of the
    arithmetic, so this cannot drift from the number in the sidebar. */
 function costTab() {
-  if (!historyDash) return `<div class="inset"><p>Reading the revision log…</p></div>`;
+  if (!historyDash || !priceBook)
+    return `<div class="inset"><p>Reading the revision log…</p></div>`;
   const tokens = historyDash.panels.tokens_by_provider;
   if (!tokens?.series?.length)
-    return empty("No context served yet", "Cost is computed from recorded retrievals. Nothing has read this workspace.");
+    return empty(
+      "No context served yet",
+      "Cost is computed from recorded retrievals. Nothing has read this workspace.",
+    );
 
   const priced = tokens.series.map((s) => ({
     key: s.key,
+    model: priceBook.routing?.[s.key] || "local",
     rate: rateFor(s.key),
     total: s.points.reduce((a, p) => a + p.value, 0),
     points: s.points.map((p) => ({
       at: p.at,
-      value: Math.round((p.value / 1000000) * rateFor(s.key) * 10000) / 10000,
+      value: Math.round((p.value / 1000000) * rateFor(s.key) * 100000) / 100000,
       event_ids: p.event_ids,
     })),
   }));
   const grandTokens = priced.reduce((a, s) => a + s.total, 0);
   const grandCost = priced.reduce((a, s) => a + (s.total / 1000000) * s.rate, 0);
-  const anyRate = priced.some((s) => s.rate > 0);
 
-  // The counterfactual is the point of the view: the same context volume,
+  // The counterfactual is the point of the view: the same measured volume,
   // routed somewhere else.
-  const alt = Number(prefs.rates?.[0] ?? 0);
-  const altCost = (grandTokens / 1000000) * alt;
+  const comparison = priceBook.comparison;
+  const altRate = Number(
+    priceBook.overrides?.[comparison] ??
+      priceBook.catalogue.find((m) => m.model === comparison)?.input_per_mtok ??
+      0,
+  );
+  const altCost = (grandTokens / 1000000) * altRate;
 
-  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Context served, by assistant</span><span class="mono muted">${number(grandTokens)} tokens · ${esc(historyDash.bucket)} buckets</span></div>${chart(tokens.series, { label: "tokens served", height: 170, min_max: 1 })}<p class="caption">Measured, not estimated: every retrieval appends a trace carrying its token count.</p></div>
-  ${
-    anyRate
-      ? `<div class="panel mt"><div class="row between wrap"><span class="eyebrow">What that cost</span><span class="mono">$${grandCost.toFixed(2)}</span></div>${chart(priced, { label: "cost", height: 160, legend: "sum_money" })}</div>`
-      : `<div class="notice mt">${icon("info")} No input prices set. Add them in <a href="#/settings">Settings</a> and this becomes a cost chart — the rates stay yours and never leave the browser.</div>`
-  }
-  <div class="panel table-wrap mt"><table><thead><tr><th>Assistant</th><th>Tokens served</th><th>Rate / Mtok</th><th>Cost</th><th>Share</th></tr></thead><tbody>${priced
+  const routingControls = priced
     .map(
       (s) =>
-        `<tr><td>${tag(s.key)}</td><td class="mono">${number(s.total)}</td><td class="mono">${s.rate ? "$" + s.rate.toFixed(2) : "—"}</td><td class="mono">${s.rate ? "$" + ((s.total / 1000000) * s.rate).toFixed(2) : "—"}</td><td class="mono muted">${grandTokens ? Math.round((s.total / grandTokens) * 100) : 0}%</td></tr>`,
+        `<label class="q-field"><span class="eyebrow">${esc(s.key)} routes to</span><select data-route="${esc(s.key)}">${priceBook.catalogue
+          .map(
+            (m) =>
+              `<option value="${esc(m.model)}" ${m.model === s.model ? "selected" : ""}>${esc(m.label)} · $${m.input_per_mtok.toFixed(2)}</option>`,
+          )
+          .join("")}</select></label>`,
     )
-    .join("")}${
-    alt
-      ? `<tr class="counterfactual"><td class="mono muted">all of it at ${esc(costModels[0][0])}</td><td class="mono muted">${number(grandTokens)}</td><td class="mono muted">$${alt.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">$${altCost.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">${grandCost ? (altCost >= grandCost ? "+" : "−") + Math.abs(Math.round(((altCost - grandCost) / grandCost) * 100)) + "%" : "—"}</td></tr>`
-      : ""
-  }</tbody></table></div>
-  <p class="caption">A scenario calculator, not an invoice. Rates are the ones you entered in Settings; token counts are recorded retrievals over the selected window. Local models are priced at zero, which is a modelling choice and not a claim that running them is free.</p>`;
+    .join("");
+
+  return `<div class="panel"><div class="row between wrap"><span class="eyebrow">Context served, by assistant</span><span class="mono muted">${number(grandTokens)} tokens · ${esc(historyDash.bucket)} buckets</span></div>${chart(tokens.series, { label: "tokens served", height: 170, min_max: 1 })}<p class="caption">Measured, not estimated: every retrieval appends a trace carrying its token count.</p></div>
+
+  <div class="panel mt"><div class="row between wrap"><span class="eyebrow">What that cost</span><span class="mono">$${grandCost.toFixed(2)}</span></div>${chart(priced, { label: "cost", height: 160, legend: "sum_money" })}</div>
+
+  <div class="panel mt"><span class="eyebrow">Which model your traffic is priced at</span><div class="q-fields mt">${routingControls}</div><p class="caption">A retrieval trace records which assistant asked, not which model answered — so cost depends on where you route it. Saved to your workspace, not to this browser.</p></div>
+
+  <div class="panel table-wrap mt"><table><thead><tr><th>Assistant</th><th>Priced as</th><th>Tokens served</th><th>Input / Mtok</th><th>Cost</th><th>Share</th></tr></thead><tbody>${priced
+    .map(
+      (s) =>
+        `<tr><td>${tag(s.key)}</td><td class="mono muted">${esc(modelLabel(s.model))}</td><td class="mono">${number(s.total)}</td><td class="mono">$${s.rate.toFixed(2)}</td><td class="mono">$${((s.total / 1000000) * s.rate).toFixed(2)}</td><td class="mono muted">${grandTokens ? Math.round((s.total / grandTokens) * 100) : 0}%</td></tr>`,
+    )
+    .join("")}<tr class="counterfactual"><td class="mono muted" colspan="2">all of it at ${esc(modelLabel(comparison))}</td><td class="mono muted">${number(grandTokens)}</td><td class="mono muted">$${altRate.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">$${altCost.toFixed(2)}</td><td class="mono ${altCost > grandCost ? "amber" : "green"}">${grandCost ? (altCost >= grandCost ? "+" : "−") + Math.abs(Math.round(((altCost - grandCost) / grandCost) * 100)) + "%" : "—"}</td></tr></tbody></table></div>
+
+  <p class="caption">Published list prices as of ${esc(shortDate(priceBook.as_of))} ${new Date(priceBook.as_of).getUTCFullYear()}, from ${Object.entries(
+    priceBook.sources,
+  )
+    .map(
+      ([name, url]) =>
+        `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(name)}</a>`,
+    )
+    .join(" and ")}. Input tokens only — coleta measures the context it hands to a model, never the reply, and pricing output would be inventing the larger half of a bill. A negotiated rate overrides the published one in <a href="#/settings">Settings</a>. Local models are priced at zero, which is a modelling choice and not a claim that running them is free.</p>`;
 }
 
 /** Saved questions, re-run on open. The metric-dashboard move: a chart you
@@ -1465,14 +1507,9 @@ function surfaces() {
     `<div class="stepper"><span class="current"><i>1</i> Connect</span><hr><span class="current"><i>2</i> Import your history</span><hr><span><i>3</i> Review what was found</span></div><div class="columns"><section><h2>Connected surfaces</h2><p class="muted">Connect supported tools to your context. Read and write capabilities depend on the surface; setup status is shown below.</p>${connections ? hostedSurfaces() : surfaceList.map(([id, title, desc]) => `<div class="panel surface ${prefs.surfaces?.[id] ? "ready" : ""}"><div><h3>${mark(id)}${title}</h3><span class="mono">${desc}</span></div><div class="row"><span class="mono ${prefs.surfaces?.[id] ? "green" : "muted"}">${prefs.surfaces?.[id] ? "setup saved · unverified" : "not configured"}</span><button class="${prefs.surfaces?.[id] ? "quiet" : ""}" data-connect="${id}">${prefs.surfaces?.[id] ? "Manage" : "Connect"}</button></div></div>`).join("")}<p class="caption">${connections ? "Endpoints are live. A provider is connected only after you configure its client and successfully use it. Account integrations are never installed automatically." : "Setup controls simulate the connection flow. A saved setup does not establish a provider connection."}</p></section><section><h2>Import your history</h2><p class="muted">Click the export button inside your provider account, then drop the file here. coleta never signs in as you and never reads your archive on its own.</p><div class="panel dropzone" id="dropzone">${icon("upload")}<b>Drop a ChatGPT or Claude export</b><p class="small muted">.zip or conversations.json · processed ${state.hosted ? "on your hosted server" : "on this machine"}</p><label class="btn" for="import-file">Choose a file</label><input id="import-file" type="file" accept=".zip,.json" hidden></div><p class="caption">Pattern extraction · no third-party model calls · ${connections?.upload_limit_mb || 20} MB upload limit. Conservative extraction may miss facts.</p>${importReport ? `<div class="panel mt"><div class="row between"><b>${esc(importReport.name)}</b><span class="mono green">${importReport.busy ? "extracting…" : "complete"}</span></div><div class="progress mt"><span style="width:${importReport.busy ? 40 : 100}%"></span></div><p class="mono muted mt">${importReport.busy ? "Reading your uploaded file…" : `${importReport.conversations} conversations · ${importReport.turns} turns read · ${importReport.memories} new memories · ${importReport.corroborated} corroborated`}</p>${importReport.busy ? "" : '<a class="btn primary" href="#/review">Review what was found</a>'}</div>` : ""}<p class="caption">New memories appear in Review. Nothing compiles until every eligible object has been reviewed; live retrieval follows its existing policy.</p></section></div>`,
   );
 }
-/* Named so the row reads as a routing choice. Prices stay yours to enter: this
-   is a scenario calculator, not a published price list. */
-const costModels = [
-  ["claude-opus-5", 0],
-  ["claude-sonnet-5", 1],
-  ["gpt-5.6-terra", 2],
-  ["qwen2.5 · local", 3],
-];
+/* The catalogue and the rates now come from the server (see `loadPricing`).
+   What is left here is the comparison: the same measured token volume priced
+   against each model the workspace could route to. */
 function settings() {
   const usage = Object.fromEntries(
     Object.entries(state.usage).sort(([, a], [, b]) => b - a),
@@ -1497,18 +1534,18 @@ function settings() {
             `<span data-surface="${esc(markFor(s))}">${esc(s)} ${number(n)}</span>`,
         )
         .join("") || "No recorded retrievals yet."
-    }</div></div><h2 class="mt">What that context costs you</h2><p class="muted">Explore the same token volume at input prices you choose.</p><div class="panel table-wrap"><table><thead><tr><th>Model</th><th>Input / Mtok</th><th>This month</th><th>vs. row 1</th></tr></thead><tbody>${costModels
-      .map(([name, i]) => {
-        const rate = Number(prefs.rates?.[i] ?? 0);
-        const base = Number(prefs.rates?.[0] ?? 0);
-        // The comparison is the point of the table: the same graph, priced
-        // against each model you could route it to.
-        const delta = base ? Math.round(((rate - base) / base) * 100) : null;
-        return `<tr><td>${tag(name)}</td><td>${i < 3 ? `<input type="number" min="0" step="0.01" aria-label="${esc(name)} price per million tokens" data-rate="${i}" value="${rate}">` : '<span class="mono">$0.00</span>'}</td><td class="mono" data-cost="${i}">$${((total / 1000000) * rate).toFixed(2)}</td><td class="mono ${delta === null || !i ? "muted" : delta <= 0 ? "green" : "amber"}" data-delta="${i}">${!i ? "—" : delta === null ? "—" : `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${Math.abs(delta)}%`}</td></tr>`;
-      })
-      .join(
-        "",
-      )}</tbody></table></div><p class="caption">Scenario calculator, not current provider pricing or an invoice. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
+    }</div></div><h2 class="mt">What that context costs you</h2><p class="muted">Published input prices as of ${priceBook ? esc(shortDate(priceBook.as_of)) : "—"}. Enter a negotiated rate to override one; it is saved to your workspace, not to this browser.</p><div class="panel table-wrap"><table><thead><tr><th>Model</th><th>Input / Mtok</th><th>This month</th><th>vs. published</th></tr></thead><tbody>${
+      (priceBook?.catalogue || [])
+        .map((m) => {
+          const override = priceBook.overrides?.[m.model];
+          const rate = Number(override ?? m.input_per_mtok);
+          const delta = m.input_per_mtok
+            ? Math.round(((rate - m.input_per_mtok) / m.input_per_mtok) * 100)
+            : null;
+          return `<tr><td>${tag(m.model)}${m.note ? `<span class="sr-only"> ${esc(m.note)}</span>` : ""}</td><td>${m.model === "local" ? '<span class="mono">$0.00</span>' : `<input type="number" min="0" step="0.01" aria-label="${esc(m.label)} price per million input tokens" data-rate="${esc(m.model)}" value="${rate}">`}</td><td class="mono">$${((total / 1000000) * rate).toFixed(2)}</td><td class="mono ${!delta ? "muted" : delta < 0 ? "green" : "amber"}">${delta ? `${delta > 0 ? "+" : "−"}${Math.abs(delta)}%` : "published"}</td></tr>`;
+        })
+        .join("") || '<tr><td colspan="4" class="muted">Loading prices…</td></tr>'
+    }</tbody></table></div><p class="caption">Published list prices, checked on the date above and shipped with the app — not a live feed, and not an invoice. Input tokens only: coleta measures the context it hands to a model, never the reply. Usage is based on the latest 2,000 events, not a billing period.</p><a class="btn" href="#/pricing">Explore proposed plans</a></section><section>${connections ? hostedKeys() : `<h2>API keys</h2><p class="muted">Try naming, scoping and revoking a key in this setup simulation.</p><div class="panel table-wrap"><table><thead><tr><th>Name</th><th>Scope</th><th>Status</th><th></th></tr></thead><tbody>${keys.map((k, i) => `<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.scope)}</td><td class="mono muted">demo only</td><td><button class="quiet small" data-revoke="${i}">Revoke</button></td></tr>`).join("") || '<tr><td colspan="4" class="muted">No demo keys. These do not authenticate API requests.</td></tr>'}</tbody></table></div><button class="wide" style="margin-top:12px" data-action="new-key">${icon("plus")} New demo key</button>`}${
       isPublic()
         ? `<h2 class="mt">Workspace access</h2><div class="notice warning">${icon("info")} This workspace is served without a password. Anyone with the link can read every object — including ones marked restricted — and can add, edit, retire and import. Keep private context out of it.</div><p class="caption">Connector bearer keys are a separate authority and still gate the MCP and REST endpoints. The scheduled extraction batch still requires its own credential.</p>`
         : ""
@@ -2428,6 +2465,7 @@ async function enterWorkspace() {
    lifecycle: four panels, three of them lazily fetched, and a render triggered
    by whichever finishes. */
 function bindHistory() {
+  if (routeOf() === "settings") loadPricing();
   if (routeOf() === "object") {
     const id = decodeURIComponent(location.hash.replace(/^#\/object\//, ""));
     if (id) loadLifetime(id);
@@ -2442,6 +2480,7 @@ function bindHistory() {
   // series), and it carries the backend flag the ask bar is gated on, so it is
   // always fetched.
   loadHistory();
+  loadPricing();
   if (historyTab === "choices") loadThreads();
   if (historyTab === "ideas") loadIdeas();
   if (historyTab === "reach") loadReach();
@@ -2465,6 +2504,20 @@ function bindHistory() {
   });
   document.querySelectorAll("[data-watch]").forEach((b) => {
     b.onclick = () => askHistory(b.dataset.watch);
+  });
+  // Changing where a provider's traffic is routed writes to the workspace, not
+  // to this browser, so the same answer appears wherever it is opened.
+  document.querySelectorAll("[data-route]").forEach((sel) => {
+    sel.onchange = async () => {
+      const routing = { ...(priceBook.routing || {}), [sel.dataset.route]: sel.value };
+      try {
+        priceBook = await api("/pricing", { routing, rates: priceBook.overrides || {} }, "PUT");
+        toast("Saved to your workspace.");
+      } catch (error) {
+        toast(error.message, true);
+      }
+      render();
+    };
   });
   document.querySelectorAll("[data-thread]").forEach((b) => {
     b.onclick = () =>
@@ -2646,32 +2699,31 @@ function bind() {
         render();
       }),
   );
-  document.querySelectorAll("[data-rate]").forEach(
-    (input) =>
-      (input.oninput = () => {
-        const rate = Math.max(0, Number(input.value) || 0);
-        prefs.rates = { ...(prefs.rates || {}), [input.dataset.rate]: rate };
-        savePrefs();
-        const total = Object.values(state.usage).reduce((a, b) => a + b, 0);
-        $(`[data-cost="${input.dataset.rate}"]`).textContent =
-          "$" + ((rate * total) / 1000000).toFixed(2);
-        // Every comparison is against row one, so a change to it moves all rows.
-        const base = Number(prefs.rates?.[0] ?? 0);
-        costModels.forEach(([, i]) => {
-          const cell = $(`[data-delta="${i}"]`);
-          if (!cell || !i) return;
-          const other = Number(prefs.rates?.[i] ?? 0);
-          const delta = base ? Math.round(((other - base) / base) * 100) : null;
-          cell.textContent =
-            delta === null
-              ? "—"
-              : `${delta > 0 ? "+" : delta < 0 ? "−" : ""}${Math.abs(delta)}%`;
-          cell.className =
-            "mono " +
-            (delta === null ? "muted" : delta <= 0 ? "green" : "amber");
-        });
-      }),
-  );
+  document.querySelectorAll("[data-rate]").forEach((input) => {
+    // Saved to the workspace, not to this browser. The old version wrote to
+    // `prefs`, so a rate entered on one origin was invisible on another and
+    // unreachable from the server that does the measuring.
+    input.onchange = async () => {
+      const rate = Math.max(0, Number(input.value) || 0);
+      const model = input.dataset.rate;
+      const published = priceBook?.catalogue?.find((m) => m.model === model);
+      const rates = { ...(priceBook?.overrides || {}) };
+      // Typing the published price back in is a reset, not an override: it
+      // should keep tracking the catalogue when the price next changes.
+      if (published && Math.abs(rate - published.input_per_mtok) < 1e-9) delete rates[model];
+      else rates[model] = rate;
+      try {
+        priceBook = await api(
+          "/pricing",
+          { routing: priceBook?.routing || {}, rates },
+          "PUT",
+        );
+        render();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  });
   if ($("#search-form"))
     $("#search-form").onsubmit = (e) => {
       e.preventDefault();

@@ -22,8 +22,10 @@ import base64
 import json
 import warnings
 from collections.abc import Sequence
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from coletar.retrieval.embedding import Embedder, build_embedder, tokenize
 from coletar.retrieval.index import VectorIndex
@@ -72,6 +74,11 @@ class InMemoryStore:
         # Turns already sent to an extraction model, so a resumed import does not
         # pay for them twice. See migration 011.
         self._extracted: dict[TenantId, set[str]] = {}
+        # Workspace settings that are not graph content -- a tenant's rate card,
+        # for one. Snapshotted, because a preference that did not survive a
+        # restart would be indistinguishable from the browser storage it
+        # replaced. See migration 014.
+        self._settings: dict[tuple[TenantId, str], dict[str, Any]] = {}
         self._embedder = embedder or build_embedder()
         # One index per tenant: another tenant's vectors are never candidates, rather
         # than being candidates that a later filter is trusted to remove.
@@ -148,6 +155,11 @@ class InMemoryStore:
             tenant = tenant_of(record)
             self._extracted[tenant] = {str(h) for h in record.get("turn_hashes", [])}
 
+        for record in raw.get("settings", []):
+            self._settings[(tenant_of(record), str(record["key"]))] = dict(
+                record.get("value") or {}
+            )
+
         if legacy:
             # A record in the log as well as a warning on the console: the graph's
             # own history should say that its records were re-homed.
@@ -199,6 +211,10 @@ class InMemoryStore:
                     "extracted": [
                         {"tenant_id": tenant, "turn_hashes": sorted(hashes)}
                         for tenant, hashes in self._extracted.items()
+                    ],
+                    "settings": [
+                        {"tenant_id": tenant, "key": key, "value": value}
+                        for (tenant, key), value in sorted(self._settings.items())
                     ],
                 },
                 indent=2,
@@ -419,6 +435,16 @@ class InMemoryStore:
 
     async def read_lease(self, tenant_id: TenantId, name: str) -> Lease | None:
         return self._leases.get((tenant_id, name))
+
+    async def get_setting(self, tenant_id: TenantId, key: str) -> dict[str, Any] | None:
+        stored = self._settings.get((tenant_id, key))
+        return deepcopy(stored) if stored is not None else None
+
+    async def put_setting(
+        self, tenant_id: TenantId, key: str, value: dict[str, Any]
+    ) -> None:
+        self._settings[(tenant_id, key)] = deepcopy(value)
+        self._save()
 
     async def append_event(self, tenant_id: TenantId, event: Event) -> None:
         self._events.setdefault(tenant_id, []).append(event)

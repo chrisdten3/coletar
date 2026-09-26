@@ -45,6 +45,7 @@ from coletar.history.threads import DEFAULT_MAX_OBJECTS, run_thread, suggest_thr
 from coletar.ingest import remember
 from coletar.inspector.auth import Tenant
 from coletar.inspector.review import edit, mark_reviewed, review_status
+from coletar.pricing import BY_MODEL, SETTING_KEY, resolve
 from coletar.retrieval.trace import ComponentVersions, RetrievalTrace, query_digest
 from coletar.schema.events import Actor, Event, EventType
 from coletar.schema.objects import (
@@ -744,6 +745,58 @@ async def history_ideas(
     )
     payload["movers"] = movers(payload)
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Pricing. Server-side and per tenant, because it was neither.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/web-api/pricing")
+async def get_pricing(owner: Tenant) -> dict[str, Any]:
+    """Published input prices, with this tenant's overrides applied.
+
+    Served rather than typed in. The rates used to live in browser prefs, which
+    made them per-origin -- the same workspace on two ports priced on one and
+    showed an empty state on the other -- and meant the Cost view was blank
+    until someone filled in a form, which is to say blank.
+    """
+    return resolve(await build_store().get_setting(owner, SETTING_KEY)).as_dict()
+
+
+class PricingInput(BaseModel):
+    #: provider -> model id. Which model this tenant's traffic is costed at.
+    routing: dict[str, str] = Field(default_factory=dict)
+    #: model id -> USD per million input tokens, for negotiated rates.
+    rates: dict[str, float] = Field(default_factory=dict)
+    comparison: str = ""
+
+
+@router.put("/web-api/pricing")
+async def put_pricing(owner: Tenant, body: PricingInput) -> dict[str, Any]:
+    """Store this tenant's routing and any negotiated rates.
+
+    Validated against the catalogue here rather than trusted: a stored rate is
+    multiplied into a figure a user may act on, so an unknown model or a
+    negative price is refused at the boundary instead of degrading quietly the
+    next time the view renders.
+    """
+    for provider, model in body.routing.items():
+        if model not in BY_MODEL:
+            raise HTTPException(400, f"Unknown model {model!r} for {provider!r}.")
+    for model, rate in body.rates.items():
+        if model not in BY_MODEL:
+            raise HTTPException(400, f"Unknown model {model!r}.")
+        if rate < 0:
+            raise HTTPException(400, "A rate cannot be negative.")
+    if body.comparison and body.comparison not in BY_MODEL:
+        raise HTTPException(400, f"Unknown model {body.comparison!r}.")
+
+    stored: dict[str, Any] = {"routing": body.routing, "rates": body.rates}
+    if body.comparison:
+        stored["comparison"] = body.comparison
+    await build_store().put_setting(owner, SETTING_KEY, stored)
+    return resolve(stored).as_dict()
 
 
 @router.get("/web-api/history/threads")
