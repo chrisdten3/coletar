@@ -10,6 +10,12 @@ from __future__ import annotations
 
 import pytest
 
+# `TestClient`'s default host is `testserver`, which the sign-in gate correctly
+# treats as a deployment rather than a laptop (see
+# `coletar.inspector.auth.local_mode`). These tests simulate a local workspace,
+# so they say so; without it every workspace request answers 503.
+LOCAL = "http://localhost"
+
 from coletar.schema.objects import (
     ContextObject,
     Edge,
@@ -111,7 +117,7 @@ async def test_the_overview_draws_entities_joined_by_what_mentions_them_both(
     from coletar.store import build_store
 
     ids = await _seed(build_store())
-    graph = TestClient(app).get("/web-api/graph").json()
+    graph = TestClient(app, base_url=LOCAL).get("/web-api/graph").json()
 
     assert {n["type"] for n in graph["nodes"]} == {"entity"}, (
         "the overview is an index of entities; facts belong to the drill-down"
@@ -139,7 +145,7 @@ async def test_focusing_an_entity_returns_it_and_everything_that_mentions_it(
     from coletar.store import build_store
 
     ids = await _seed(build_store())
-    client = TestClient(app)
+    client = TestClient(app, base_url=LOCAL)
     graph = client.get("/web-api/graph", params={"focus": ids["bank"]}).json()
 
     by_type = {n["id"]: n["type"] for n in graph["nodes"]}
@@ -162,7 +168,7 @@ async def test_the_degree_is_reported_so_the_drawing_can_rank_by_it(
     from coletar.store import build_store
 
     ids = await _seed(build_store())
-    graph = TestClient(app).get("/web-api/graph").json()
+    graph = TestClient(app, base_url=LOCAL).get("/web-api/graph").json()
     degree = {n["id"]: n["degree"] for n in graph["nodes"]}
     assert degree[ids["bank"]] == 2
     assert degree[ids["school"]] == 1
@@ -189,7 +195,7 @@ async def test_the_graph_is_far_smaller_than_the_workspace_snapshot(
     from coletar.store import build_store
 
     await _seed(build_store())
-    client = TestClient(app)
+    client = TestClient(app, base_url=LOCAL)
     graph = client.get("/web-api/graph").json()
     snapshot = client.get("/web-api/state").json()
 

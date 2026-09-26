@@ -91,6 +91,31 @@ class DemoResult:
         return self.objects[role]
 
 
+#: Who the log records as having made a write, derived from *how* the object
+#: arrived rather than passed in at each call site.
+#:
+#: Every demo write used to be stamped `USER`, which made the Overview's
+#: "Writes, by who" panel a single flat line -- and that panel exists to answer
+#: "is the model writing more than I am correcting", which a single line cannot.
+#: Deriving it from `extraction_method` also stops the two drifting: a memory
+#: mined from an export and attributed to the user is a provenance claim the
+#: Context Inspector would then have to defend.
+_ACTOR_FOR_METHOD: dict[ExtractionMethod, Actor] = {
+    ExtractionMethod.EXPLICIT_STATEMENT: Actor.USER,
+    # An import run, not a person typing and not a model reading.
+    ExtractionMethod.ACCOUNT_EXPORT_PARSE: Actor.MIGRATION,
+    ExtractionMethod.PROVIDER_CURATED: Actor.MIGRATION,
+    ExtractionMethod.MODEL_EXTRACTED: Actor.MODEL,
+    ExtractionMethod.DERIVED_SUMMARY: Actor.MODEL,
+    ExtractionMethod.BROWSER_CAPTURE: Actor.CONNECTOR,
+    ExtractionMethod.MCP_LIVE_WRITE: Actor.CONNECTOR,
+}
+
+
+def actor_for(obj: ContextObject) -> Actor:
+    return _ACTOR_FOR_METHOD.get(obj.extraction_method, Actor.SYSTEM)
+
+
 class Workspace:
     """A small builder over `Store`, so a persona reads as a list of facts.
 
@@ -114,7 +139,7 @@ class Workspace:
         role: str,
         obj: ContextObject,
         *,
-        actor: Actor = Actor.USER,
+        actor: Actor | None = None,
         event_type: EventType | None = None,
         at: datetime | None = None,
         detail: dict[str, Any] | None = None,
@@ -131,7 +156,7 @@ class Workspace:
                 type=event_type
                 or (EventType.OBJECT_CREATED if obj.version == 1 else EventType.OBJECT_UPDATED),
                 object_id=obj.id,
-                actor=actor,
+                actor=actor or actor_for(obj),
                 provider=obj.provenance.provider,
                 at=at or obj.updated_at,
                 detail={"type": str(obj.type), "scope": str(obj.scope), **(detail or {})},
