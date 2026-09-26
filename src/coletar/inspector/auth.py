@@ -135,10 +135,25 @@ async def current_account(request: Request) -> Account | None:
             "This deployment has no identity provider configured. Set "
             "COLETAR_IDENTITY_PROVIDER before serving a workspace off localhost.",
         )
+    # Built outside the try, because constructing a provider and checking a
+    # credential fail for completely different reasons and used to return the
+    # same status. A deployment missing COLETAR_SUPABASE_URL raised
+    # `IdentityError` here and answered 401, which the client reads as "your
+    # session expired" -- so it sent the user to sign in, the sign-in produced
+    # another 401, and the loop had no exit. A deployment that cannot
+    # authenticate anyone is broken, not unauthenticated, and 503 is the
+    # difference between "this is on us" and "try again".
+    try:
+        identity = build_identity()
+    except IdentityError as exc:
+        raise HTTPException(
+            503, f"This deployment cannot authenticate anyone: {exc}"
+        ) from exc
+
     try:
         account = await resolve_account(
             presented_credential(request),
-            provider=build_identity(),
+            provider=identity,
             directory=build_directory(),
             allowlist=settings.invite_allowlist,
             open_registration=settings.open_registration,

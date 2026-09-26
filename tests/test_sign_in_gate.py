@@ -17,6 +17,7 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
+import coletar.accounts
 import coletar.store
 from coletar.config import get_settings
 from coletar.inspector.app import app as inspector_app
@@ -125,3 +126,55 @@ def test_the_page_and_the_api_never_disagree(app):
         served = app.get("/web-api/state", headers={"host": host}).status_code == 200
         assert served is expect_open
         assert required is not expect_open
+
+
+@pytest.fixture
+def half_configured(monkeypatch, tmp_path):
+    """A provider named, but none of what it needs to run.
+
+    The state a platform's per-environment variable scoping produces when one
+    variable gets copied across and the rest do not.
+    """
+    monkeypatch.setenv("COLETAR_IDENTITY_PROVIDER", "supabase")
+    # Set empty rather than deleted: the repo's own `.env` supplies these, and
+    # pydantic-settings reads that file, so unsetting the process environment
+    # does not reproduce a deployment that never had them.
+    monkeypatch.setenv("COLETAR_SUPABASE_URL", "")
+    monkeypatch.setenv("COLETAR_SUPABASE_ANON_KEY", "")
+    monkeypatch.delenv("COLETAR_PUBLIC_URL", raising=False)
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_DEFAULT_TENANT_ID", "tenant_test")
+    get_settings.cache_clear()
+    monkeypatch.setattr(coletar.store, "_singleton", InMemoryStore())
+    coletar.accounts.reset_directory()
+    with TestClient(inspector_app) as client:
+        yield client
+    get_settings.cache_clear()
+    reset_store()
+    coletar.accounts.reset_directory()
+
+
+def test_a_deployment_that_cannot_authenticate_says_so_instead_of_401ing(half_configured):
+    """Regression, and the reason the flow differed between environments.
+
+    Building the provider used to happen inside the same `try` as checking a
+    credential, so a missing COLETAR_SUPABASE_URL answered 401. The client reads
+    401 as "your session expired", sent the user to sign in, and the sign-in
+    produced another 401 -- a loop with no exit on a deployment that was simply
+    misconfigured. A server that cannot authenticate anyone is broken, not
+    unauthenticated.
+    """
+    response = half_configured.get("/web-api/state", headers={"host": REMOTE})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "cannot authenticate anyone" in detail
+    # And it names the variable to set, because the person reading it is the
+    # person who can fix it.
+    assert "COLETAR_SUPABASE_URL" in detail
+
+
+def test_the_page_still_offers_a_sign_in_while_half_configured(half_configured):
+    """The gate is about the host, not about whether the credentials happen to
+    be present -- so the page does not quietly revert to the open version when a
+    variable is missing."""
+    assert sign_in_config(half_configured, REMOTE)["required"] is True
