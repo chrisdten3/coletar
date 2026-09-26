@@ -151,9 +151,19 @@ Or from a checkout with the production DSN, which is what a laptop with
 `.env.vercel` already has:
 
 ```bash
-COLETAR_DATABASE_URL="$(grep ^COLETAR_DATABASE_URL .env.vercel | cut -d= -f2-)" \
-  COLETAR_STORE_BACKEND=postgres uv run coletar migrate
+set -a && source .env.vercel && set +a
+COLETAR_STORE_BACKEND=postgres uv run coletar migrate
 ```
+
+Source the file rather than picking the line out of it. The values in
+`.env.vercel` are quoted, and a `grep | cut` hands the quotes to libpq along
+with the DSN, which fails as `missing "=" after ...` — an error about the
+connection string that is really an error about the shell.
+
+The DSN must be Supabase's **session** pooler (port 5432), not the transaction
+pooler (6543). The runner takes a session-scoped advisory lock so that two runs
+cannot race, and a transaction pooler does not keep a client on one backend long
+enough for that to mean anything.
 
 `POST /api/jobs/migrate` applies the migrations already in the running build's
 own `migrations/` directory — it takes no SQL from the request, and it carries
