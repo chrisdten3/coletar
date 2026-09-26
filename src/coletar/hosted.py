@@ -15,8 +15,9 @@ Two authorities are unchanged, because they never depended on the workspace gate
 
   * **Connector keys gate the connector API.** A bearer key admits one surface to
     `/mcp` and `/v1`, scoped and rate-limited on its own terms.
-  * **The scheduler needs `CRON_SECRET`.** `/api/jobs/capture` is a machine
-    endpoint, and a public trigger for a paid batch is a bill.
+  * **`/api/jobs` needs `CRON_SECRET`.** These are machine endpoints under an
+    operator's credential, not a user's: a public trigger for a paid batch is a
+    bill, and a public trigger for the migration runner is someone else's DDL.
 
 Locality still governs what each *compiled destination* receives. It was never a
 gate on the owner's own view, and it still is not -- what changed is that there is
@@ -50,6 +51,7 @@ from coletar.mcp.server import build_app
 from coletar.schema.tenancy import TenantId
 from coletar.schema.tenancy import tenant_id as parse_tenant_id
 from coletar.store import build_store
+from coletar.store.migrate import MigrationInProgress, discover, run_migrations
 from coletar.store.postgres import PostgresStore
 
 #: The health probe needs *a* tenant to shape a query and must not need a real one.
@@ -74,6 +76,19 @@ class ConnectionStatus(BaseModel):
     extraction_backend: str = "off"
     worker_schedule: str = "not configured"
     credentials: str = "Connector keys are stored in the deployment's private environment file."
+
+
+class MigrationResult(BaseModel):
+    """What one run of the migration runner did.
+
+    Both halves are reported because only the pair is an answer. `applied` alone
+    cannot distinguish "nothing to do" from "it ran against the wrong database",
+    and an operator checking whether a deploy is safe needs to see the schema the
+    build expects, not just the delta.
+    """
+
+    applied: list[str]
+    already_present: list[str]
 
 
 class BatchResult(BaseModel):
@@ -218,14 +233,76 @@ def create_app() -> FastAPI:
         # extraction budget by pressing a button on their own settings page.
         return await process_captures(only=owner)
 
-    @app.get("/api/jobs/capture")
-    async def scheduled_capture(request: Request) -> BatchResult:
+    def operator_only(request: Request) -> None:
+        """`CRON_SECRET`, or nothing. Shared by both `/api/jobs` endpoints.
+
+        Fails closed when the variable is unset: a deployment that never
+        configured a scheduler credential has not thereby opened its batch job
+        and its migration runner to the internet.
+        """
         secret = get_settings().cron_secret
         if not secret or not secrets.compare_digest(
             request.headers.get("authorization", ""), "Bearer " + secret
         ):
             raise HTTPException(401, "Scheduler credential required.")
+
+    @app.get("/api/jobs/capture")
+    async def scheduled_capture(request: Request) -> BatchResult:
+        operator_only(request)
         return await process_captures()
+
+    @app.post("/api/jobs/migrate")
+    async def apply_migrations(request: Request) -> MigrationResult:
+        """Apply pending schema migrations to this deployment's database.
+
+        Here because this platform has no release command. A container host runs
+        `coletar migrate` before a new version takes traffic (`fly.toml`); Vercel
+        has no equivalent hook, and the app deliberately does not run DDL from a
+        cold start, where a dozen instances would race each other on every deploy.
+        What was left was a manual step against the production DSN from somebody's
+        laptop -- which is exactly the step that got skipped when migration 014
+        shipped, and `/web-api/pricing` answered 500 until someone noticed.
+
+        Three things keep an endpoint that runs DDL defensible:
+
+          * **It is the operator's credential, not a user's.** `CRON_SECRET` is
+            deployment configuration, the same authority that can already spend
+            the extraction budget. No workspace session reaches this.
+          * **It applies what is already in the build.** The migrations are the
+            ones in this deployment's own `migrations/` directory, checksummed
+            against the ledger; it takes no SQL from the request, and an edited
+            migration that has already been applied is refused rather than
+            re-run.
+          * **POST, so a schedule cannot reach it.** Vercel's cron issues GET.
+            Migrations are a thing an operator decides to do, once, next to a
+            deploy -- not something that quietly happens at 03:00.
+        """
+        operator_only(request)
+        try:
+            # Bounded like the batch pass, and for the same reason: the platform
+            # will kill a long function anyway, and a 504 that says so beats a
+            # platform timeout page. Each migration commits on its own, so an
+            # interrupted run leaves the ledger honest about how far it got and
+            # the next call picks up from there.
+            async with asyncio.timeout(240):
+                applied = await run_migrations(get_settings().database_url)
+        except MigrationInProgress as error:
+            raise HTTPException(409, str(error)) from error
+        except TimeoutError as error:
+            raise HTTPException(
+                504,
+                "Migrations did not finish within the request budget. The ledger "
+                "records what was applied; call again to continue.",
+            ) from error
+        except RuntimeError as error:
+            # The runner's own refusals -- chiefly a migration edited after it was
+            # applied. The person holding this credential is the person who can
+            # fix that, so they get the sentence rather than a blank 500.
+            raise HTTPException(500, str(error)) from error
+        return MigrationResult(
+            applied=applied,
+            already_present=[m.filename for m in discover() if m.filename not in applied],
+        )
 
     @app.post("/v1/compile")
     async def hosted_compile() -> JSONResponse:

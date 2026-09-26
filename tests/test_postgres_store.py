@@ -100,6 +100,31 @@ async def test_running_migrations_twice_applies_nothing_the_second_time(empty_da
     assert await run_migrations(empty_database) == []
 
 
+async def test_a_run_is_refused_while_another_holds_the_lock(empty_database: str):
+    """The ledger makes a *sequential* re-run a no-op and says nothing about two at
+    once: both would see the same migration unapplied, and the loser would fail on
+    the ledger's primary key or, for DDL that is not itself idempotent, half-apply a
+    schema. Migrations are now reachable from a shell, a release command and an
+    operator endpoint, so "nobody would run two at once" is not an assumption to
+    rest on.
+
+    The lock is taken from a second connection rather than by racing two runs, so
+    this asserts the mechanism instead of the scheduler's mood.
+    """
+    import psycopg
+
+    from coletar.store.migrate import _LOCK_KEY, MigrationInProgress
+
+    async with await psycopg.AsyncConnection.connect(empty_database) as holder:
+        await holder.execute("SELECT pg_advisory_lock(%s)", (_LOCK_KEY,))
+        with pytest.raises(MigrationInProgress):
+            await run_migrations(empty_database)
+
+    # Session-scoped, so closing that connection released it — and the refusal was
+    # only ever about timing, never about the work.
+    assert await run_migrations(empty_database) == [m.filename for m in discover()]
+
+
 async def test_editing_an_applied_migration_is_refused(empty_database: str, tmp_path):
     original = tmp_path / "001_thing.sql"
     original.write_text("CREATE TABLE IF NOT EXISTS thing (id TEXT PRIMARY KEY);")
@@ -387,3 +412,38 @@ async def test_settings_round_trip_and_stay_per_tenant(store: PostgresStore) -> 
     assert await store.get_setting(first, "pricing") == {
         "routing": {"claude": "claude-opus-5"}
     }
+
+
+async def test_a_missing_settings_table_is_reported_as_itself(store: PostgresStore) -> None:
+    """The production failure, reproduced rather than stubbed.
+
+    Migration 014 shipped in a build that reached Vercel before the migration
+    reached Supabase, and every read of a tenant's overrides raised an
+    `UndefinedTable` that surfaced as a 500 on `/web-api/pricing`. Dropping the
+    table is how that state is reached from a migrated database, and it is the
+    only honest way to prove the psycopg error is actually caught — a stubbed
+    exception would only assert that the `except` clause is spelled correctly.
+
+    Both halves matter, and they differ: a read has a defensible fallback and a
+    write has none.
+    """
+    from coletar.store.base import SchemaBehind
+
+    # The ledger row goes with the table. "Applied" and "present" are separate
+    # facts, and the state production was in is the one where neither happened:
+    # the build shipped, the migration did not.
+    pool = await store._get_pool()
+    async with pool.connection() as conn:
+        await conn.execute("DROP TABLE tenant_setting")
+        await conn.execute(
+            "DELETE FROM schema_migration WHERE filename = %s", ("014_tenant_setting.sql",)
+        )
+
+    with pytest.raises(SchemaBehind, match="coletar migrate"):
+        await store.get_setting(TENANT, "pricing")
+    with pytest.raises(SchemaBehind, match="coletar migrate"):
+        await store.put_setting(TENANT, "pricing", {"rates": {}})
+
+    # Put back, so the rest of this database is what the fixture promised.
+    assert await run_migrations(store.dsn) == ["014_tenant_setting.sql"]
+    assert await store.get_setting(TENANT, "pricing") is None

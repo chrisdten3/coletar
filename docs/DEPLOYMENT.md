@@ -33,7 +33,7 @@ Three authorities, still separate:
 |---|---|
 | `/web-api`, `/app` | Clerk session (bearer token or `__session` cookie) |
 | `/mcp`, `/v1` | connector bearer key, scoped per surface |
-| `/api/jobs/capture` | `CRON_SECRET` |
+| `/api/jobs/capture`, `/api/jobs/migrate` | `CRON_SECRET` |
 
 A connector key is **not** a workspace session. Both arrive as `Authorization: Bearer`
 and only one of them signs anybody in; `test_hosted.py` pins that a connector key gets
@@ -136,16 +136,42 @@ That is not hypothetical. `tenant_setting` arrived in migration 014 with
 server-side pricing; the build shipped, the migration did not, and every request
 to `/web-api/pricing` answered 500 until it was applied.
 
-**Before deploying a build that adds a migration**, apply it first, from a
-checkout with the production DSN:
+**Apply pending migrations around every deploy that adds one.** Two ways, and
+they run the same code against the same ledger.
+
+From the deployment itself, with the operator credential:
+
+```bash
+curl -X POST https://coletar-five.vercel.app/api/jobs/migrate \
+  -H "Authorization: Bearer $CRON_SECRET"
+# {"applied":["014_tenant_setting.sql"],"already_present":["001_init.sql", ...]}
+```
+
+Or from a checkout with the production DSN, which is what a laptop with
+`.env.vercel` already has:
 
 ```bash
 COLETAR_DATABASE_URL="$(grep ^COLETAR_DATABASE_URL .env.vercel | cut -d= -f2-)" \
   COLETAR_STORE_BACKEND=postgres uv run coletar migrate
 ```
 
-The runner is ledgered and checksummed, so a re-run is a no-op and an edited
-migration that has already been applied is refused rather than reapplied.
+`POST /api/jobs/migrate` applies the migrations already in the running build's
+own `migrations/` directory — it takes no SQL from the request, and it carries
+`CRON_SECRET`, the same operator authority as the scheduled batch. No workspace
+session or connector key reaches it. It is POST deliberately: Vercel's cron
+issues GET, so a migration cannot drift into being something that happens at
+03:00 on its own. The response names what it applied *and* what was already
+there, because `applied: []` on its own cannot tell "nothing to do" from "wrong
+database".
+
+Either route is ledgered and checksummed: a re-run is a no-op, an edited
+migration that has already been applied is refused rather than reapplied, and an
+advisory lock means a second run started while the first is in flight is told so
+(409) rather than racing it.
+
+The endpoint is the better order of operations when a migration is additive —
+apply, then deploy the build that needs it — and either way the gap is narrower
+than "remember to open a shell".
 
 The app is built to survive the gap rather than to depend on remembering. The
 store raises a typed `SchemaBehind` rather than pretending the setting was never

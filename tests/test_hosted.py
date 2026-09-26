@@ -11,6 +11,8 @@ What these tests hold:
   * anonymous requests reach nothing, and a *connector* key is not a workspace session
   * two signed-in accounts cannot see each other's graphs
   * the scheduler still needs `CRON_SECRET`, and now runs across every account
+  * the migration endpoint, which runs DDL, is reachable by that credential and
+    by nothing else — not a workspace session, not a connector key, not a cron GET
 """
 
 import json
@@ -327,6 +329,140 @@ def test_scheduled_worker_requires_its_own_key_and_covers_every_account(hosted, 
     assert body["extraction"]["processed"] == 2
     assert len(called) == 2
     assert len(set(called)) == 2
+
+
+# ---------------------------------------------------------------------------
+# The migration endpoint. It runs DDL, so what is pinned here is mostly what
+# cannot reach it.
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_endpoint_requires_the_operator_credential(hosted, monkeypatch):
+    ran = []
+
+    async def fake_run(dsn, **kwargs):
+        ran.append(dsn)
+        return ["014_tenant_setting.sql"]
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", fake_run)
+    monkeypatch.setenv("CRON_SECRET", "scheduler-key")
+    get_settings.cache_clear()
+
+    assert hosted.post("/api/jobs/migrate").status_code == 401
+    assert hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer wrong"}
+    ).status_code == 401
+    # A workspace session is a different authority and does not carry here: the
+    # person who may read their own graph may not reshape the database under it.
+    assert hosted.post("/api/jobs/migrate", headers=as_("alice")).status_code == 401
+    # Nor does a connector key, which arrives looking exactly like one.
+    assert hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer connector-key"}
+    ).status_code == 401
+    assert not ran, "nothing may run DDL before the credential is checked"
+
+    response = hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer scheduler-key"}
+    )
+    assert response.status_code == 200
+    assert ran
+
+
+def test_migrate_endpoint_fails_closed_without_a_configured_secret(hosted, monkeypatch):
+    """An unset `CRON_SECRET` is not an open door. Same rule as the batch job:
+    a deployment that never configured a scheduler credential has not thereby
+    published its migration runner."""
+
+    async def fake_run(dsn, **kwargs):
+        raise AssertionError("must not run")
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", fake_run)
+    monkeypatch.setenv("CRON_SECRET", "")
+    get_settings.cache_clear()
+
+    assert hosted.post("/api/jobs/migrate").status_code == 401
+    assert hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer "}
+    ).status_code == 401
+
+
+def test_migrate_endpoint_is_not_reachable_by_a_schedule(hosted, monkeypatch):
+    """POST on purpose. Vercel's cron issues GET, so a migration cannot become
+    something that quietly happens at 03:00; it stays a thing an operator does
+    next to a deploy.
+
+    The GET does not 405 here — an unmatched path falls through to the mounted
+    connector app, which answers for itself — so what is asserted is the part
+    that matters: a GET carrying the right credential still runs nothing.
+    """
+
+    async def fake_run(dsn, **kwargs):
+        raise AssertionError("a GET must not run migrations")
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", fake_run)
+    monkeypatch.setenv("CRON_SECRET", "scheduler-key")
+    get_settings.cache_clear()
+
+    response = hosted.get("/api/jobs/migrate", headers={"Authorization": "Bearer scheduler-key"})
+    assert response.status_code != 200
+
+
+def test_migrate_endpoint_reports_both_halves(hosted, monkeypatch):
+    """`applied` alone cannot tell "nothing to do" from "wrong database"."""
+    from coletar.store.migrate import discover
+
+    async def fake_run(dsn, **kwargs):
+        return ["014_tenant_setting.sql"]
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", fake_run)
+    monkeypatch.setenv("CRON_SECRET", "scheduler-key")
+    get_settings.cache_clear()
+
+    body = hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer scheduler-key"}
+    ).json()
+    known = [m.filename for m in discover()]
+    assert body["applied"] == ["014_tenant_setting.sql"]
+    assert body["already_present"] == [f for f in known if f != "014_tenant_setting.sql"]
+    assert sorted(body["applied"] + body["already_present"]) == sorted(known)
+
+
+def test_a_second_concurrent_run_is_a_conflict_not_a_failure(hosted, monkeypatch):
+    """Two operators, or an operator and a deploy script. The work is being done;
+    the right answer is to wait and look at the ledger, not to start a second run
+    behind the first."""
+    from coletar.store.migrate import MigrationInProgress
+
+    async def already_running(dsn, **kwargs):
+        raise MigrationInProgress("Another connection is applying migrations.")
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", already_running)
+    monkeypatch.setenv("CRON_SECRET", "scheduler-key")
+    get_settings.cache_clear()
+
+    response = hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer scheduler-key"}
+    )
+    assert response.status_code == 409
+    assert "applying migrations" in response.json()["detail"]
+
+
+def test_a_migration_edited_after_it_was_applied_says_so(hosted, monkeypatch):
+    """The runner refuses; the operator holding this credential is the one who can
+    fix it, so they get the sentence rather than a blank 500."""
+
+    async def refuses(dsn, **kwargs):
+        raise RuntimeError("013_app_users.sql changed after it was applied (recorded a, now b).")
+
+    monkeypatch.setattr("coletar.hosted.run_migrations", refuses)
+    monkeypatch.setenv("CRON_SECRET", "scheduler-key")
+    get_settings.cache_clear()
+
+    response = hosted.post(
+        "/api/jobs/migrate", headers={"Authorization": "Bearer scheduler-key"}
+    )
+    assert response.status_code == 500
+    assert "changed after it was applied" in response.json()["detail"]
 
 
 def test_on_demand_batch_is_scoped_to_the_caller(hosted, monkeypatch):

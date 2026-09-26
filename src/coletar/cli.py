@@ -638,10 +638,17 @@ def changes(
 @app.command()
 def migrate() -> None:
     """Stand the Postgres schema up from empty, or bring it up to date."""
-    from coletar.store.migrate import run_migrations
+    from coletar.store.migrate import MigrationInProgress, run_migrations
 
     async def _run() -> None:
-        applied = await run_migrations(get_settings().database_url)
+        try:
+            applied = await run_migrations(get_settings().database_url)
+        except MigrationInProgress as error:
+            # A release command and an operator hitting `/api/jobs/migrate` can
+            # now collide. Exit non-zero so a deploy script notices, and say what
+            # happened rather than printing a traceback at it.
+            typer.echo(str(error), err=True)
+            raise typer.Exit(1) from error
         typer.echo("\n".join(applied) if applied else "already up to date")
 
     asyncio.run(_run())
