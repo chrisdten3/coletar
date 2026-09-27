@@ -1123,6 +1123,81 @@ now blocked. Live OpenAI extraction awaits API credits; the provider returned
 `credit_balance_exhausted`, while encrypted capture and the scheduler were verified.
 
 
+## M11 — Decision capture, synthesis and gated automated resolution
+
+Some calls a tenant routes through a frontier model never needed one. When the same
+kind of situation keeps producing the same decision, a narrow decision model can
+answer it in milliseconds for a fraction of the cost — and coletar is positioned to
+notice, because it already sees which tools a tenant's assistants reach for.
+
+The whole milestone is opt-in, per tool, and backend-only: no UI, no marketing
+surface, and nothing enabled by default. The label-only `/v1/decisions` path (M11.0,
+already shipped) remains the default precisely because it holds no customer data.
+
+- [x] **M11.0 Label-only observation.** `POST /v1/decisions` takes three short,
+      caller-chosen labels — tool, situation, outcome — and nothing else.
+      `history.patterns.find_repeat_decisions` groups them and reports whether the
+      same situation kept producing the same outcome. Read-only, advisory, and it
+      stays that way: see M11.3 for why nothing promotes itself.
+
+- [x] **M11.1 Raw capture, consented per tool.** `POST /v1/decisions/raw` takes the
+      real strings — intent, environmental state, tool call, tool response — for a
+      tool whose tenant explicitly opted it in. Stored as an `EPISODE` under
+      `episode_kind=decision_raw`, encrypted per-object, `ttl_days=1`.
+
+      Consent is granted through `POST /v1/decisions/consent` under a new `consent`
+      scope that `DEFAULT_SCOPES` does not include: the key an integration reports
+      its decisions with must not also be able to widen what is captured about them.
+      Raw-capture consent and vendor-send consent are separate grants, for the same
+      reason `history_thread_provider` is not derived from `extraction_provider`.
+      Revocation purges — it shreds what was already captured rather than only
+      declining the next call.
+
+- [x] **M11.2 Synthesis, then destruction.** `jobs.decision_synthesis` mirrors
+      `extract_pending`: distil each pending trace into a `SynthesizedDecisionSample`
+      under its own key, then shred the raw trace's key immediately rather than
+      waiting out its TTL. The TTL is the ceiling for the case the pass never manages
+      to read it at all — a broken synthesizer must not become a reason real business
+      data is still sitting there. Runs in the existing worker pass under the existing
+      lease; `coletar synthesize-decisions` runs it by hand.
+
+      The sample schema is an honest placeholder. The vendor shapes it is meant to
+      feed (Choice/Score/Noul patterns) are not documented to us, so `vendor_payload`
+      is the open dict a future mapper writes into rather than invented field names.
+
+- [x] **M11.3 Resolution, behind a human.** `POST /v1/decisions/resolve` answers from
+      a `DecisionBackend` — but only for a `(tool, situation)` pattern a person
+      holding the `consent` scope explicitly approved through
+      `POST /v1/decisions/promote`, having seen the evidence. Two rules are enforced
+      rather than advised:
+
+      **Nothing promotes itself.** Consistency is evidence, not permission, and
+      `PROMOTION_MIN_OCCURRENCES` (25) is deliberately far above the threshold at
+      which a pattern is merely worth showing someone. `resolve` checks the promotion
+      record *before* it builds a backend, so an unapproved pattern never reaches a
+      vendor at all — the gate is a refusal to ask the question, not a filter on the
+      answer.
+
+      **A safety-gating decision is refused outright**, not held to a higher bar.
+      Capture and analysis continue for those tools so the choice can be revisited
+      with data, but there is no approval path to automating them in this build.
+
+      Every failure — timeout, transport error, low confidence, no configured
+      backend — resolves to `decided: false` with a reason, never an exception: an
+      exception is something a caller's `except` block can read as permission to
+      proceed. The only backend implemented is `NullDecisionBackend`, which declines
+      everything. A stub that fabricated plausible answers would make the pipeline
+      around it look tested; Jev and Laya are intentions without an API contract, and
+      configuring one raises rather than silently doing nothing.
+
+- [ ] **M11.4 Drift detection.** A promoted pattern can stop holding, and the events
+      that would reveal it are contaminated once automation is reporting its own
+      decisions as the outcome — a self-confirming loop that looks like validation.
+      Doing this honestly needs a shadow-mode holdout routed to the old path for
+      comparison, plus automatic demotion on divergence. Not started;
+      `POST /v1/decisions/demote` is the manual kill switch until it is.
+
+
 ### UI design experiment — 2026-09-09
 
 `codex/product-ui-testing` adds the context-atlas website and a redesigned workspace

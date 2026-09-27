@@ -38,6 +38,24 @@ class EventType(StrEnum):
     EDGE_CREATED = "edge.created"
     COMPRESSION_RUN = "compression.run"
     RETRIEVAL_TRACE = "retrieval.trace"
+    # A caller reporting what it did after a search_context call -- an opaque,
+    # caller-chosen label, never the decision's real content. See
+    # `history.patterns` for what this makes possible.
+    DECISION_OBSERVED = "decision.observed"
+    # A batch pass could not synthesize a captured decision trace -- its key was
+    # shredded, or the pass failed. Deliberately *not* EXTRACTION_UNAVAILABLE:
+    # that one is the memory queue's health signal and `jobs.health` counts it.
+    DECISION_SYNTHESIS_UNAVAILABLE = "decision.synthesis_unavailable"
+    # Consent is the fact this whole feature's liability rests on, so it gets
+    # event-log treatment even though `put_setting` deliberately does not append
+    # events for ordinary workspace configuration.
+    CONSENT_GRANTED = "consent.granted"
+    CONSENT_REVOKED = "consent.revoked"
+    # A human approved one (tool, situation) pattern for automated resolution, or
+    # took it back off autopilot. Nothing may decide automatically without the
+    # first, and the second is the kill switch.
+    AUTOMATION_PROMOTED = "automation.promoted"
+    AUTOMATION_DEMOTED = "automation.demoted"
     STORE_MIGRATED = "store.migrated"
     OBJECT_CORROBORATED = "object.corroborated"
     COMPILE_RUN = "compile.run"

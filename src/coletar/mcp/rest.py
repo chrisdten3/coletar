@@ -14,6 +14,8 @@ provider-page observation stays in the explicitly consented, active-page extensi
 
 from __future__ import annotations
 
+import json
+import logging
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -21,8 +23,20 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from coletar.config import get_settings
+from coletar.decisions import consent, raw_capture
+from coletar.decisions import promotion as promotion_gate
+from coletar.decisions.backend import DecisionQuery, DecisionResult, build_decision_backend
+from coletar.decisions.consent import RAW_CAPTURE, VENDOR_SEND
+from coletar.decisions.promotion import PROMOTION_MIN_OCCURRENCES
+from coletar.history.patterns import find_repeat_decisions
 from coletar.ingest import remember
-from coletar.mcp.auth import SCOPE_READ, SCOPE_WRITE, Principal, current_principal
+from coletar.mcp.auth import (
+    SCOPE_CONSENT,
+    SCOPE_READ,
+    SCOPE_WRITE,
+    Principal,
+    current_principal,
+)
 from coletar.mcp.schemas import ObjectView
 from coletar.retrieval import retrieve
 from coletar.retrieval.context import INJECTION_MARKER
@@ -32,15 +46,27 @@ from coletar.schema.objects import (
     ExtractionMethod,
     Memory,
     MemoryKind,
+    ObjectType,
     OriginType,
     Provider,
     Scope,
     ScopeType,
+    Sensitivity,
 )
 from coletar.store import build_store
 
+logger = logging.getLogger(__name__)
+
 MAX_QUERY_CHARS = 4_000
 MAX_CONTENT_CHARS = 4_000
+#: A signature is a short label, not a sentence -- this catches a caller pasting
+#: real decision content in by mistake.
+MAX_SIGNATURE_CHARS = 200
+#: Raw capture holds real strings rather than labels, so the bound is far higher --
+#: but still a bound. An unbounded field is an invitation to post an archive.
+MAX_RAW_FIELD_CHARS = 20_000
+#: A ceiling on the purge scan a consent revocation triggers.
+SCAN_LIMIT = 10_000
 
 
 class SearchRequest(BaseModel):
@@ -71,6 +97,76 @@ class RememberRequest(BaseModel):
     kind: MemoryKind = MemoryKind.FACT
     project_id: str | None = None
     surface: str = "bridge"
+
+
+class ConsentRequest(BaseModel):
+    """Grant one consent, for one tool, deliberately.
+
+    `confirm` must be literally true. It is friction on purpose: a consent that a
+    copy-pasted config blob can grant by omission is not a consent.
+    """
+
+    tool_name: str
+    consent_type: Literal["raw_capture", "vendor_send"]
+    sensitivity: Sensitivity = Sensitivity.NORMAL
+    confirm: bool = False
+
+
+class ConsentRevokeRequest(BaseModel):
+    tool_name: str
+    consent_type: Literal["raw_capture", "vendor_send"]
+
+
+class RawTraceRequest(BaseModel):
+    """What one of the caller's own tools was asked, and what it answered.
+
+    Unlike `DecisionRequest` these are the real strings, which is why this path is
+    refused unless the tenant has opted this specific tool in. Nothing here is ever
+    parsed as an instruction -- see `coletar.decisions.raw_capture`.
+    """
+
+    tool_name: str
+    intent: str
+    environmental_state: dict[str, Any] = Field(default_factory=dict)
+    tool_call: dict[str, Any] = Field(default_factory=dict)
+    tool_response: dict[str, Any] = Field(default_factory=dict)
+
+
+class PromoteRequest(BaseModel):
+    tool_name: str
+    input_signature: str
+    #: The caller's own attestation about what this tool's decision does. A tool that
+    #: gates whether something consequential may proceed is refused rather than held
+    #: to a higher bar -- see `coletar.decisions.promotion`.
+    safety_gating: bool = False
+
+
+class DemoteRequest(BaseModel):
+    tool_name: str
+    input_signature: str
+    reason: str = "manual"
+
+
+class ResolveRequest(BaseModel):
+    tool_name: str
+    input_signature: str
+    candidate_outcomes: list[str] | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+class DecisionRequest(BaseModel):
+    """One reported outcome of a tool a caller's own code just ran.
+
+    `input_signature` and `outcome_signature` are labels the caller chooses --
+    "route:enterprise-billing", "approve-type-a" -- never the real decision
+    content. coletar cannot know what a decision means across every business it
+    serves and does not try to; it only checks whether the same labelled outcome
+    keeps recurring for the same labelled situation (`history.patterns`).
+    """
+
+    tool_name: str
+    input_signature: str
+    outcome_signature: str
 
 
 #: Which provider an origin *is*. Set by the browser on every cross-origin request
@@ -391,6 +487,383 @@ async def capture(request: Request) -> JSONResponse:
     return JSONResponse({"extracted": stored, "count": len(stored)})
 
 
+async def report_decision(request: Request) -> JSONResponse:
+    """Record what a caller's own tool call decided, for pattern analysis.
+
+    Not part of the browser bridge -- this is for a developer's own backend,
+    called directly from inside their tool code the way a Datadog client is,
+    right after the tool ran. No Origin check, because there is no browser here.
+    """
+    principal = _require(SCOPE_WRITE)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = DecisionRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    for field_name, value in (
+        ("tool_name", body.tool_name),
+        ("input_signature", body.input_signature),
+        ("outcome_signature", body.outcome_signature),
+    ):
+        if not value.strip():
+            return JSONResponse(
+                {"error": "bad_request", "message": f"{field_name} must be non-empty"}, 400
+            )
+        if len(value) > MAX_SIGNATURE_CHARS:
+            return JSONResponse(
+                {
+                    "error": "bad_request",
+                    "message": (
+                        f"{field_name} is {len(value)} characters; the limit is "
+                        f"{MAX_SIGNATURE_CHARS}. Pass a short label, not the decision itself."
+                    ),
+                },
+                400,
+            )
+
+    await build_store().append_event(
+        principal.tenant_id,
+        Event(
+            type=EventType.DECISION_OBSERVED,
+            actor=Actor.CONNECTOR,
+            detail={
+                "tool_name": body.tool_name,
+                "input_signature": body.input_signature,
+                "outcome_signature": body.outcome_signature,
+                "principal": principal.id,
+            },
+        ),
+    )
+    return JSONResponse({"recorded": True})
+
+
+# --- M11: raw decision capture, consent, and gated automated resolution ----------
+#
+# Four properties hold across everything below, and each is enforced rather than
+# documented:
+#
+#   * Raw capture is refused unless the tenant opted *that tool* in.
+#   * Granting a consent or a promotion needs `SCOPE_CONSENT`; using one needs only
+#     `write`. The key an integration reports decisions with cannot widen what is
+#     captured about them, or put a pattern on autopilot.
+#   * `/v1/decisions/resolve` checks the promotion record before it reaches a
+#     backend, so an unapproved pattern never leaves this process.
+#   * A backend that cannot answer confidently produces `decided: false`, never an
+#     exception and never a guess.
+
+
+async def grant_consent(request: Request) -> JSONResponse:
+    """Record a tenant's consent for one tool. Requires the `consent` scope."""
+    principal = _require(SCOPE_CONSENT)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = ConsentRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+    if not body.tool_name.strip():
+        return JSONResponse({"error": "bad_request", "message": "tool_name is empty"}, 400)
+    if not body.confirm:
+        return JSONResponse(
+            {
+                "error": "confirmation_required",
+                "message": (
+                    "pass confirm=true to grant this consent; it permits coletar to "
+                    "store this tool's real inputs and outputs"
+                ),
+            },
+            400,
+        )
+
+    record = await consent.grant(
+        build_store(),
+        principal.tenant_id,
+        body.tool_name.strip(),
+        body.consent_type,
+        sensitivity=body.sensitivity,
+        principal_id=principal.id,
+    )
+    return JSONResponse({"granted": True, "consent": record})
+
+
+async def revoke_consent(request: Request) -> JSONResponse:
+    """Withdraw a consent and shred whatever raw content it covered.
+
+    Revocation purges rather than merely stopping new captures: leaving a day of
+    already-captured content sitting there would make "we stopped" the answer to a
+    question nobody asked.
+    """
+    principal = _require(SCOPE_CONSENT)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = ConsentRevokeRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    store = build_store()
+    tool_name = body.tool_name.strip()
+    await consent.revoke(
+        store, principal.tenant_id, tool_name, body.consent_type, principal_id=principal.id
+    )
+
+    purged = 0
+    if body.consent_type == RAW_CAPTURE:
+        episodes = await store.list_objects(
+            principal.tenant_id, type=ObjectType.EPISODE, limit=SCAN_LIMIT
+        )
+        for episode in episodes:
+            if (
+                episode.payload.get(raw_capture.EPISODE_KIND) == raw_capture.DECISION_RAW
+                and episode.payload.get("tool_name") == tool_name
+                and await store.shred_object_key(
+                    principal.tenant_id, episode.id, reason="consent_revoked"
+                )
+            ):
+                purged += 1
+    return JSONResponse({"revoked": True, "purged_raw_traces": purged})
+
+
+async def capture_raw_trace(request: Request) -> JSONResponse:
+    """Accept one tool call's real inputs and outputs, if this tool is opted in."""
+    principal = _require(SCOPE_WRITE)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = RawTraceRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    tool_name = body.tool_name.strip()
+    if not tool_name:
+        return JSONResponse({"error": "bad_request", "message": "tool_name is empty"}, 400)
+    for field_name, value in (("intent", body.intent),):
+        if len(value) > MAX_RAW_FIELD_CHARS:
+            return JSONResponse(
+                {
+                    "error": "bad_request",
+                    "message": f"{field_name} exceeds {MAX_RAW_FIELD_CHARS} characters",
+                },
+                400,
+            )
+    for field_name, blob in (
+        ("environmental_state", body.environmental_state),
+        ("tool_call", body.tool_call),
+        ("tool_response", body.tool_response),
+    ):
+        if len(json.dumps(blob)) > MAX_RAW_FIELD_CHARS:
+            return JSONResponse(
+                {
+                    "error": "bad_request",
+                    "message": f"{field_name} exceeds {MAX_RAW_FIELD_CHARS} serialized characters",
+                },
+                400,
+            )
+
+    store = build_store()
+    if not await consent.is_consented(
+        store, principal.tenant_id, tool_name, RAW_CAPTURE
+    ):
+        return JSONResponse(
+            {
+                "error": "raw_capture_not_consented",
+                "message": (
+                    f"raw capture is not enabled for tool {tool_name!r}; grant it via "
+                    "POST /v1/decisions/consent with a consent-scoped key"
+                ),
+            },
+            403,
+        )
+
+    episode = await raw_capture.capture_trace(
+        store,
+        principal.tenant_id,
+        tool_name=tool_name,
+        intent=body.intent,
+        environmental_state=body.environmental_state,
+        tool_call=body.tool_call,
+        tool_response=body.tool_response,
+        surface=principal.surface,
+        scope=GLOBAL_SCOPE,
+        principal_id=principal.id,
+    )
+    return JSONResponse({"captured": True, "trace_id": episode.id})
+
+
+async def promote_pattern(request: Request) -> JSONResponse:
+    """Put one (tool, situation) pattern on autopilot. Requires the `consent` scope.
+
+    Refuses anything the caller attests is a safety gate, and anything whose evidence
+    is thinner than `PROMOTION_MIN_OCCURRENCES` identical outcomes. Nothing promotes
+    itself: this endpoint is the only way a pattern reaches automated resolution.
+    """
+    principal = _require(SCOPE_CONSENT)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = PromoteRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    if body.safety_gating:
+        return JSONResponse(
+            {
+                "error": "safety_gating_not_promotable",
+                "message": (
+                    "a safety-gating decision cannot be automated in this build. "
+                    "Capture and analysis continue; resolution stays advisory."
+                ),
+            },
+            400,
+        )
+
+    store = build_store()
+    patterns = await find_repeat_decisions(store, principal.tenant_id)
+    match = next(
+        (
+            p
+            for p in patterns
+            if p.tool_name == body.tool_name and p.input_signature == body.input_signature
+        ),
+        None,
+    )
+    if match is None:
+        return JSONResponse(
+            {
+                "error": "no_evidence",
+                "message": (
+                    "no repeat decisions recorded for that tool and situation; "
+                    "report outcomes via POST /v1/decisions first"
+                ),
+            },
+            400,
+        )
+    if not match.consistent or match.occurrences < PROMOTION_MIN_OCCURRENCES:
+        return JSONResponse(
+            {
+                "error": "insufficient_evidence",
+                "message": (
+                    f"needs {PROMOTION_MIN_OCCURRENCES} consistent occurrences; "
+                    f"have {match.occurrences} (consistent={match.consistent})"
+                ),
+                "evidence": {
+                    "occurrences": match.occurrences,
+                    "consistent": match.consistent,
+                    "required": PROMOTION_MIN_OCCURRENCES,
+                },
+            },
+            400,
+        )
+
+    record = await promotion_gate.promote(
+        store,
+        principal.tenant_id,
+        body.tool_name,
+        body.input_signature,
+        evidence={
+            "occurrences": match.occurrences,
+            "consistent": match.consistent,
+            "last_outcome": match.last_outcome,
+        },
+        principal_id=principal.id,
+    )
+    return JSONResponse({"promoted": True, "promotion": record})
+
+
+async def demote_pattern(request: Request) -> JSONResponse:
+    """Take a pattern off autopilot. The kill switch; takes effect immediately."""
+    principal = _require(SCOPE_CONSENT)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = DemoteRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    demoted = await promotion_gate.demote(
+        build_store(),
+        principal.tenant_id,
+        body.tool_name,
+        body.input_signature,
+        reason=body.reason,
+        principal_id=principal.id,
+    )
+    return JSONResponse({"demoted": demoted})
+
+
+async def resolve_decision(request: Request) -> JSONResponse:
+    """Answer a promoted pattern from a decision backend, or hand the call back.
+
+    Always 200. `decided: false` is the normal, expected answer -- for an unapproved
+    pattern, an unavailable backend, or an answer that did not clear its confidence
+    floor -- and the caller's branch for it is "use your model instead". An exception
+    here would be something an integrator could catch and read as permission.
+    """
+    principal = _require(SCOPE_WRITE)
+    if isinstance(principal, JSONResponse):
+        return principal
+    try:
+        body = ResolveRequest.model_validate(await request.json())
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"error": "bad_request", "message": str(exc)}, status_code=400)
+
+    store = build_store()
+    approved = await promotion_gate.get_promotion(
+        store, principal.tenant_id, body.tool_name, body.input_signature
+    )
+    if approved is None:
+        # The gate: no vendor is consulted for a pattern no human approved.
+        return JSONResponse(
+            DecisionResult(decided=False, reason="not_promoted").model_dump(mode="json")
+        )
+
+    query = DecisionQuery(
+        tool_name=body.tool_name,
+        input_signature=body.input_signature,
+        candidate_outcomes=body.candidate_outcomes,
+        # Raw context only travels to a vendor the tenant named for this tool.
+        context=(
+            body.context
+            if await consent.is_consented(
+                store, principal.tenant_id, body.tool_name, VENDOR_SEND
+            )
+            else {}
+        ),
+    )
+    try:
+        backend = await build_decision_backend(store, principal.tenant_id, body.tool_name)
+        result = await backend.decide(query)
+    except Exception as exc:  # noqa: BLE001 - every failure is a fallback, not a 500
+        logger.warning("decision backend unavailable: %r", exc)
+        return JSONResponse(
+            DecisionResult(decided=False, reason="backend_unavailable").model_dump(mode="json")
+        )
+
+    if result.decided and result.outcome_signature:
+        # Only real automated decisions earn an event. Routine fallbacks are an
+        # observability concern; logging one per call would bury the log in
+        # non-events, the way per-hit retrieval rows once did.
+        await store.append_event(
+            principal.tenant_id,
+            Event(
+                type=EventType.DECISION_OBSERVED,
+                actor=Actor.CONNECTOR,
+                detail={
+                    "tool_name": body.tool_name,
+                    "input_signature": body.input_signature,
+                    "outcome_signature": result.outcome_signature,
+                    "resolved_by": result.backend,
+                    "confidence": result.confidence,
+                    "promotion_approved_at": approved.get("approved_at"),
+                    "principal": principal.id,
+                },
+            ),
+        )
+    return JSONResponse(result.model_dump(mode="json"))
+
+
 # --- the M7 surface: inspect, history, supersede, retire, compile ----------------
 #
 # There is deliberately **no DELETE route anywhere on this API**, and no endpoint
@@ -641,6 +1114,14 @@ def routes() -> list[tuple[str, Any, list[str]]]:
         ("/v1/search", search, ["POST"]),
         ("/v1/capture", capture, ["POST"]),
         ("/v1/remember", remember_endpoint, ["POST"]),
+        ("/v1/decisions", report_decision, ["POST"]),
+        # M11. Granting needs the `consent` scope; using what was granted does not.
+        ("/v1/decisions/consent", grant_consent, ["POST"]),
+        ("/v1/decisions/consent/revoke", revoke_consent, ["POST"]),
+        ("/v1/decisions/raw", capture_raw_trace, ["POST"]),
+        ("/v1/decisions/promote", promote_pattern, ["POST"]),
+        ("/v1/decisions/demote", demote_pattern, ["POST"]),
+        ("/v1/decisions/resolve", resolve_decision, ["POST"]),
         ("/v1/objects/{object_id}", inspect, ["GET"]),
         ("/v1/objects/{object_id}/history", history, ["GET"]),
         ("/v1/objects/{object_id}/supersede", supersede, ["POST"]),

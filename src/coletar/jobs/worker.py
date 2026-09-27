@@ -29,6 +29,7 @@ import socket
 import uuid
 from dataclasses import dataclass, field
 
+from coletar.jobs.decision_synthesis import synthesize_pending
 from coletar.jobs.expiry import expire
 from coletar.jobs.extraction import extract_pending
 from coletar.schema.tenancy import TenantId
@@ -62,6 +63,7 @@ class WorkerPass:
     held_by: str | None = None
     extraction: dict[str, int] = field(default_factory=dict)
     expiry: dict[str, int] = field(default_factory=dict)
+    decision_synthesis: dict[str, int] = field(default_factory=dict)
     error: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -72,6 +74,7 @@ class WorkerPass:
             "held_by": self.held_by,
             "extraction": self.extraction,
             "expiry": self.expiry,
+            "decision_synthesis": self.decision_synthesis,
             "error": self.error,
         }
 
@@ -83,7 +86,11 @@ async def run_pass(
     owner: str | None = None,
     lease_ttl_seconds: float | None = None,
 ) -> WorkerPass:
-    """Extract pending episodes and expire what has aged out, once, under a lease.
+    """Extract, synthesize and expire once, under one lease.
+
+    Decision synthesis (M11.2) runs unconditionally rather than behind a per-tenant
+    check: for a tenant that never opted a tool in there is nothing pending, and the
+    scan that discovers that is the same bounded scan extraction already does.
 
     Returns rather than raises when another worker holds the lease: a second worker
     finding the queue busy is the system working, not an error, and a scheduler that
@@ -112,6 +119,8 @@ async def run_pass(
     try:
         extraction = await extract_pending(store, tenant_id)
         result.extraction = extraction.as_dict()
+        synthesis = await synthesize_pending(store, tenant_id)
+        result.decision_synthesis = synthesis.as_dict()
         expiry = await expire(store, tenant_id)
         result.expiry = expiry.as_dict()
     except Exception as exc:  # noqa: BLE001 - a bad pass must not kill the loop

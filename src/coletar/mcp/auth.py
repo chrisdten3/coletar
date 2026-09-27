@@ -49,7 +49,21 @@ from coletar.schema.tenancy import tenant_id as parse_tenant_id
 #: read-only key for a dashboard is useful on its own.
 SCOPE_READ = "read"
 SCOPE_WRITE = "write"
+
+#: Granting a tenant's consent to raw decision-trace capture, and approving a
+#: pattern for automated resolution. Deliberately **not** in `DEFAULT_SCOPES`: the
+#: key an integration uses to report its own decisions must not also be able to
+#: widen what is captured about them, or to put a pattern on autopilot. A key only
+#: holds this if it was issued with it explicitly.
+SCOPE_CONSENT = "consent"
+
+#: What a key gets when it names no scopes. Unchanged by `SCOPE_CONSENT`.
 DEFAULT_SCOPES = frozenset({SCOPE_READ, SCOPE_WRITE})
+
+#: Every scope that may appear in configuration. Separate from `DEFAULT_SCOPES`,
+#: which used to serve both jobs -- so adding a scope that is *not* granted by
+#: default now has somewhere to live.
+VALID_SCOPES = DEFAULT_SCOPES | {SCOPE_CONSENT}
 
 #: Liveness probes cannot carry a credential. A test pins this set so it cannot grow
 #: quietly; growing it deliberately, with a reason, is what this comment is for.
@@ -198,7 +212,7 @@ class ApiKeyAuthenticator:
             except InvalidTenantId as exc:
                 raise AuthError(str(exc)) from exc
             scopes = frozenset(entry.get("scopes") or DEFAULT_SCOPES)
-            unknown = scopes - DEFAULT_SCOPES
+            unknown = scopes - VALID_SCOPES
             if unknown:
                 raise AuthError(f"unknown scope(s) {sorted(unknown)} on {entry['id']!r}")
             surface_raw = entry.get("surface")
