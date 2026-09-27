@@ -233,6 +233,16 @@ class Settings(BaseSettings):
 
     extraction_batch_size: int = 100
 
+    #: How many captured decision traces one synthesis pass distils (M11.2). Lower
+    #: than the extraction batch because each trace's raw content is shredded as soon
+    #: as its sample lands, so a smaller batch run more often holds less at rest.
+    decision_synthesis_batch_size: int = 50
+    #: Which decision backend a deployment falls back to when a tenant names none.
+    #: Only `null` -- which declines every decision -- is implemented; the vendor
+    #: values are reserved so configuring one fails loudly rather than silently
+    #: doing nothing. See docs/ROADMAP.md M11.3.
+    decision_backend_default: Literal["null", "jev", "laya"] = "null"
+
     # Scheduled batch worker. The interval is a latency choice, not a throughput
     # one: it decides how long after typing a turn the user can expect to see a
     # memory from it.

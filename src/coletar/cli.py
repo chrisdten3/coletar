@@ -201,6 +201,22 @@ def extract_pending_turns(
     asyncio.run(_run())
 
 
+@app.command("synthesize-decisions")
+def synthesize_decision_traces(
+    limit: int | None = typer.Option(None, min=1, help="Maximum pending traces this pass."),
+    tenant: str | None = TENANT_OPTION,
+) -> None:
+    """Distil captured decision traces, shredding each trace's raw content."""
+    from coletar.jobs.decision_synthesis import synthesize_pending
+
+    async def _run() -> None:
+        resolved = _tenant(tenant)
+        report = await synthesize_pending(build_store(), resolved, limit=limit)
+        typer.echo(json.dumps({"tenant": resolved, **report.as_dict()}, indent=2))
+
+    asyncio.run(_run())
+
+
 @app.command()
 def worker(
     interval: float | None = typer.Option(
