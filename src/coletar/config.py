@@ -233,6 +233,19 @@ class Settings(BaseSettings):
 
     extraction_batch_size: int = 100
 
+    # Jev (TypeSafe's decision model) for the two yes/no-shaped stages: the live
+    # gate and the reconcile decision. Phase 0 measures whether it can hold either
+    # (docs/DECISION_EVAL.md); nothing in the capture or import path calls it yet.
+    # Accepts the vendor's own variable, as `openai_api_key` does.
+    jev_api_key: str = Field(
+        default="", validation_alias=AliasChoices("COLETAR_JEV_API_KEY", "TYPESAFE_API_KEY")
+    )
+    jev_base_url: str = "https://api.typesafe.ai"
+    #: `jev-latest` is an alias. Every evaluation records the model the response
+    #: names, so a run can be tied to the version that actually answered it.
+    jev_model: str = "jev-latest"
+    jev_timeout_seconds: float = 10.0
+
     # Scheduled batch worker. The interval is a latency choice, not a throughput
     # one: it decides how long after typing a turn the user can expect to see a
     # memory from it.
