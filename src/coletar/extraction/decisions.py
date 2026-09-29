@@ -74,13 +74,17 @@ RECONCILE_QUESTION = Choice(
             " language they use, another friend, another hobby."
         ),
         "duplicate": (
-            "The candidate says the same thing as the existing memory, in the same or"
-            " different words, and adds nothing."
+            "The candidate says the same thing as the existing memory and adds no new"
+            " detail. This includes a paraphrase, a synonym, a fuller name for the same"
+            " thing, and a vaguer or less detailed version of the memory. A later date"
+            " does not stop it being a duplicate."
         ),
         "supersedes": (
-            "The candidate replaces the existing memory: a later change to a one-valued"
-            " fact (where they live, their employer, their manager, a current plan), or"
-            " the same fact stated more specifically."
+            "The candidate replaces the existing memory. Either the value of a"
+            " one-valued fact has changed (where they live, their employer, their"
+            " manager, a current plan, a preference reversed), or the candidate adds a"
+            " concrete detail the memory lacks, such as a version, a named component"
+            " or a number. Rewording, or being said later, is not enough."
         ),
         "contradicts": (
             "Both cannot be true, and the candidate is not clearly a later change: the"

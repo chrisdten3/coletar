@@ -1,7 +1,8 @@
 # Decision stages — Phase 0 evaluation
 
-**Status:** harness built 2026-09-28. Not yet run against Jev: needs a TypeSafe API
-key and the two labelled sets below.
+**Status:** harness built 2026-09-28. First read on the committed fixtures only (see
+[Results](#results)): gate passes, reconcile passes only at a 0.90 floor after a
+wording change. Neither is a go decision until confirmed on the real labelled sets.
 
 The extraction pipeline has two stages whose answer is a label rather than text:
 
@@ -23,6 +24,36 @@ pipeline code depends on it.
 If a stage fails, it falls back to the small extraction model behind the same
 function interface. Below the floor, reconcile answers are routed to *keep both and
 flag*, which is always safe. The report shows what each floor costs in flags.
+
+## Results
+
+All runs on `jev-1.13.0`, 2026-09-28, against the committed fixtures. These sets are
+small: one gate miss moves recall 4.5 points, one reconcile error moves the
+false-supersede rate 5.9 points, so < 2% means zero errors.
+
+**Gate**, stage `c501eae842f0`, `extraction_set.json` (55 turns, 22 durable): **pass**.
+Threshold 0.28 keeps 21/22 durable turns (95.5%) at a 56.4% pass rate. The miss, `p22`
+("Actually it's port 5433, not 5432."), is a correction scored 0.11. Watch
+corrections in the real set: losing one leaves a wrong fact standing.
+
+**Reconcile**, `reconcile_seed.json` (24 pairs):
+
+| Stage version | Accuracy | False supersede, no floor | Best floor passing < 2% |
+|---|---|---|---|
+| `c501eae842f0` | 87.5% | 17.6% (`r07`, `r10`, `r23`) | none; 5.9% at 0.80 |
+| `756f200bc52c` | 95.8% | 5.9% (`r07`) | 0.90, flagging 20.8% |
+
+Every error in the first run was a `duplicate` called `supersedes`, including `r07`
+at 0.99 confidence: Jev read a later restatement as a replacement. The second
+wording says a paraphrase, fuller name or vaguer version is a duplicate whatever its
+date, and that `supersedes` needs a changed value or an added concrete detail. `r04`
+(a real refinement) stayed `supersedes` at 0.96; `r23` (the less-specific
+restatement) became `duplicate` at 0.99.
+
+`r07`'s label is arguable under the new wording ("integer cents" is more concrete than
+"fixed-point integers"), and replacing one paraphrase with the other loses nothing.
+The wording was revised while looking at these 24 pairs, so the second run is
+flattered the same way the gate threshold is.
 
 ## Running it
 
