@@ -404,3 +404,24 @@ The residual risk is real and worth stating plainly: a user pastes a document
 containing injected prose into their own turn, and it becomes a candidate. The
 `_STRUCTURAL` guard catches pasted JSON and markup, not prose. The gate is the answer
 there, which is one more reason it is enforced in the CLI and not only in the UI.
+
+## Before and after the extractor: the Jev stages (2026-09-29)
+
+Two label-shaped decisions now sit on either side of model extraction, both on Jev
+by default (docs/DECISION_EVAL.md, AGENTS.md §1 amended 2026-09-29):
+
+- **Gate**, in `jobs/extraction.py`: each pending captured turn is asked whether it
+  is worth remembering, and turns under `gate_threshold` (0.28) are completed
+  without an extraction call. The episode's payload records the verdict. The gate
+  fails open, so an outage costs extraction calls, never turns.
+- **Reconcile**, in `ingest.remember`: each new memory is compared with its
+  nearest stored memories and labelled `new`, `duplicate`, `supersedes` or
+  `contradicts`. Answers under `reconcile_floor` (0.90) keep both memories and flag
+  the new one in `payload.reconcile_flags`. When Jev cannot answer, the token-overlap
+  check runs as before.
+
+TypeSafe is a subprocessor for each, listed separately in docs/DEPLOYMENT.md.
+
+Reconcile only sees the neighbours that search returns. A change with no shared
+words ("Lives in Boston" → "Moved to Denver") is found only if the embedder
+places the two statements near each other; the hashing embedder does not.

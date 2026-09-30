@@ -100,6 +100,21 @@ subprocessor. Only a captured candidate turn is sent; the stored graph, other
 conversations, provider sessions and accepted memories are not sent. The existing
 grounding and schema guards still apply. `store=False` is used by the adapter.
 
+TypeSafe (Jev) is a subprocessor for two flows, listed separately because they send
+different data (AGENTS.md §1, amended 2026-09-29). Both are on by default and take
+effect once `TYPESAFE_API_KEY` is set; without a key both degrade safely, as below.
+- **Gate, captured turns.** `COLETAR_GATE_PROVIDER=jev`. Each pending captured user
+  turn is sent, alone, to decide whether it reaches extraction. No stored memories
+  or other conversations are sent. If Jev cannot answer, the turn goes to extraction
+  and the episode records `gate.status = unavailable`.
+- **Reconcile, stored memories.** `COLETAR_RECONCILE_PROVIDER=jev`. Each new memory
+  is sent with at most `COLETAR_RECONCILE_NEIGHBOURS` (default 3) of the most
+  similar stored memories and their dates. Never raw turns, and never the graph.
+  If Jev cannot answer, the local token-overlap check runs instead.
+
+Set `COLETAR_GATE_PROVIDER=none` or `COLETAR_RECONCILE_PROVIDER=token_overlap` to
+remove either flow on its own.
+
 `COLETAR_CAPTURE_TURNS=true`, `COLETAR_LIVE_EXTRACTION_MODE=collect_then_batch`,
 `COLETAR_EXTRACTION_PROVIDER=openai`, and a five-turn batch limit are configured.
 The model is `gpt-5.6-terra`. Captured source episodes are encrypted with per-object
