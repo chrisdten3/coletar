@@ -227,6 +227,29 @@ async def test_a_claim_is_never_folded_into_an_entity(store: InMemoryStore) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_project_document_is_never_sent_to_jev(store: InMemoryStore) -> None:
+    """Importers write projects and artifacts through remember(); only claims may
+    reach TypeSafe, and a re-import must still fold into what it wrote before."""
+    from coletar.schema.objects import ContextObject, ExtractionMethod, OriginType, Provenance
+
+    def doc() -> ContextObject:
+        return ContextObject(
+            type=ObjectType.ARTIFACT,
+            content="Design notes for the ledger: integer cents, never floats.",
+            extraction_method=ExtractionMethod.PROVIDER_CURATED,
+            provenance=Provenance(origin_type=OriginType.USER, provider=Provider.CLAUDE),
+        )
+
+    seen: list[dict[str, Any]] = []
+    client = _jev(lambda _: _relation("new", 0.99), seen)
+    first = await remember(store, TENANT, doc(), jev_client=client)
+    second = await remember(store, TENANT, doc(), jev_client=client)
+
+    assert first.created and second.corroborated == first.object_id
+    assert seen == []
+
+
+@pytest.mark.asyncio
 async def test_extracted_facts_are_reconciled(
     store: InMemoryStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

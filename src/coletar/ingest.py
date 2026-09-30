@@ -250,15 +250,22 @@ async def remember(
     memory = memory.model_copy(deep=True)
     outcome: _Reconciled | None = None
     fallback: str | None = None
-    if get_settings().reconcile_provider == "jev":
+    claim = memory.type in RECONCILABLE
+    # Only claims go to Jev. Importers also send projects and project documents
+    # through here, and those are neither what the reconcile question is about nor
+    # what AGENTS.md §1 allows reconcile to send.
+    if claim and get_settings().reconcile_provider == "jev":
         outcome = await _reconcile(store, tenant_id, memory, caller_surface, jev_client)
         if outcome is None:
             fallback = "jev_unavailable"
 
     if outcome is None:
+        # A claim is a duplicate only of another claim; anything else only of its own
+        # type, which is what makes re-importing the same project a no-op.
         existing = await find_duplicate(
             store, tenant_id, memory.content, scope=memory.scope,
-            caller_surface=caller_surface, types=RECONCILABLE,
+            caller_surface=caller_surface,
+            types=RECONCILABLE if claim else frozenset({memory.type}),
         )
         detail: dict[str, Any] = {"provider": "token_overlap"}
         if fallback:
