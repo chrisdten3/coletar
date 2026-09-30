@@ -414,9 +414,13 @@ by default (docs/DECISION_EVAL.md, AGENTS.md §1 amended 2026-09-29):
   is worth remembering, and turns under `gate_threshold` (0.28) are completed
   without an extraction call. The episode's payload records the verdict. The gate
   fails open, so an outage costs extraction calls, never turns.
-- **Reconcile**, in `ingest.remember`: each new memory is compared with its
-  nearest stored memories and labelled `new`, `duplicate`, `supersedes` or
-  `contradicts`. Answers under `reconcile_floor` (0.90) keep both memories and flag
+- **Reconcile**, in `ingest.remember`: each new memory or fact is compared with its
+  nearest stored claims (memories, facts, decisions) and labelled `new`,
+  `duplicate`, `supersedes` or `contradicts`. Facts were added on 2026-09-30, after a
+  production test showed extraction had written "I am a student at Georgetown" as a
+  fact that nothing could later retire. Entities are never compared: a claim folded
+  into an entity's description would leave no claim at all. Answers under
+  `reconcile_floor` (0.90) keep both claims and flag
   the new one in `payload.reconcile_flags`. When Jev cannot answer, the token-overlap
   check runs as before.
 

@@ -693,11 +693,26 @@ function review() {
     `<button data-action="review-visible" ${visible.length ? "" : "disabled"}>${icon("check")} Accept this group</button>`,
   );
 }
+// Every third party a captured turn or a stored claim can reach, named from what the
+// server reports rather than assumed. The gate and reconcile send different data, so
+// they are named separately (AGENTS.md §1, amended 2026-09-29).
+function recipientsNote(c) {
+  const extractor = { openai: "OpenAI", anthropic: "Anthropic", ollama: "your local model" }[c.extraction_backend] || c.extraction_backend;
+  const gate = c.gate_backend === "jev"
+    ? "TypeSafe first scores each captured turn; turns it judges not worth remembering go no further. "
+    : "";
+  const reach = c.gate_backend === "jev" ? "Turns that pass go to" : "Captured turns go to";
+  const reconcile = c.reconcile_backend === "jev"
+    ? "When a new memory or fact is saved, TypeSafe compares it with up to three similar stored ones to decide whether it repeats, replaces or conflicts with them."
+    : "New memories and facts are compared with stored ones on this server; stored memories are not sent.";
+  return `${gate}${reach} ${esc(extractor)} for extraction. ${reconcile}`;
+}
+
 function capture() {
   const episodes = pending();
   return shell(
     "Capture queue",
-    `<div class="row between mb"><div><h2>Captured, not yet remembered.</h2><p class="muted">Your submitted turns are kept as encrypted source material until extraction runs.</p></div><span class="badge">${episodes.length} pending</span></div>${episodes.map((o) => `<article class="panel mb"><div class="row between"><h3>${tag(o.provenance.provider)} <span class="badge">awaiting extraction</span></h3><span class="mono muted">${time(o.created_at)}</span></div><p class="capture-content">${esc(o.content)}</p><div class="row between wrap"><span class="capture-lock">${icon("lock")} Encrypted at rest · only your submitted turn</span><a class="btn" href="#/object/${encodeURIComponent(o.id)}">Inspect source</a></div></article>`).join("") || empty("The capture queue is clear", "Submitted turns will appear here when consented capture is enabled.", '<a class="btn" href="#/surfaces">Set up a surface</a>')}<div class="columns mt"><section class="panel"><span class="eyebrow">What happens next</span><h3 class="mt">Capture now. Judge later.</h3><p class="muted">The configured background worker extracts durable context, grounds it in the source turn, and records its provenance. ${connections?.capture_enabled ? "OpenAI receives candidate turns only; stored memories are not sent. Run a batch below or wait for the daily schedule." : "Extraction does not run in this page."}</p>${connections?.capture_enabled ? '<button class="primary mt" data-action="process-captures">Process pending turns with OpenAI</button>' : ""}<a href="#/review">Open the review queue →</a></section><section class="panel"><span class="eyebrow">Your control</span><h3 class="mt">Only turns you submit.</h3><p class="muted">coleta does not read assistant replies, other conversations, or background tabs. Capture requires explicit consent in the extension.</p><a href="#/surfaces">Manage surfaces →</a></section></div>`,
+    `<div class="row between mb"><div><h2>Captured, not yet remembered.</h2><p class="muted">Your submitted turns are kept as encrypted source material until extraction runs.</p></div><span class="badge">${episodes.length} pending</span></div>${episodes.map((o) => `<article class="panel mb"><div class="row between"><h3>${tag(o.provenance.provider)} <span class="badge">awaiting extraction</span></h3><span class="mono muted">${time(o.created_at)}</span></div><p class="capture-content">${esc(o.content)}</p><div class="row between wrap"><span class="capture-lock">${icon("lock")} Encrypted at rest · only your submitted turn</span><a class="btn" href="#/object/${encodeURIComponent(o.id)}">Inspect source</a></div></article>`).join("") || empty("The capture queue is clear", "Submitted turns will appear here when consented capture is enabled.", '<a class="btn" href="#/surfaces">Set up a surface</a>')}<div class="columns mt"><section class="panel"><span class="eyebrow">What happens next</span><h3 class="mt">Capture now. Judge later.</h3><p class="muted">The configured background worker extracts durable context, grounds it in the source turn, and records its provenance. ${connections?.capture_enabled ? `${recipientsNote(connections)} Run a batch below or wait for the daily schedule.` : "Extraction does not run in this page."}</p>${connections?.capture_enabled ? '<button class="primary mt" data-action="process-captures">Process pending turns with OpenAI</button>' : ""}<a href="#/review">Open the review queue →</a></section><section class="panel"><span class="eyebrow">Your control</span><h3 class="mt">Only turns you submit.</h3><p class="muted">coleta does not read assistant replies, other conversations, or background tabs. Capture requires explicit consent in the extension.</p><a href="#/surfaces">Manage surfaces →</a></section></div>`,
   );
 }
 /* --- History: context as an observability surface (SCOPE §6) ---------------
@@ -1514,7 +1529,7 @@ function hostedSurfaces() {
           `<div class="panel surface"><div><h3>${mark(id)}${title}</h3><span class="mono">${id === "local" ? "Local proxy → hosted MCP" : "Remote MCP / REST bridge"}</span></div><div class="row"><span class="mono muted">client setup required</span><button data-connect="${id}">Set up</button></div></div>`,
       )
       .join("") +
-    `<p class="caption">Raw-turn capture: ${connections.capture_enabled ? "enabled for consenting clients" : "off"}. Extraction: ${esc(connections.extraction_backend)} · ${esc(connections.worker_schedule)}.</p>`
+    `<p class="caption">Raw-turn capture: ${connections.capture_enabled ? "enabled for consenting clients" : "off"}. Extraction: ${esc(connections.extraction_backend)} · ${esc(connections.worker_schedule)}. Gate: ${connections.gate_backend === "jev" ? "TypeSafe" : "off"}. Reconcile: ${connections.reconcile_backend === "jev" ? "TypeSafe" : "local"}.</p>`
   );
 }
 function hostedKeys() {

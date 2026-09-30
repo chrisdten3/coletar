@@ -17,7 +17,12 @@ import pytest
 from coletar.capture import capture_turn, is_pending
 from coletar.config import get_settings
 from coletar.extraction.decisions import GATE_QUESTION_NAME, RECONCILE_QUESTION_NAME
-from coletar.extraction.proposal import Proposal, ProposedMemory
+from coletar.extraction.proposal import (
+    Proposal,
+    ProposedEntity,
+    ProposedFact,
+    ProposedMemory,
+)
 from coletar.ingest import remember
 from coletar.jobs.extraction import extract_pending
 from coletar.retrieval.embedding import HashingEmbedder
@@ -197,6 +202,85 @@ async def test_an_explicit_correction_never_asks_jev(store: InMemoryStore) -> No
     result = await remember(store, TENANT, correction, jev_client=_jev(lambda _: 500, seen))
 
     assert result.created and seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_claim_is_never_folded_into_an_entity(store: InMemoryStore) -> None:
+    """Entities describe things; only claims are compared, and only claims are sent."""
+    from coletar.schema.objects import ContextObject, ExtractionMethod, OriginType, Provenance
+
+    entity = ContextObject(
+        type=ObjectType.ENTITY,
+        content="Georgetown University, where the user studies",
+        extraction_method=ExtractionMethod.MCP_LIVE_WRITE,
+        provenance=Provenance(origin_type=OriginType.AGENT, provider=Provider.CLAUDE),
+    )
+    await store.put_object(TENANT, entity)
+    seen: list[dict[str, Any]] = []
+
+    result = await remember(
+        store, TENANT, _memory("Studies at Georgetown University"),
+        jev_client=_jev(lambda _: _relation("duplicate", 0.99), seen),
+    )
+
+    assert result.created and seen == []
+
+
+@pytest.mark.asyncio
+async def test_a_project_document_is_never_sent_to_jev(store: InMemoryStore) -> None:
+    """Importers write projects and artifacts through remember(); only claims may
+    reach TypeSafe, and a re-import must still fold into what it wrote before."""
+    from coletar.schema.objects import ContextObject, ExtractionMethod, OriginType, Provenance
+
+    def doc() -> ContextObject:
+        return ContextObject(
+            type=ObjectType.ARTIFACT,
+            content="Design notes for the ledger: integer cents, never floats.",
+            extraction_method=ExtractionMethod.PROVIDER_CURATED,
+            provenance=Provenance(origin_type=OriginType.USER, provider=Provider.CLAUDE),
+        )
+
+    seen: list[dict[str, Any]] = []
+    client = _jev(lambda _: _relation("new", 0.99), seen)
+    first = await remember(store, TENANT, doc(), jev_client=client)
+    second = await remember(store, TENANT, doc(), jev_client=client)
+
+    assert first.created and second.corroborated == first.object_id
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_extracted_facts_are_reconciled(
+    store: InMemoryStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fact written straight to the store could never retire the one it replaces."""
+    monkeypatch.setenv("COLETAR_GATE_PROVIDER", "none")
+    get_settings.cache_clear()
+    old = await _seed(store, "I am a student at Georgetown")
+
+    async def propose(**_: Any) -> Proposal:
+        return Proposal(
+            entities=[ProposedEntity(name="Stanford", content="A university")],
+            facts=[ProposedFact(content="I am a student at Stanford", about=["Stanford"])],
+        )
+
+    monkeypatch.setattr("coletar.extraction.ollama.propose", propose)
+    await capture_turn(
+        store, TENANT, "I am a student at Stanford now.", surface=Provider.CLAUDE
+    )
+    seen: list[dict[str, Any]] = []
+
+    await extract_pending(
+        store, TENANT, provider="ollama", model="t",
+        jev_client=_jev(lambda _: _relation("supersedes", 0.97), seen),
+    )
+
+    facts = [
+        f for f in await store.list_objects(TENANT, type=ObjectType.FACT)
+        if f.content == "I am a student at Stanford"
+    ]
+    assert len(facts) == 1 and facts[0].supersedes == old
+    assert all(s["existing_memory"]["statement"] != "A university" for s in seen)
 
 
 # -- gate --------------------------------------------------------------------------

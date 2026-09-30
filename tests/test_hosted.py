@@ -150,6 +150,9 @@ def test_signed_in_account_gets_its_own_graph(hosted):
     posture = hosted.get("/web-api/connections", headers=as_("alice")).json()
     assert posture["public_workspace"] is False
     assert posture["account_auth"] is True
+    # The suite turns both Jev stages off, so the page must not name TypeSafe.
+    assert posture["gate_backend"] == "off"
+    assert posture["reconcile_backend"] == "local"
 
 
 def test_two_accounts_cannot_reach_each_other(hosted):

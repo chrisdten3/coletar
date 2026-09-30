@@ -171,7 +171,9 @@ async def extract_pending(
                     "extraction_model": chosen_model,
                 },
             )
-            if isinstance(obj, Memory):
+            # Memories and facts are both claims, so both are reconciled: a fact
+            # written straight to the store could never retire the one it replaces.
+            if isinstance(obj, Memory) or obj.type is ObjectType.FACT:
                 result = await remember(
                     store, tenant_id, obj, event=event, jev_client=jev_client
                 )
