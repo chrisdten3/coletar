@@ -12,11 +12,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
   mount();
 });
 const adapters = {
+  // ChatGPT's 2026-09 composer is a ProseMirror textbox with no id, its Send button
+  // has only an aria-label, and replies lost `data-message-author-role`: the reply
+  // body is a CSS-module `MarkdownRoot-<hash>` that user messages do not use. The
+  // older selectors stay first for accounts still served the previous layout.
   "chatgpt.com": {
-    composers: ['#prompt-textarea'],
-    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
-    stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]'],
-    replies: '[data-message-author-role="assistant"]',
+    composers: ['#prompt-textarea', 'div[contenteditable="true"][role="textbox"]'],
+    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send"]'],
+    stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]'],
+    replies: '[data-message-author-role="assistant"], [class*="MarkdownRoot-"]',
     text: '.markdown',
   },
   "claude.ai": {
@@ -314,7 +318,10 @@ async function observeReply() {
   const node = nodes[0];
   if (turn.node && node !== turn.node) { pending = null; return; }
   turn.node = node;
-  const bodies = adapter.text ? [...node.querySelectorAll(adapter.text)] : [node];
+  // A reply node that is itself the body (ChatGPT's current layout) has no inner
+  // `.markdown`, so fall back to the node rather than reading nothing.
+  const inner = adapter.text ? [...node.querySelectorAll(adapter.text)] : [];
+  const bodies = inner.length ? inner : [node];
   const text = bodies.map((body) => body.innerText || "").join("\n\n").trim();
   if (!text || text.length > 100_000) return;
   if (text !== turn.text) { turn.text = text; turn.changed = Date.now(); return; }
