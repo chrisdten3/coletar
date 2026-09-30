@@ -6,7 +6,7 @@ const {webcrypto} = require('node:crypto');
 const core = require('../../extension/bridge-core.js');
 const settle = () => new Promise((r) => setTimeout(r, 15));
 
-function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false} = {}) {
+function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy'} = {}) {
   let clock = 1000;
   let focused = true;
   let streaming = false;
@@ -45,10 +45,20 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
     },
     getElementById:(id)=> id==='coleta-status' ? status : {style:{}},
     querySelectorAll:(selector)=> {
+      const any = (...candidates) => selector.split(',').map((s) => s.trim()).some((s) => candidates.includes(s));
+      // ChatGPT as of 2026-09: a ProseMirror textbox with no id, a Send button with
+      // only an aria-label, and replies marked by a CSS-module class alone.
+      if (layout === '2026-09') {
+        if (selector === 'div[contenteditable="true"][role="textbox"]') return [editor];
+        if (selector === 'button[aria-label="Send"]') return [send];
+        if (selector === 'button[aria-label^="Stop"]') return [stop];
+        if (any('[class*="MarkdownRoot-"]')) return replies;
+        return [];
+      }
       if (selector === '#prompt-textarea' || selector.includes('data-lexical-editor')) return [editor];
       if (selector.includes('send-button') || selector === 'button[aria-label="Send message"]') return [send];
       if (selector.includes('stop-button') || selector === 'button[aria-label="Stop response"]') return [stop];
-      if (selector === '[data-message-author-role="assistant"]' || selector === '.font-claude-response') return replies;
+      if (any('[data-message-author-role="assistant"]', '.font-claude-response')) return replies;
       return [];
     },
     addEventListener:(event, cb)=>{listeners[event]=cb;},
@@ -85,7 +95,8 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
     changeSettings:()=>storageChange({automatic:{newValue:false}},'sync'),
     tick:async (ms=500)=>{clock+=ms; for(const cb of timers)cb();await settle();},
     stream:(value)=>{streaming=value;},
-    reply:(text)=> { const node={isConnected:true,getClientRects:()=>[1],innerText:text,querySelectorAll:()=>[node]}; replies=[node]; return node; },
+    // In the 2026-09 layout the reply node is itself the body: no inner `.markdown`.
+    reply:(text)=> { const node={isConnected:true,getClientRects:()=>[1],innerText:text,querySelectorAll:()=>layout==='2026-09'?[]:[node]}; replies=[node]; return node; },
   };
 }
 
@@ -139,6 +150,16 @@ test('new assistant response captured only after streaming ends and settles',asy
   const h=harness();await settle();h.reply('Old reply');h.sendEvent(h.event());await settle();
   h.stream(true);h.reply('New reply');await h.tick();await h.tick(2000);
   assert.equal(h.captured.length,1);
+  h.stream(false);await h.tick(2000);await h.tick(2000);
+  assert.equal(h.captured.length,2);assert.equal(h.captured[1].role,'assistant');
+  assert.equal(h.captured[1].text,'New reply');assert.equal(h.captured[1].turn_id,h.captured[0].turn_id);
+});
+test('ChatGPT 2026-09 layout: prompt and reply are both captured',async()=>{
+  const h=harness({rich:true,layout:'2026-09'});await settle();
+  h.sendEvent(h.event());await settle();
+  assert.equal(h.sent.length,1);
+  assert.equal(h.captured.length,1);assert.equal(h.captured[0].text,'What next?');
+  h.stream(true);h.reply('New reply');await h.tick();await h.tick(2000);
   h.stream(false);await h.tick(2000);await h.tick(2000);
   assert.equal(h.captured.length,2);assert.equal(h.captured[1].role,'assistant');
   assert.equal(h.captured[1].text,'New reply');assert.equal(h.captured[1].turn_id,h.captured[0].turn_id);
