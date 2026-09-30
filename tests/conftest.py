@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -71,6 +72,20 @@ def _build_export_archives() -> None:
 
 
 _build_export_archives()
+
+
+@pytest.fixture(autouse=True)
+def _no_jev_by_default(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Both Jev stages default on, and `.env` may hold a real TypeSafe key, so without
+    this every `remember()` in the suite would call TypeSafe. Tests of the stages
+    opt back in and pass a mock transport."""
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_GATE_PROVIDER", "none")
+    monkeypatch.setenv("COLETAR_RECONCILE_PROVIDER", "token_overlap")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 def scope_from(raw: str | None) -> Scope:

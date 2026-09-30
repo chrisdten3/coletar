@@ -92,6 +92,36 @@ tests pass.
    - **Still §7.** The objects are rendered as background, not instructions, and
      nothing in the answer path acts on their content.
 
+   **The decision stages run on Jev by default.** Added 2026-09-29 by the owner's
+   decision, and it departs from two sentences above, so both are named here
+   rather than quietly overridden. The extraction bullet says sending turns to a
+   third party is "opt-in, not a default"; the gate sends every captured user turn
+   to TypeSafe unless it is turned off. The extraction bullet also says "only
+   candidate turns, never the graph"; reconcile sends stored memories. Both are
+   defaults because they are how live sync is meant to work, not add-ons to it
+   (docs/DECISION_EVAL.md). What still holds:
+   - **Two settings, two consents.** `gate_provider` (default `jev`) sends a
+     captured turn; `reconcile_provider` (default `jev`) sends stored memories.
+     Neither rides on the other or on `extraction_provider`, and each can be
+     turned off alone: `none` sends every turn to extraction, `token_overlap`
+     keeps reconcile on the machine.
+   - **The gate sends one turn.** Only the turn being judged. No memories, no
+     other conversations.
+   - **Reconcile sends a bounded neighbour set, never the graph.** One candidate
+     plus at most `reconcile_neighbours` stored memories (default 3), the nearest
+     to it by search. Never raw episodes, never a scope, never "everything recent".
+   - **TypeSafe is named as a subprocessor twice.** Once for captured turns (gate)
+     and once for stored memories (reconcile), in docs/DEPLOYMENT.md. Same vendor,
+     different data class, the same reasoning as the history entry above.
+   - **Unsure or unavailable never retires anything.** A gate outage passes the
+     turn to extraction; a rejected turn is never looked at again, so failing
+     closed would lose it silently. A reconcile answer below `reconcile_floor`
+     keeps both memories and flags the new one, and a reconcile outage falls back
+     to token-overlap deduplication, which only ever corroborates.
+   - **Still §7.** Jev can only return a label from the set it was offered, about a
+     pair coletar chose; the answer is recorded in the write's event, and nothing
+     acts on the content of either memory.
+
 2. **No UI driving on the destination side either.** The ChatGPT compiler emits a
    package the *user* uploads through GPT Builder. It does not drive GPT Builder.
 

@@ -23,16 +23,45 @@ in a different session, is real provenance. Dropping it silently throws that awa
 So the existing object gets an `object.corroborated` event and a refreshed
 `updated_at`, and its confidence is deliberately left alone -- repetition is weak
 evidence, and inflating a score on it is arithmetic nobody asked for.
+
+**Reconcile.** Token overlap can say "these look alike" but not what the new memory
+does to the old one: "Moved to Denver" and "Lives in Boston" share no words, while
+"Uses Postgres" and "Uses Postgres 16 with pgvector" share nearly all of them and
+must not be folded together. So, by default, the nearest few stored memories are
+put to Jev as a four-way question (docs/DECISION_EVAL.md). The answer is acted on
+only above `reconcile_floor`: a wrong `supersedes` retires something true, so below
+the floor both memories are kept and the new one is flagged. Whenever Jev cannot
+answer, the token-overlap check runs instead, because it is what this boundary did
+before and it never retires anything.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
+from typing import Any
 
+import httpx
+
+from coletar.extraction.decisions import (
+    STAGE_VERSION,
+    ReconcileDecision,
+    Statement,
+    reconcile,
+)
+from coletar.extraction.jev import JevConfigurationError, JevUnavailable
 from coletar.retrieval.context import NEAR_DUPLICATE_THRESHOLD
 from coletar.retrieval.embedding import tokenize
 from coletar.schema.events import Actor, Event, EventType
-from coletar.schema.objects import ContextObject, Memory, ObjectType, Provider, Scope
+from coletar.schema.objects import (
+    ContextObject,
+    Edge,
+    EdgeType,
+    Memory,
+    ObjectType,
+    Provider,
+    Scope,
+)
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
@@ -49,6 +78,10 @@ class IngestResult:
     created: bool
     #: Set when the write was folded into an object that already said this.
     corroborated: str | None = None
+    #: Set when the new memory replaced a stored one.
+    superseded: str | None = None
+    #: Stored memories the new one may conflict with, kept rather than acted on.
+    flagged: list[str] = field(default_factory=list)
 
     @property
     def stored(self) -> bool:
@@ -93,6 +126,86 @@ async def find_duplicate(
     return None
 
 
+async def _neighbours(
+    store: Store,
+    tenant_id: TenantId,
+    memory: Memory,
+    caller_surface: Provider | None,
+    limit: int,
+) -> list[ContextObject]:
+    hits = await store.search(
+        tenant_id, memory.content, scope=memory.scope, caller_surface=caller_surface,
+        top_k=_CANDIDATES,
+    )
+    # Episodes are evidence, not claims (see `find_duplicate`), and are the raw
+    # turns reconcile must never send.
+    return [h.obj for h in hits if h.obj.type is not ObjectType.EPISODE][:limit]
+
+
+def _said(obj: ContextObject) -> Statement:
+    return Statement(obj.content, (obj.valid_from or obj.created_at).date())
+
+
+@dataclass
+class _Reconciled:
+    duplicate: ContextObject | None = None
+    supersedes: ContextObject | None = None
+    contradicts: list[ContextObject] = field(default_factory=list)
+    flagged: list[tuple[ContextObject, ReconcileDecision]] = field(default_factory=list)
+    detail: dict[str, Any] = field(default_factory=dict)
+
+
+async def _reconcile(
+    store: Store,
+    tenant_id: TenantId,
+    memory: Memory,
+    caller_surface: Provider | None,
+    client: httpx.AsyncClient | None,
+) -> _Reconciled | None:
+    """Ask Jev about each neighbour. None means Jev could not answer."""
+    from coletar.config import get_settings
+
+    settings = get_settings()
+    neighbours = await _neighbours(
+        store, tenant_id, memory, caller_surface, settings.reconcile_neighbours
+    )
+    result = _Reconciled(detail={"provider": "jev", "stage": STAGE_VERSION, "answers": []})
+    if not neighbours:
+        return result
+    candidate = _said(memory)
+    try:
+        decisions = await asyncio.gather(
+            *(reconcile(candidate, _said(n), client=client) for n in neighbours)
+        )
+    except (JevUnavailable, JevConfigurationError):
+        return None
+
+    best_supersede = 0.0
+    for neighbour, decision in zip(neighbours, decisions, strict=True):
+        result.detail["answers"].append(
+            {
+                "object_id": neighbour.id,
+                "label": decision.label,
+                "confidence": decision.confidence,
+                "model": decision.evaluation.model,
+                "request_id": decision.evaluation.request_id,
+            }
+        )
+        if decision.label == "new":
+            continue
+        if decision.confidence < settings.reconcile_floor:
+            result.flagged.append((neighbour, decision))
+        elif decision.label == "duplicate":
+            result.duplicate = result.duplicate or neighbour
+        elif decision.label == "supersedes":
+            if decision.confidence > best_supersede:
+                best_supersede = decision.confidence
+                result.supersedes = neighbour
+        else:
+            result.contradicts.append(neighbour)
+    return result
+
+
 async def remember(
     store: Store,
     tenant_id: TenantId,
@@ -101,40 +214,91 @@ async def remember(
     event: Event | None = None,
     dedup: bool = True,
     caller_surface: Provider | None = None,
+    jev_client: httpx.AsyncClient | None = None,
 ) -> IngestResult:
-    """Store one observed memory, folding it into an existing object if it repeats.
+    """Store one observed memory, reconciling it against what is already stored.
 
     `dedup=False` exists for paths that must write exactly what they were given --
     a replay, or a test asserting about storage rather than about ingestion. It is
-    not the default, because every path that observes text should be deduplicating.
+    not the default, because every path that observes text should be reconciling.
     """
-    if dedup:
-        # A correction is *supposed* to resemble what it corrects, so it must never
-        # be folded into it -- that would silently discard the correction and leave
-        # the stale fact standing.
-        existing = (
-            None
-            if memory.supersedes is not None
-            else await find_duplicate(
-                store, tenant_id, memory.content, scope=memory.scope,
-                caller_surface=caller_surface,
-            )
-        )
-        if existing is not None:
-            await store.append_event(
-                tenant_id,
-                Event(
-                    type=EventType.OBJECT_CORROBORATED,
-                    object_id=existing.id,
-                    actor=(event.actor if event else Actor.SYSTEM),
-                    provider=memory.provenance.provider,
-                    detail={
-                        "restated_as": memory.content,
-                        "extraction_method": memory.extraction_method,
-                    },
-                ),
-            )
-            return IngestResult(object_id=existing.id, created=False, corroborated=existing.id)
+    from coletar.config import get_settings
 
-    stored = await store.put_object(tenant_id, memory, event=event)
-    return IngestResult(object_id=stored.id, created=True)
+    # A correction is *supposed* to resemble what it corrects, so it must never be
+    # folded into it -- that would silently discard the correction and leave the
+    # stale fact standing. The caller has already said what it replaces.
+    if not dedup or memory.supersedes is not None:
+        stored = await store.put_object(tenant_id, memory, event=event)
+        return IngestResult(object_id=stored.id, created=True)
+
+    # Reconcile may set `supersedes` or add a flag; the caller's object stays as given.
+    memory = memory.model_copy(deep=True)
+    outcome: _Reconciled | None = None
+    fallback: str | None = None
+    if get_settings().reconcile_provider == "jev":
+        outcome = await _reconcile(store, tenant_id, memory, caller_surface, jev_client)
+        if outcome is None:
+            fallback = "jev_unavailable"
+
+    if outcome is None:
+        existing = await find_duplicate(
+            store, tenant_id, memory.content, scope=memory.scope,
+            caller_surface=caller_surface,
+        )
+        detail: dict[str, Any] = {"provider": "token_overlap"}
+        if fallback:
+            detail["fallback_reason"] = fallback
+        outcome = _Reconciled(duplicate=existing, detail=detail)
+
+    if outcome.duplicate is not None:
+        await store.append_event(
+            tenant_id,
+            Event(
+                type=EventType.OBJECT_CORROBORATED,
+                object_id=outcome.duplicate.id,
+                actor=(event.actor if event else Actor.SYSTEM),
+                provider=memory.provenance.provider,
+                detail={
+                    "restated_as": memory.content,
+                    "extraction_method": memory.extraction_method,
+                    "reconcile": outcome.detail,
+                },
+            ),
+        )
+        return IngestResult(
+            object_id=outcome.duplicate.id, created=False, corroborated=outcome.duplicate.id
+        )
+
+    if outcome.supersedes is not None:
+        memory.supersedes = outcome.supersedes.id
+    if outcome.flagged:
+        # Kept, not acted on. The flag lives in payload so the Context Inspector
+        # can show the pair and a human can decide what the model would not.
+        memory.payload = {
+            **memory.payload,
+            "reconcile_flags": [
+                {"object_id": n.id, "label": d.label, "confidence": d.confidence}
+                for n, d in outcome.flagged
+            ],
+        }
+    write_event = event or Event(
+        type=EventType.OBJECT_CREATED,
+        object_id=memory.id,
+        actor=Actor.SYSTEM,
+        provider=memory.provenance.provider,
+        detail={"type": memory.type, "scope": str(memory.scope)},
+    )
+    write_event = write_event.model_copy(
+        update={"detail": {**write_event.detail, "reconcile": outcome.detail}}
+    )
+    stored = await store.put_object(tenant_id, memory, event=write_event)
+    for other in outcome.contradicts:
+        await store.add_edge(
+            tenant_id, Edge(src_id=stored.id, dst_id=other.id, type=EdgeType.CONTRADICTS)
+        )
+    return IngestResult(
+        object_id=stored.id,
+        created=True,
+        superseded=outcome.supersedes.id if outcome.supersedes else None,
+        flagged=[n.id for n, _ in outcome.flagged] + [o.id for o in outcome.contradicts],
+    )

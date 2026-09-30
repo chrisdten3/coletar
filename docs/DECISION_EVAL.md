@@ -2,7 +2,10 @@
 
 **Status:** harness built 2026-09-28. First read on the committed fixtures only (see
 [Results](#results)): gate passes, reconcile passes only at a 0.90 floor after a
-wording change. Neither is a go decision until confirmed on the real labelled sets.
+wording change. Both stages were wired into live sync on 2026-09-29, on by default,
+at those settings (`gate_threshold` 0.28, `reconcile_floor` 0.90) — before the real
+labelled sets exist. Building those sets is deferred; until they are, both numbers
+are tuned on the sets they were scored on.
 
 The extraction pipeline has two stages whose answer is a label rather than text:
 

@@ -233,9 +233,28 @@ class Settings(BaseSettings):
 
     extraction_batch_size: int = 100
 
-    # Jev (TypeSafe's decision model) for the two yes/no-shaped stages: the live
-    # gate and the reconcile decision. Phase 0 measures whether it can hold either
-    # (docs/DECISION_EVAL.md); nothing in the capture or import path calls it yet.
+    # Jev (TypeSafe's decision model) for the two label-shaped stages. Both are on
+    # by default (AGENTS.md §1, amended 2026-09-29) and are two settings, not one,
+    # because they send different data: the gate sends a captured turn, reconcile
+    # sends stored memories. Turning one off must not depend on the other.
+    #
+    # The gate decides whether a captured turn reaches the extractor at all.
+    # `none` sends every pending turn to extraction, as before the gate existed.
+    gate_provider: Literal["jev", "none"] = "jev"
+    #: Tuned for recall on the committed fixture (docs/DECISION_EVAL.md, stage
+    #: c501eae842f0): the highest threshold keeping ≥95% of durable turns.
+    gate_threshold: float = 0.28
+    # Reconcile decides what a new memory does to the stored ones it resembles.
+    # `token_overlap` is the local near-duplicate check that preceded it, and is
+    # also what reconcile falls back to whenever Jev cannot answer.
+    reconcile_provider: Literal["jev", "token_overlap"] = "jev"
+    #: Below this confidence an answer is not acted on: both memories are kept and
+    #: the new one is flagged. 0.90 is the lowest floor under a 2% false-supersede
+    #: rate on the seed set (stage 756f200bc52c).
+    reconcile_floor: float = 0.90
+    #: The most stored memories one reconcile may send. This is the bound that
+    #: makes "a few neighbours, never the graph" true rather than aspirational.
+    reconcile_neighbours: int = 3
     # Accepts the vendor's own variable, as `openai_api_key` does.
     jev_api_key: str = Field(
         default="", validation_alias=AliasChoices("COLETAR_JEV_API_KEY", "TYPESAFE_API_KEY")

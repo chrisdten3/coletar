@@ -4,16 +4,28 @@ The live collect-then-batch mode writes no provisional regex memory. A fast fals
 positive is still a false positive, and the existing live fixture is too narrow to
 justify exposing one before semantic extraction. This job is the authoritative
 extraction pass for captured turns.
+
+**The gate.** Most turns hold nothing durable, and each one sent to the extractor
+is a paid model call. So, by default, Jev is first asked whether the turn is worth
+remembering at all (docs/DECISION_EVAL.md). The threshold is set for recall, because
+a turn the gate rejects is never looked at again. For the same reason the gate
+fails open: if Jev cannot answer, the turn goes to the extractor as if the gate did
+not exist, and the episode records that it was not gated.
 """
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Any
+
+import httpx
 
 from coletar.capture import PENDING, is_pending
 from coletar.episode_crypto import EpisodeKeyUnavailable, decrypt_episode
 from coletar.extraction import extract_with_model
+from coletar.extraction.decisions import STAGE_VERSION, gate
+from coletar.extraction.jev import JevConfigurationError, JevUnavailable
 from coletar.extraction.providers import (
     ExtractionProviderName,
     ExtractionUnavailable,
@@ -45,6 +57,7 @@ def _stable_id(episode_id: str, obj: ContextObject) -> str:
 class ExtractionBatchReport:
     scanned: int = 0
     processed: int = 0
+    gated_out: int = 0
     unavailable: int = 0
     objects: int = 0
     edges: int = 0
@@ -53,10 +66,30 @@ class ExtractionBatchReport:
         return {
             "scanned": self.scanned,
             "processed": self.processed,
+            "gated_out": self.gated_out,
             "unavailable": self.unavailable,
             "objects": self.objects,
             "edges": self.edges,
         }
+
+
+async def _gate(
+    transcript: str, threshold: float, client: httpx.AsyncClient | None
+) -> dict[str, Any]:
+    """Jev's verdict on one turn, as recorded on the episode. Never raises for Jev."""
+    try:
+        decision = await gate(transcript, client=client)
+    except (JevUnavailable, JevConfigurationError) as exc:
+        return {"provider": "jev", "status": "unavailable", "reason": exc.__class__.__name__}
+    return {
+        "provider": "jev",
+        "status": "passed" if decision.probability >= threshold else "rejected",
+        "probability": decision.probability,
+        "threshold": threshold,
+        "stage": STAGE_VERSION,
+        "model": decision.evaluation.model,
+        "request_id": decision.evaluation.request_id,
+    }
 
 
 async def extract_pending(
@@ -66,6 +99,7 @@ async def extract_pending(
     provider: ExtractionProviderName | None = None,
     model: str | None = None,
     limit: int | None = None,
+    jev_client: httpx.AsyncClient | None = None,
 ) -> ExtractionBatchReport:
     """Process pending episodes once; unavailable turns remain pending for retry."""
     from coletar.config import get_settings
@@ -84,6 +118,24 @@ async def extract_pending(
     for episode in pending:
         try:
             transcript = await decrypt_episode(store, tenant_id, episode)
+        except EpisodeKeyUnavailable as exc:
+            await _unavailable(store, tenant_id, episode, exc, chosen_provider, chosen_model)
+            report.unavailable += 1
+            continue
+
+        verdict: dict[str, Any] | None = None
+        if settings.gate_provider == "jev":
+            verdict = await _gate(transcript, settings.gate_threshold, jev_client)
+            if verdict["status"] == "rejected":
+                await _complete(
+                    store, tenant_id, episode,
+                    {"gate": verdict, "extracted_objects": 0},
+                    {"model_extraction_complete": True, "gated_out": True, "gate": verdict},
+                )
+                report.gated_out += 1
+                continue
+
+        try:
             objects, edges = await extract_with_model(
                 transcript=transcript,
                 scope=episode.scope,
@@ -91,25 +143,9 @@ async def extract_pending(
                 extraction_provider=chosen_provider,
                 model=chosen_model,
             )
-        except (EpisodeKeyUnavailable, ExtractionUnavailable) as exc:
+        except ExtractionUnavailable as exc:
             report.unavailable += 1
-            # The episode stays pending, so nothing is lost — but a retry that
-            # leaves no trace makes a provider outage look exactly like an empty
-            # queue. `coletar queue-health` reads these back.
-            await store.append_event(
-                tenant_id,
-                Event(
-                    type=EventType.EXTRACTION_UNAVAILABLE,
-                    object_id=episode.id,
-                    actor=Actor.JOB,
-                    provider=episode.provenance.provider,
-                    detail={
-                        "reason": exc.__class__.__name__,
-                        "extraction_provider": chosen_provider,
-                        "extraction_model": chosen_model,
-                    },
-                ),
-            )
+            await _unavailable(store, tenant_id, episode, exc, chosen_provider, chosen_model)
             continue
 
         proposed_to_stored: dict[str, str] = {}
@@ -136,7 +172,9 @@ async def extract_pending(
                 },
             )
             if isinstance(obj, Memory):
-                result = await remember(store, tenant_id, obj, event=event)
+                result = await remember(
+                    store, tenant_id, obj, event=event, jev_client=jev_client
+                )
                 stored_id = result.object_id
             elif obj.type is ObjectType.ENTITY:
                 name = str(obj.payload.get("name", ""))
@@ -171,24 +209,65 @@ async def extract_pending(
             await store.add_edge(tenant_id, mapped)
             report.edges += 1
 
-        episode.payload = {
-            **episode.payload,
-            PENDING: False,
-            "extraction_provider": chosen_provider,
-            "extraction_model": chosen_model,
-            "extracted_objects": len(objects),
-        }
-        await store.put_object(
-            tenant_id,
-            episode,
-            event=Event(
-                type=EventType.OBJECT_UPDATED,
-                object_id=episode.id,
-                actor=Actor.SYSTEM,
-                provider=episode.provenance.provider,
-                detail={"model_extraction_complete": True},
-            ),
+        await _complete(
+            store, tenant_id, episode,
+            {
+                "extraction_provider": chosen_provider,
+                "extraction_model": chosen_model,
+                "extracted_objects": len(objects),
+                **({"gate": verdict} if verdict else {}),
+            },
+            {"model_extraction_complete": True, **({"gate": verdict} if verdict else {})},
         )
         report.processed += 1
 
     return report
+
+
+async def _unavailable(
+    store: Store,
+    tenant_id: TenantId,
+    episode: ContextObject,
+    exc: Exception,
+    extraction_provider: str,
+    extraction_model: str,
+) -> None:
+    # The episode stays pending, so nothing is lost — but a retry that leaves no
+    # trace makes a provider outage look exactly like an empty queue. `coletar
+    # queue-health` reads these back.
+    await store.append_event(
+        tenant_id,
+        Event(
+            type=EventType.EXTRACTION_UNAVAILABLE,
+            object_id=episode.id,
+            actor=Actor.JOB,
+            provider=episode.provenance.provider,
+            detail={
+                "reason": exc.__class__.__name__,
+                "extraction_provider": extraction_provider,
+                "extraction_model": extraction_model,
+            },
+        ),
+    )
+
+
+async def _complete(
+    store: Store,
+    tenant_id: TenantId,
+    episode: ContextObject,
+    payload: dict[str, Any],
+    detail: dict[str, Any],
+) -> None:
+    """Take the episode off the queue, recording why, in one evented write."""
+    episode.payload = {**episode.payload, PENDING: False, **payload}
+    await store.put_object(
+        tenant_id,
+        episode,
+        event=Event(
+            type=EventType.OBJECT_UPDATED,
+            object_id=episode.id,
+            actor=Actor.SYSTEM,
+            provider=episode.provenance.provider,
+            detail=detail,
+        ),
+    )
