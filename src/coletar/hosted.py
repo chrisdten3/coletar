@@ -31,7 +31,7 @@ import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -74,6 +74,11 @@ class ConnectionStatus(BaseModel):
     #: render the wrong one.
     public_workspace: bool = False
     extraction_backend: str = "off"
+    #: Where captured turns and stored claims actually go, so the Capture page can
+    #: name every recipient. "jev" only when a key is set: without one neither stage
+    #: sends anything (the gate passes turns through, reconcile stays local).
+    gate_backend: Literal["jev", "off"] = "off"
+    reconcile_backend: Literal["jev", "local"] = "local"
     worker_schedule: str = "not configured"
     credentials: str = "Connector keys are stored in the deployment's private environment file."
 
@@ -219,6 +224,12 @@ def create_app() -> FastAPI:
             rest_url=settings.public_url.rstrip("/") + "/v1",
             capture_enabled=settings.capture_turns,
             extraction_backend=settings.extraction_provider if settings.capture_turns else "off",
+            gate_backend="jev"
+            if settings.capture_turns and settings.gate_provider == "jev" and settings.jev_api_key
+            else "off",
+            reconcile_backend="jev"
+            if settings.reconcile_provider == "jev" and settings.jev_api_key
+            else "local",
             worker_schedule="daily at 03:00 UTC, plus on demand"
             if settings.cron_secret
             else "on demand only",

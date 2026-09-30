@@ -57,13 +57,19 @@ from coletar.schema.objects import (
     ContextObject,
     Edge,
     EdgeType,
-    Memory,
     ObjectType,
     Provider,
     Scope,
 )
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
+
+#: What a new claim is compared against: other claims. Entities, projects,
+#: conversations and artifacts are descriptions or containers ("a project the user
+#: is building"), and folding a claim into one would leave no claim at all.
+RECONCILABLE: frozenset[ObjectType] = frozenset(
+    {ObjectType.MEMORY, ObjectType.FACT, ObjectType.DECISION}
+)
 
 #: How many candidates to consider. Deduplication only needs the nearest few: if the
 #: same fact is not in the top handful for its own text, it is not a duplicate.
@@ -104,8 +110,11 @@ async def find_duplicate(
     *,
     scope: Scope | None = None,
     caller_surface: Provider | None = None,
+    types: frozenset[ObjectType] | None = None,
 ) -> ContextObject | None:
     """The context lookup that happens *before* a write.
+
+    `types`, when given, limits what may count as the duplicate.
 
     `caller_surface` matters here for the same reason it matters on every other
     read path: without it, a write from surface A could silently corroborate an
@@ -119,9 +128,11 @@ async def find_duplicate(
         # A captured EPISODE may contain exactly the same sentence as the MEMORY
         # derived from it. They are evidence and claim, not duplicates. Folding the
         # memory into the episode leaves the graph with no memory at all.
-        if hit.obj.type is not ObjectType.EPISODE and is_near_duplicate(
-            content, hit.obj.content
-        ):
+        if hit.obj.type is ObjectType.EPISODE:
+            continue
+        if types is not None and hit.obj.type not in types:
+            continue
+        if is_near_duplicate(content, hit.obj.content):
             return hit.obj
     return None
 
@@ -129,7 +140,7 @@ async def find_duplicate(
 async def _neighbours(
     store: Store,
     tenant_id: TenantId,
-    memory: Memory,
+    memory: ContextObject,
     caller_surface: Provider | None,
     limit: int,
 ) -> list[ContextObject]:
@@ -137,9 +148,9 @@ async def _neighbours(
         tenant_id, memory.content, scope=memory.scope, caller_surface=caller_surface,
         top_k=_CANDIDATES,
     )
-    # Episodes are evidence, not claims (see `find_duplicate`), and are the raw
-    # turns reconcile must never send.
-    return [h.obj for h in hits if h.obj.type is not ObjectType.EPISODE][:limit]
+    # Claims only. This also keeps out episodes, which are evidence rather than
+    # claims (see `find_duplicate`) and are the raw turns reconcile must never send.
+    return [h.obj for h in hits if h.obj.type in RECONCILABLE][:limit]
 
 
 def _said(obj: ContextObject) -> Statement:
@@ -158,7 +169,7 @@ class _Reconciled:
 async def _reconcile(
     store: Store,
     tenant_id: TenantId,
-    memory: Memory,
+    memory: ContextObject,
     caller_surface: Provider | None,
     client: httpx.AsyncClient | None,
 ) -> _Reconciled | None:
@@ -209,14 +220,18 @@ async def _reconcile(
 async def remember(
     store: Store,
     tenant_id: TenantId,
-    memory: Memory,
+    memory: ContextObject,
     *,
     event: Event | None = None,
     dedup: bool = True,
     caller_surface: Provider | None = None,
     jev_client: httpx.AsyncClient | None = None,
 ) -> IngestResult:
-    """Store one observed memory, reconciling it against what is already stored.
+    """Store one observed memory or fact, reconciling it against stored claims.
+
+    Facts come through here as well as memories. A fact is as much a claim about the
+    user as a memory is, and "I transferred to Stanford" must be able to retire "I
+    am a student at Georgetown" whichever of the two types extraction chose.
 
     `dedup=False` exists for paths that must write exactly what they were given --
     a replay, or a test asserting about storage rather than about ingestion. It is
@@ -243,7 +258,7 @@ async def remember(
     if outcome is None:
         existing = await find_duplicate(
             store, tenant_id, memory.content, scope=memory.scope,
-            caller_surface=caller_surface,
+            caller_surface=caller_surface, types=RECONCILABLE,
         )
         detail: dict[str, Any] = {"provider": "token_overlap"}
         if fallback:

@@ -107,9 +107,10 @@ effect once `TYPESAFE_API_KEY` is set; without a key both degrade safely, as bel
   turn is sent, alone, to decide whether it reaches extraction. No stored memories
   or other conversations are sent. If Jev cannot answer, the turn goes to extraction
   and the episode records `gate.status = unavailable`.
-- **Reconcile, stored memories.** `COLETAR_RECONCILE_PROVIDER=jev`. Each new memory
-  is sent with at most `COLETAR_RECONCILE_NEIGHBOURS` (default 3) of the most
-  similar stored memories and their dates. Never raw turns, and never the graph.
+- **Reconcile, stored claims.** `COLETAR_RECONCILE_PROVIDER=jev`. Each new memory or
+  fact is sent with at most `COLETAR_RECONCILE_NEIGHBOURS` (default 3) of the most
+  similar stored memories, facts or decisions, and their dates. Never raw turns,
+  never entities, and never the graph.
   If Jev cannot answer, the local token-overlap check runs instead.
 
 Set `COLETAR_GATE_PROVIDER=none` or `COLETAR_RECONCILE_PROVIDER=token_overlap` to

@@ -244,7 +244,7 @@ class Settings(BaseSettings):
     #: Tuned for recall on the committed fixture (docs/DECISION_EVAL.md, stage
     #: c501eae842f0): the highest threshold keeping ≥95% of durable turns.
     gate_threshold: float = 0.28
-    # Reconcile decides what a new memory does to the stored ones it resembles.
+    # Reconcile decides what a new memory or fact does to the stored claims it resembles.
     # `token_overlap` is the local near-duplicate check that preceded it, and is
     # also what reconcile falls back to whenever Jev cannot answer.
     reconcile_provider: Literal["jev", "token_overlap"] = "jev"
@@ -252,7 +252,7 @@ class Settings(BaseSettings):
     #: the new one is flagged. 0.90 is the lowest floor under a 2% false-supersede
     #: rate on the seed set (stage 756f200bc52c).
     reconcile_floor: float = 0.90
-    #: The most stored memories one reconcile may send. This is the bound that
+    #: The most stored claims one reconcile may send. This is the bound that
     #: makes "a few neighbours, never the graph" true rather than aspirational.
     reconcile_neighbours: int = 3
     # Accepts the vendor's own variable, as `openai_api_key` does.

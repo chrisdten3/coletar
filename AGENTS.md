@@ -108,15 +108,18 @@ tests pass.
    - **The gate sends one turn.** Only the turn being judged. No memories, no
      other conversations.
    - **Reconcile sends a bounded neighbour set, never the graph.** One candidate
-     plus at most `reconcile_neighbours` stored memories (default 3), the nearest
-     to it by search. Never raw episodes, never a scope, never "everything recent".
+     plus at most `reconcile_neighbours` stored claims (default 3), the nearest to
+     it by search. Claims means memories, facts and decisions: a new fact is
+     reconciled the same way as a new memory (added 2026-09-30), because a fact
+     that skipped it could never retire the one it replaces. Never raw episodes,
+     never entities or containers, never a scope, never "everything recent".
    - **TypeSafe is named as a subprocessor twice.** Once for captured turns (gate)
-     and once for stored memories (reconcile), in docs/DEPLOYMENT.md. Same vendor,
+     and once for stored claims (reconcile), in docs/DEPLOYMENT.md. Same vendor,
      different data class, the same reasoning as the history entry above.
    - **Unsure or unavailable never retires anything.** A gate outage passes the
      turn to extraction; a rejected turn is never looked at again, so failing
      closed would lose it silently. A reconcile answer below `reconcile_floor`
-     keeps both memories and flags the new one, and a reconcile outage falls back
+     keeps both claims and flags the new one, and a reconcile outage falls back
      to token-overlap deduplication, which only ever corroborates.
    - **Still §7.** Jev can only return a label from the set it was offered, about a
      pair coletar chose; the answer is recorded in the write's event, and nothing
