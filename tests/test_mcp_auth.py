@@ -346,3 +346,108 @@ def test_configured_hosts_are_declared_to_the_transport(monkeypatch):
         assert settings.enable_dns_rebinding_protection is True
     finally:
         get_settings.cache_clear()
+
+
+# -- issued keys reach the served gate -----------------------------------------
+# Regression, 2026-09-30: `coletar account issue-key` stored a key in the directory
+# and `build_authenticator` only ever read `COLETAR_MCP_API_KEYS`, so every issued
+# key got a 401 from the hosted `/v1/*`. The directory authenticator itself was
+# tested; nothing tested that the server used it. These go through
+# `build_authenticator`, the function `build_app` calls, so they pin the wiring.
+@pytest.fixture
+def served_config(monkeypatch, tmp_path):
+    from coletar.accounts import reset_directory
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_STORE_PATH", str(tmp_path / "coletar.json"))
+    monkeypatch.setenv("COLETAR_MCP_API_KEYS", "")
+    get_settings.cache_clear()
+    reset_directory()
+    yield tmp_path / "coletar.accounts.json"
+    get_settings.cache_clear()
+    reset_directory()
+
+
+async def _tenant_app(scope, receive, send):
+    principal = current_principal()
+    body = principal.tenant_id.encode() if principal else b"anonymous"
+    await send({"type": "http.response.start", "status": 200, "headers": []})
+    await send({"type": "http.response.body", "body": body})
+
+
+def _served_client() -> httpx.AsyncClient:
+    from coletar.mcp.server import build_authenticator
+
+    app = AuthMiddleware(_tenant_app, build_authenticator())
+    return httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver")
+
+
+async def _provision(path) -> tuple[str, str]:
+    """An account and a key, written where the served directory will read them."""
+    from coletar.accounts.memory import InMemoryDirectory
+
+    directory = InMemoryDirectory(path)
+    owner = await directory.create_account("owner@example.com")
+    issued = await directory.issue_key(owner.id, name="claude")
+    return owner.tenant_id, issued.secret
+
+
+async def test_an_issued_key_authenticates_to_its_own_tenant(served_config):
+    tenant, secret = await _provision(served_config)
+
+    async with _served_client() as client:
+        response = await client.post("/v1/search", headers={"Authorization": f"Bearer {secret}"})
+
+    assert response.status_code == 200
+    assert response.text == tenant
+
+
+async def test_a_revoked_issued_key_is_refused_on_the_next_request(served_config):
+    from coletar.accounts import build_directory
+
+    _, secret = await _provision(served_config)
+
+    async with _served_client() as client:
+        headers = {"Authorization": f"Bearer {secret}"}
+        assert (await client.post("/v1/search", headers=headers)).status_code == 200
+        key = await build_directory().key_for_secret(secret)
+        assert key is not None
+        await build_directory().revoke_key(key.id)
+        assert (await client.post("/v1/search", headers=headers)).status_code == 401
+
+
+async def test_env_keys_still_work_beside_issued_ones(served_config, monkeypatch):
+    from coletar.config import get_settings
+
+    tenant, secret = await _provision(served_config)
+    monkeypatch.setenv("COLETAR_MCP_API_KEYS", ALICE_KEY)
+    get_settings.cache_clear()
+
+    async with _served_client() as client:
+        from_env = await client.post("/v1/search", headers={"Authorization": "Bearer sk-alice"})
+        issued = await client.post("/v1/search", headers={"Authorization": f"Bearer {secret}"})
+        unknown = await client.post("/v1/search", headers={"Authorization": "Bearer sk-nope"})
+
+    assert (from_env.status_code, from_env.text) == (200, "tenant_alice")
+    assert (issued.status_code, issued.text) == (200, tenant)
+    assert unknown.status_code == 401
+
+
+def test_the_server_refuses_to_start_with_neither_env_keys_nor_a_directory(served_config):
+    from coletar.mcp.server import build_authenticator
+
+    assert not served_config.exists()
+    with pytest.raises(AuthError, match="does not run unauthenticated"):
+        build_authenticator()
+
+
+async def test_env_keys_alone_still_serve_without_a_directory(served_config, monkeypatch):
+    from coletar.config import get_settings
+
+    monkeypatch.setenv("COLETAR_MCP_API_KEYS", ALICE_KEY)
+    get_settings.cache_clear()
+
+    async with _served_client() as client:
+        response = await client.post("/v1/search", headers={"Authorization": "Bearer sk-alice"})
+    assert (response.status_code, response.text) == (200, "tenant_alice")

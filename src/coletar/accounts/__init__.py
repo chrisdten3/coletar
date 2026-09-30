@@ -8,6 +8,8 @@ weakening the invariant it exists to hold.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from coletar.accounts.directory import Directory, DirectoryError
 from coletar.accounts.identity import (
     IdentityError,
@@ -33,8 +35,6 @@ def build_directory() -> Directory:
     if _singleton is not None:
         return _singleton
 
-    from pathlib import Path
-
     from coletar.config import get_settings
 
     settings = get_settings()
@@ -45,10 +45,33 @@ def build_directory() -> Directory:
     else:
         from coletar.accounts.memory import InMemoryDirectory
 
-        # Beside the graph snapshot rather than inside it: the store's format is
-        # versioned and replayed, and accounts are not graph objects.
-        _singleton = InMemoryDirectory(Path(settings.store_path).with_suffix(".accounts.json"))
+        _singleton = InMemoryDirectory(_local_directory_path())
     return _singleton
+
+
+def _local_directory_path() -> Path:
+    from coletar.config import get_settings
+
+    # Beside the graph snapshot rather than inside it: the store's format is
+    # versioned and replayed, and accounts are not graph objects.
+    return Path(get_settings().store_path).with_suffix(".accounts.json")
+
+
+def directory_configured() -> bool:
+    """Whether there is a directory that could hold an issued key.
+
+    The server's fail-closed check asks this before it starts. Postgres always has
+    one: the accounts table is part of the schema, and an empty one still means
+    `coletar account issue-key` has somewhere to write. The in-process directory
+    only exists once something has been provisioned into its file, so a fresh
+    clone with no env keys and no accounts still refuses to serve rather than
+    serving behind a gate nothing can pass.
+    """
+    from coletar.config import get_settings
+
+    if get_settings().store_backend == "postgres":
+        return True
+    return _local_directory_path().exists()
 
 
 def build_identity() -> IdentityProvider:
@@ -90,6 +113,7 @@ __all__ = [
     "build_directory",
     "build_identity",
     "build_identity_provider",
+    "directory_configured",
     "may_provision",
     "reset_directory",
     "resolve_account",

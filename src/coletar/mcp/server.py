@@ -29,6 +29,8 @@ from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from coletar.accounts import build_directory, directory_configured
+from coletar.accounts.authenticator import DirectoryAuthenticator
 from coletar.config import get_settings
 from coletar.ingest import remember
 from coletar.mcp.auth import (
@@ -36,6 +38,7 @@ from coletar.mcp.auth import (
     SCOPE_READ,
     SCOPE_WRITE,
     ApiKeyAuthenticator,
+    Authenticator,
     AuthError,
     AuthMiddleware,
     Principal,
@@ -395,17 +398,31 @@ async def healthz(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def build_authenticator() -> ApiKeyAuthenticator:
-    """Fail closed: no configured keys means the server refuses to start, rather
-    than starting with an auth layer that rejects every request at runtime."""
-    authenticator = ApiKeyAuthenticator.from_config(get_settings().mcp_api_keys)
-    if len(authenticator) == 0:
+def build_authenticator() -> Authenticator:
+    """Issued keys from the account directory, then `COLETAR_MCP_API_KEYS`.
+
+    Keys minted by `coletar account issue-key` live in the directory, and until this
+    read from it they were refused with a 401 on every request: the command
+    succeeded, the key was stored, and nothing on the request path ever looked.
+    The env keys stay as the fallback so an existing connector keeps working while
+    its owner is provisioned (see `DirectoryAuthenticator`).
+
+    Fail closed: with no env keys *and* no directory the server refuses to start,
+    rather than starting with an auth layer that rejects every request at runtime.
+    """
+    env_keys = ApiKeyAuthenticator.from_config(get_settings().mcp_api_keys)
+    if directory_configured():
+        return DirectoryAuthenticator(
+            build_directory(), fallback=env_keys if len(env_keys) else None
+        )
+    if len(env_keys) == 0:
         raise AuthError(
-            "No API keys configured. This server does not run unauthenticated. Set "
+            "No API keys configured. This server does not run unauthenticated. Issue "
+            "one with `coletar account issue-key <email>`, or set "
             'COLETAR_MCP_API_KEYS=\'[{"id":"alice","secret":"sk-...",'
             '"tenant_id":"tenant_alice"}]\' before serving.'
         )
-    return authenticator
+    return env_keys
 
 
 def transport_security() -> TransportSecuritySettings | None:
