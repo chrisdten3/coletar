@@ -253,7 +253,7 @@ async def product_app(request: Request) -> HTMLResponse:
 
 
 @router.get("/web-api/state", response_model=Snapshot)
-async def state(owner: Tenant) -> Snapshot:
+async def state(owner: Tenant, include_events: bool = False) -> Snapshot:
     store = build_store()
     status = await review_status(store, owner)
     objects = await store.list_objects(
@@ -283,11 +283,21 @@ async def state(owner: Tenant) -> Snapshot:
         objects=[await safe_object(store, owner, o) for o in objects],
         unreviewed=[o.id for o in status.unreviewed],
         can_compile=status.can_compile,
-        # Events can contain encrypted raw turns, but never their content keys.
-        events=[e.model_dump(mode="json") for e in events],
+        # The app's first page needs objects and usage, not 2,000 full event
+        # snapshots. Object history is fetched by id when its detail page opens.
+        # Keep the opt-in for callers that explicitly need the old snapshot shape.
+        events=[e.model_dump(mode="json") for e in events] if include_events else [],
         usage=usage,
         sample=any(o.payload.get("design_sample") for o in objects),
     )
+
+
+@router.get("/web-api/objects/{object_id}/events")
+async def object_events(owner: Tenant, object_id: str) -> list[dict[str, Any]]:
+    store = build_store()
+    await load_object(owner, object_id)
+    events = await store.list_events(owner, object_id=object_id, limit=2000)
+    return [event.model_dump(mode="json") for event in events]
 
 
 @router.post("/web-api/memories")

@@ -275,6 +275,9 @@ async function refresh() {
   manifest = null;
   libraryIndex = null;
   graphData = null;
+  objectEventsId = null;
+  objectEvents = null;
+  objectEventsRequest++;
 }
 
 /* Enough of a `state` for the marketing pages to render against. They read counts
@@ -556,6 +559,27 @@ function humanEvent(e) {
    was quietly rewritten. */
 let objectLife = null,
   objectLifeId = null;
+let objectEvents = null,
+  objectEventsId = null,
+  objectEventsError = false,
+  objectEventsRequest = 0;
+
+async function loadObjectEvents(id, retry = false) {
+  if (objectEventsId === id && !retry) return;
+  objectEventsId = id;
+  objectEvents = null;
+  objectEventsError = false;
+  const request = ++objectEventsRequest;
+  try {
+    const events = await api(`/objects/${encodeURIComponent(id)}/events`);
+    if (request !== objectEventsRequest) return;
+    objectEvents = events;
+  } catch {
+    if (request !== objectEventsRequest) return;
+    objectEventsError = true;
+  }
+  if (routeOf() === "object" && objectEventsId === id) render();
+}
 
 function lifetimePanel(id) {
   if (objectLifeId !== id) return `<div class="panel"><span class="eyebrow">Life of this fact</span><p class="small muted">Reading the revision log…</p></div>`;
@@ -614,14 +638,19 @@ function detail(id) {
         '<a class="btn" href="#/library">Back to Library</a>',
       ),
     );
-  const events = state.events
+  const events = (objectEventsId === id ? objectEvents || [] : [])
     .filter((e) => e.object_id === id)
     .sort((a, b) => a.at.localeCompare(b.at));
+  const eventPlaceholder = objectEventsError
+    ? '<li>Couldn’t load this object’s events. <button type="button" data-retry-object-events>Try again</button></li>'
+    : objectEvents === null || objectEventsId !== id
+      ? "<li>Loading event history…</li>"
+      : "<li>No recorded events.</li>";
   const allowed = ["claude", "chatgpt", "local"].filter((s) => canRead(o, s));
   const sourceIds = o.provenance.source_object_ids || [];
   return shell(
     "Object",
-    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div>${lifetimePanel(id)}<div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || "<li>No recorded events in this window.</li>"}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p></section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
+    `<div class="row mono muted mb"><a href="#/library">← Library</a> ${esc(o.id)}</div><article class="panel flush"><div class="panel-head"><p>${esc(o.content)}</p>${meta(o)}<div class="row wrap small muted mt"><span class="eyebrow">In force · UTC</span><span class="badge">${date(o.valid_from)}</span> → <span class="badge">${date(o.valid_until)}</span><span>${o.valid_until ? "after which this stops being retrieved" : "No end date set"}</span></div></div>${lifetimePanel(id)}<div class="object-grid"><section><div class="eyebrow"><span class="green">←</span> Lineage · read-only</div><ol class="timeline">${events.map((e) => `<li><strong>${humanEvent(e)}</strong><span class="mono">${time(e.at)} · ${esc(e.actor)}${e.detail?.design_sample ? " · design example" : ""}${e.detail?.field === "locality" ? ` · ${esc(e.detail.to)}` : ""}</span></li>`).join("") || eventPlaceholder}</ol><p class="mono muted">Origin: ${esc(o.provenance.origin_type)} · confidence ${o.provenance.confidence.toFixed(2)}</p>${o.provenance.note ? `<p class="small muted">${esc(o.provenance.note)}</p>` : ""}${sourceIds.length ? `<h3>Source objects</h3>${sourceIds.map((s) => (objById(s) ? `<a class="mono" href="#/object/${encodeURIComponent(s)}">${esc(s)}</a>` : `<p class="mono muted">${esc(s)} · external source ID</p>`)).join("")}` : ""}<p class="caption">Oldest first, because a history read newest-first is a list of surprises.</p></section><section><div class="eyebrow"><span class="green">→</span> Reach · editable</div><form id="reach-form" data-id="${esc(id)}" class="mt">${[
       ["claude", "Claude · web, Desktop & Code"],
       ["chatgpt", "ChatGPT"],
       ["local", "Local model"],
@@ -2532,7 +2561,12 @@ function bindHistory() {
   if (routeOf() === "settings") loadPricing();
   if (routeOf() === "object") {
     const id = decodeURIComponent(location.hash.replace(/^#\/object\//, ""));
-    if (id) loadLifetime(id);
+    if (id) {
+      loadLifetime(id);
+      loadObjectEvents(id);
+      const retry = document.querySelector("[data-retry-object-events]");
+      if (retry) retry.onclick = () => loadObjectEvents(id, true);
+    }
     return;
   }
   if (routeOf() !== "audit") return;

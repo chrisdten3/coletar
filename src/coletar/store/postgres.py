@@ -695,6 +695,18 @@ class PostgresStore:
             rows = await cur.fetchall()
         return [_event_from_row(row) for row in rows]
 
+    async def latest_review_times(self, tenant_id: TenantId) -> dict[str, datetime]:
+        pool = await self._get_pool()
+        async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                "SELECT object_id, max(at) AS reviewed_at FROM event_log "
+                "WHERE tenant_id = %s AND type = %s AND object_id IS NOT NULL "
+                "GROUP BY object_id",
+                (tenant_id, EventType.OBJECT_REVIEWED.value),
+            )
+            rows = await cur.fetchall()
+        return {str(row["object_id"]): row["reviewed_at"] for row in rows}
+
     async def reads_of(
         self, tenant_id: TenantId, object_id: str, *, limit: int = 100
     ) -> list[ReadReceipt]:

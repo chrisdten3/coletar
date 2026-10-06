@@ -74,6 +74,15 @@ verified connection.
   boxing result on all three keys. The browser precision fix in `831e32f` is on
   this branch and has been checked against Supabase read-only, but it is not yet
   deployed to the hosted service. That deployment and repeat check remain a gate.
+- The deployed test account's `/web-api/state` response was 6.24 MiB for 3,836
+  objects and 2,000 events, taking about 4.2 seconds over HTTP. The inspector
+  change on this branch defers event snapshots until an object is opened and
+  reads review timestamps through the Store protocol. A read-only check against
+  the configured Supabase data returned the same 3,836 objects and review counts
+  in a 2.88 MiB snapshot, taking 2.78 seconds cold and 2.23 seconds warm. This
+  is source-level integration evidence; deployment and a hosted repeat check are
+  still required. The 2,000-event scan used for usage totals remains a cost to
+  profile if the hosted page is still slow.
 
 ## 2. Finish account access before broader invites
 

@@ -370,6 +370,15 @@ class Store(Protocol):
         caller mutating what it was handed must not be able to rewrite history."""
         ...
 
+    async def latest_review_times(self, tenant_id: TenantId) -> dict[str, datetime]:
+        """Latest review event per object, derived from the append-only log.
+
+        The compile gate needs timestamps, not full revision snapshots. Keeping
+        this read in the Store protocol preserves both backend parity and the
+        rule that callers never reach into SQL themselves.
+        """
+        ...
+
     async def reads_of(
         self, tenant_id: TenantId, object_id: str, *, limit: int = 100
     ) -> list[ReadReceipt]:
