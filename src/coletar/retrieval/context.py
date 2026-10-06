@@ -60,6 +60,17 @@ NEAR_DUPLICATE_THRESHOLD = 0.9
 #: that a failing test rather than a slow corruption.
 INJECTION_MARKER = "— coletar —"
 
+# Common framing verbs say what kind of utterance this is, not what it is about.
+# They can contribute to ranking, but cannot alone justify prompt injection when
+# the query also names a topic. This guard is only used with hashing embeddings.
+_PROMPT_FRAMING_TOKENS = frozenset(
+    {
+        "like", "prefer", "love", "enjoy", "want", "need", "use", "watch",
+        "play", "live", "eat", "read", "work", "help", "think", "know",
+        "feel", "remember", "make", "build",
+    }
+)
+
 
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // _CHARS_PER_TOKEN)
@@ -258,9 +269,17 @@ async def retrieve(
     if require_lexical_match:
         # Signed hashing is a lexical approximation. A vector-only hit from it
         # has no shared content word and may be a hash collision, not a semantic
-        # match. A prompt-facing caller can prefer an empty block to an unrelated
-        # memory; semantic embedders keep vector-only paraphrase matches.
-        hits = [hit for hit in hits if hit.components.lexical > 0.0]
+        # match. One shared framing verb is weak evidence too: "I like steak"
+        # must not pull "I like to watch boxing" into the prompt. When the query
+        # names a topic, require that topic in the stored claim. Topicless queries
+        # ("what do I like?") retain the earlier lexical behavior.
+        topic_tokens = set(tokenize(query)) - _PROMPT_FRAMING_TOKENS
+        hits = [
+            hit
+            for hit in hits
+            if hit.components.lexical > 0.0
+            and (not topic_tokens or bool(topic_tokens & set(tokenize(hit.obj.content))))
+        ]
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     rerank_started = time.perf_counter()

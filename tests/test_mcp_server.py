@@ -167,10 +167,14 @@ async def test_mcp_search_excludes_hash_collision_from_model_context(store, call
         result = await mcp_server.mcp.call_tool(
             "search_context", {"query": "i like to watch boxing", "top_k": 6}
         )
+        unrelated = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "i like steak", "top_k": 6}
+        )
 
     payload = SearchContextResponse.model_validate(result.structured_content)
     assert len(payload.results) == 1
     assert "boxing" in payload.results[0].content
+    assert SearchContextResponse.model_validate(unrelated.structured_content).results == []
 
 
 async def test_write_then_read_round_trips_through_the_tools(store, caller):

@@ -106,6 +106,7 @@ async def test_local_proxy_does_not_inject_a_hash_collision() -> None:
 
     assert "boxing" in block
     assert "anti-capitalist" not in block
+    assert "boxing" not in await client.context_block("i like steak", scope=GLOBAL_SCOPE)
 
 
 @pytest.mark.asyncio
