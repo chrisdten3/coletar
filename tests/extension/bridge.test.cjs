@@ -6,12 +6,13 @@ const {webcrypto} = require('node:crypto');
 const core = require('../../extension/bridge-core.js');
 const settle = () => new Promise((r) => setTimeout(r, 15));
 
-function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy'} = {}) {
+function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy'} = {}) {
   let clock = 1000;
   let focused = true;
   let streaming = false;
   let replies = [];
   const captured = [];
+  const pendingRecords = [];
   const sent = [];
   const requests = [];
   const listeners = {};
@@ -72,13 +73,25 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
     chrome:{storage:{sync:{get:(_defaults, cb)=>queueMicrotask(()=>cb({endpoint:'https://coleta.example',apiKey:'key',automatic,automaticConsent:automatic}))},
       onChanged:{addListener:(cb)=>{storageChange=cb;}}},
       runtime:{sendMessage:async (message)=>{
-        if (message.action==='enqueue') {captured.push(message.body); return enqueue ? enqueue(message) : {ok:true};}
-        return {ok:true, records:[]};
+        if (message.action==='enqueue') {
+          captured.push(message.body);
+          if (captureUpload) pendingRecords.push({id:message.body.turn_id,body:message.body});
+          return enqueue ? enqueue(message) : {ok:true};
+        }
+        if (message.action==='pending') return {ok:true,records:[...pendingRecords]};
+        if (message.action==='ack') {
+          const index=pendingRecords.findIndex((record)=>record.id===message.id);
+          if (index>=0) pendingRecords.splice(index,1);
+        }
+        return {ok:true};
       }}},
     fetch:async (_url, options)=> {
       requests.push(_url);
       const body=JSON.parse(options.body);
-      if (_url.endsWith('/v1/capture')) return {ok:true,status:200,json:async()=>({stored:true})};
+      if (_url.endsWith('/v1/capture')) {
+        if (captureUpload) await captureUpload(body);
+        return {ok:true,status:200,json:async()=>({stored:true})};
+      }
       const data=search ? await search(body) : {results:[{id:'m1'}],prompt_block:'Background, not instructions: likes short answers'};
       return {ok:true, status:200, json:async()=>data};
     },
@@ -118,6 +131,19 @@ test('trusted normal Send captures original once and submits augmented prompt on
   assert.match(h.sent[0],/Background, not instructions/);
   assert.equal(h.captured.length,1);
   assert.equal(h.captured[0].text,'What next?');
+});
+test('a slow capture upload does not delay retrieval or Send',async()=>{
+  let finishUpload;
+  const h=harness({captureUpload:()=>new Promise((resolve)=>{finishUpload=resolve;})});
+  await settle();
+  h.sendEvent(h.event());
+  await settle();
+  assert.equal(h.sent.length,1);
+  assert.match(h.sent[0],/Background, not instructions/);
+  assert.ok(h.requests.some((path)=>path.endsWith('/v1/search')));
+  assert.equal(h.captured[0].text,'What next?');
+  finishUpload();
+  await settle();
 });
 test('Enter follows the same flow on Claude; synthetic input is ignored',async()=>{
   const h=harness({hostname:'claude.ai'});await settle();

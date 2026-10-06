@@ -198,14 +198,13 @@ async function intercept(event, el, button) {
     // or unavailable extension/server never gets to hold the website indefinitely.
     const queued = await ColetaBridge.bounded(queue("enqueue", config, {body:turn}), 100);
     if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
-    const saved = await ColetaBridge.bounded(call("/v1/capture", turn, config, 200), 200);
-    if (saved?.ok && saved.data.stored && queued?.id) {
-      void queue("ack", config, {id:queued.id});
-    }
-    if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
+    // Delivery must not hold the user's Send while retrieval is running. The
+    // encrypted outbox is durable; a failed or slow upload stays queued for retry.
+    if (queued?.ok) void flush();
+    else void call("/v1/capture", turn, config, 1500);
     const result = await ColetaBridge.bounded(call("/v1/search", {
       query:original.slice(0,4000), top_k:6, style:"terse",
-    }, config, 400), 400);
+    }, config, 1200), 1200);
     if (!unchanged()) {
       report("Coleta: draft changed or page left · send when ready");
       return;

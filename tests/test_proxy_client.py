@@ -119,7 +119,7 @@ def _free_port() -> int:
 
 
 @pytest.fixture(params=[False, True], ids=["stateful", "stateless"])
-def live_mcp_server(monkeypatch, request):
+def live_mcp_server(monkeypatch, request, tmp_path):
     """The real MCP app, real auth middleware, on a real port.
 
     A TestClient would not do: the point is that `streamable_http_client` can
@@ -129,6 +129,7 @@ def live_mcp_server(monkeypatch, request):
     import uvicorn
 
     from coletar.config import get_settings
+    from coletar.accounts import reset_directory
     from coletar.mcp import rest as rest_bridge
     from coletar.mcp import server as mcp_server
     from coletar.store import reset_store
@@ -143,6 +144,10 @@ def live_mcp_server(monkeypatch, request):
     )
     monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
     monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "off")
+    # This fixture supplies its own in-process graph. Its credential directory
+    # must follow that graph, even when the developer's .env selects Postgres.
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_STORE_PATH", str(tmp_path / "proxy-graph.json"))
     port = _free_port()
     # The SDK's DNS-rebinding guard matches the *whole* Host header, port included.
     # This is the M3.3 "421 Misdirected Request" in miniature, and only a non-default
@@ -152,6 +157,7 @@ def live_mcp_server(monkeypatch, request):
     )
     get_settings.cache_clear()
     reset_store()
+    reset_directory()
     config = uvicorn.Config(
         mcp_server.build_app(stateless=request.param),
         host="127.0.0.1", port=port, log_level="error"
@@ -171,6 +177,7 @@ def live_mcp_server(monkeypatch, request):
     thread.join(timeout=10)
     get_settings.cache_clear()
     reset_store()
+    reset_directory()
 
 
 @pytest.mark.asyncio
