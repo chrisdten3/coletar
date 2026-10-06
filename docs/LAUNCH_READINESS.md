@@ -124,10 +124,21 @@ verified connection.
   events in 3,025,210 bytes and 3.82 seconds over HTTP. Event history remains
   available per object. This improves payload size; page latency still deserves
   profiling before calling the inspector fast.
-- **Still open:** the owner must reload the updated extension and test trusted
-  Send and visible injection on active ChatGPT and Claude pages. REST responses
-  and synthetic adapter tests cannot prove current provider DOM behavior or that
-  the context reached either model.
+- The owner supplied screenshots of fresh, visible ChatGPT and Claude web chats.
+  Each showed one submitted user message containing only the boxing memory above
+  the original prompt, plus the extension's "1 memories added" status. ChatGPT
+  showed a reply; Claude was still generating in its screenshot. These observations
+  verify current-page Send and visible injection for this one prompt, not every
+  editor state or future provider layout.
+- The corresponding production traces were `evt_a0fd1a25a3344cc3` at 01:49:36 UTC
+  (`chatgpt.com`) and `evt_5a945e2c972348b0` at 01:50:47 UTC (`claude.ai`). Each
+  returned only `mem_ab7b818d505fff1f`. Coletar also recorded one encrypted user
+  turn for each Send: `evt_af330dee61c1476f` for ChatGPT and
+  `evt_44d80141c3f448fb` for Claude. Assistant-turn capture was not observed in
+  this check; the screenshots and traces alone do not prove it completed.
+- **Still open:** test a failed lookup, changed draft, stopped stream, and completed
+  assistant capture on the live pages. Repeat after provider UI changes. Native
+  desktop and local-model delivery need their own client-level evidence.
 
 ## 2. Finish account access before broader invites
 
