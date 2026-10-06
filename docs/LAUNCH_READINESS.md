@@ -86,6 +86,25 @@ verified connection.
   is source-level integration evidence; deployment and a hosted repeat check are
   still required. The 2,000-event scan used for usage totals remains a cost to
   profile if the hosted page is still slow.
+- An opt-in hosted smoke test now exercises the configured Supabase test tenant and
+  production REST API (`tests/test_hosted_live_sync_smoke.py`). On 6 October 2026
+  UTC, a Claude-bound key wrote `mem_697f8430b7ab481b`. Claude, ChatGPT, and local
+  keys all retrieved that ID and its exact content in the returned prompt block.
+  Their trace IDs and server retrieval times were:
+
+  | Policy | Trace ID | Server retrieval |
+  | --- | --- | --- |
+  | Claude | `evt_26c7c4f273df45e3` | 25.721 ms |
+  | ChatGPT | `evt_05a7fc28baec4ece` | 24.361 ms |
+  | Local | `evt_bb03c35b97b34673` | 22.997 ms |
+
+  A Claude-only object, `mem_3be163d1a4244858`, appeared under the Claude policy
+  and was absent under ChatGPT and local policies. Both test objects were retired
+  with creation and retirement events; temporary keys were revoked. This checks
+  hosted HTTP, auth, storage, provenance, and prompt-block assembly. It does not
+  show that any provider client sent the block to a model. The deployed service
+  still returned other, unrelated hits; repeat this smoke after deploying the
+  precision fix and inspect the full returned set.
 
 ## 2. Finish account access before broader invites
 
