@@ -208,6 +208,26 @@ async def test_browser_does_not_inject_a_hash_collision_as_personal_context(
     assert "anti-capitalist" not in body["prompt_block"]
 
 
+@pytest.mark.parametrize("style", ["terse", "full"])
+@pytest.mark.parametrize("origin", ["https://chatgpt.com", "https://claude.ai"])
+async def test_browser_does_not_inject_a_shared_preference_verb_as_context(
+    client, store, style: str, origin: str
+):
+    """Observed on Claude: steak pulled boxing because both sentences say 'like'."""
+    await store.put_object(TENANT, Memory.from_write("I like to watch boxing."))
+
+    async with client as c:
+        response = await c.post(
+            "/v1/search",
+            json={"query": "i like steak", "style": style},
+            headers={"X-API-Key": "sk-bridge", "Origin": origin},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["results"] == []
+    assert "boxing" not in response.json()["prompt_block"]
+
+
 async def test_search_is_tenant_scoped(client, store):
     from coletar.schema.tenancy import tenant_id
 

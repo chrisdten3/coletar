@@ -136,8 +136,19 @@ verified connection.
   turn for each Send: `evt_af330dee61c1476f` for ChatGPT and
   `evt_44d80141c3f448fb` for Claude. Assistant-turn capture was not observed in
   this check; the screenshots and traces alone do not prove it completed.
+- At 02:00 UTC the owner left a second Claude reply to finish. The page showed
+  "reply queued for capture", and the event log contains the paired encrypted
+  user and assistant capture events `evt_4542b71206bf4809` and
+  `evt_5033015efe3545b7` under the same turn ID. This closes the completed-reply
+  capture check for that one Claude turn; ChatGPT reply capture remains unverified.
+- That second prompt, `i like steak`, also exposed a relevance failure: production
+  trace `evt_8a20b8f5b2504f8f` returned the boxing memory because `like` was
+  shared. The reply mentioned a boxing card. A topic-word guard is tested on the
+  branch against REST, MCP, local proxy, and the configured Supabase memories;
+  it must be deployed and repeated over production HTTP before this failure is
+  marked fixed.
 - **Still open:** test a failed lookup, changed draft, stopped stream, and completed
-  assistant capture on the live pages. Repeat after provider UI changes. Native
+  ChatGPT assistant capture on the live page. Repeat after provider UI changes. Native
   desktop and local-model delivery need their own client-level evidence.
 
 ## 2. Finish account access before broader invites

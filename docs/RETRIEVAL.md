@@ -48,6 +48,16 @@ latter had lexical coverage 0.0 and appeared in the user's ChatGPT prompt. The
 prompt-facing paths now return only the boxing preference for that query.
 Regression tests pin the example in REST, MCP, and local proxy paths.
 
+A later live Claude Send exposed the next weak match: `i like steak` injected the
+boxing preference because both statements contained `like`. Its production trace
+showed lexical coverage 0.5 and a 0.3846 hashing cosine, enough to rank it despite
+the topics being unrelated. Under hashing, prompt-facing retrieval now requires a
+shared topic word when the query names one; common framing verbs such as `like`,
+`prefer`, and `use` cannot supply that evidence alone. A read-only check against
+the configured Supabase memories returns no context for steak and still returns
+the boxing preference for `i like to watch boxing`. The ranking formula and its
+published evaluation baselines remain unchanged.
+
 This filter runs before context assembly and tracing, so the trace records what
 was actually returned. The ranking formula and its evaluation harness are unchanged;
 the guard applies at the prompt-facing adapters under hashing. A semantic embedder
