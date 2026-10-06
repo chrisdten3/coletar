@@ -6,7 +6,7 @@ const {webcrypto} = require('node:crypto');
 const core = require('../../extension/bridge-core.js');
 const settle = () => new Promise((r) => setTimeout(r, 15));
 
-function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy'} = {}) {
+function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy', duringWrite} = {}) {
   let clock = 1000;
   let focused = true;
   let streaming = false;
@@ -42,6 +42,10 @@ function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.c
       if (corruptRestore) { editor.innerText='Damaged draft'; return false; }
       if (rejectInjection && text.includes('Background')) return false;
       editor.innerText=text.replace(/\n/g,'\n\n').replace(/ /g,'\u00a0');
+      // Browser execCommand may mark its synchronous input as trusted even
+      // though the extension initiated it. It must not cancel its own Send.
+      listeners.input({target:editor,isTrusted:true});
+      if (duringWrite) queueMicrotask(() => duringWrite({editor, listeners, text}));
       return true;
     },
     getElementById:(id)=> id==='coleta-status' ? status : {style:{}},
@@ -104,6 +108,10 @@ function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.c
   }
   return {editor,send,stop,status,document,location,captured,sent,requests, event,
     sendEvent:(e)=>listeners[e.type](e),
+    edit:(text, isTrusted=true)=>{
+      if (rich) editor.innerText=text; else editor.value=text;
+      listeners.input({target:editor,isTrusted});
+    },
     blur:()=>{focused=false;listeners.blur();},
     changeSettings:()=>storageChange({automatic:{newValue:false}},'sync'),
     tick:async (ms=500)=>{clock+=ms; for(const cb of timers)cb();await settle();},
@@ -245,4 +253,42 @@ test('text equivalence does not ignore missing words or changed indentation',()=
   assert.equal(core.sameText('one\n\ntwo','one\ntwo'),true);
   assert.equal(core.sameText('one two','onetwo'),false);
   assert.equal(core.sameText('code\n  indented','code\nindented'),false);
+});
+
+for (const hostname of ['chatgpt.com', 'claude.ai']) {
+  test(`${hostname}: a user edit during injection is never restored over or sent`, async () => {
+    const h = harness({hostname, rich:true, duringWrite:({editor,listeners}) => {
+      editor.innerText = 'My newer draft';
+      listeners.input({target:editor,isTrusted:true});
+    }});
+    await settle(); h.sendEvent(h.event()); await settle();
+    assert.equal(h.sent.length,0);
+    assert.equal(h.editor.innerText,'My newer draft');
+    assert.match(h.status.textContent,/draft changed/);
+  });
+  test(`${hostname}: editing and reverting during lookup still cancels Send`, async () => {
+    let resolve;
+    const h = harness({hostname, search:()=>new Promise(r=>{resolve=r;})});
+    await settle(); h.sendEvent(h.event()); await settle();
+    h.edit('A different draft'); h.edit('What next?');
+    resolve({results:[{}],prompt_block:'Background'}); await settle();
+    assert.equal(h.sent.length,0);
+    assert.equal(h.editor.value,'What next?');
+  });
+  test(`${hostname}: a new draft cancels attribution of an unfinished reply`, async () => {
+    const h = harness({hostname});
+    await settle(); h.sendEvent(h.event()); await settle();
+    h.stream(true); h.reply('Reply in progress'); await h.tick();
+    h.edit('Next question'); h.stream(false); await h.tick(2000);
+    assert.equal(h.captured.length,1);
+    assert.equal(h.editor.value,'Next question');
+  });
+}
+
+test('untrusted input cannot invalidate a consented lookup', async () => {
+  let resolve;
+  const h = harness({search:()=>new Promise(r=>{resolve=r;})});
+  await settle(); h.sendEvent(h.event()); await settle();
+  h.edit('What next?',false); resolve({results:[]}); await settle();
+  assert.deepEqual(h.sent,['What next?']);
 });

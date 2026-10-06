@@ -44,6 +44,7 @@ function find(selectors) {
 }
 const composer = () => find(adapter?.composers);
 const read = (el) => (el.value !== undefined ? el.value : el.innerText || "").trim();
+let writingEditor = false;
 async function write(el, text) {
   try {
   if (el.value !== undefined) {
@@ -57,7 +58,11 @@ async function write(el, text) {
     range.selectNodeContents(el);
     selection.removeAllRanges();
     selection.addRange(range);
-    document.execCommand("insertText", false, text);
+    // execCommand can emit trusted input synchronously. Ignore only that
+    // insertion, not user input while awaiting the editor's reconciliation.
+    writingEditor = true;
+    try { document.execCommand("insertText", false, text); }
+    finally { writingEditor = false; }
   }
     // Let the editor reconcile its input before deciding that insertion failed.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -212,7 +217,10 @@ async function intercept(event, el, button) {
     let augmented = result?.ok ? ColetaBridge.augment(original, result.data) : draft;
     let injectionFailed = false;
     if (augmented !== draft && !await write(el, augmented)) {
-      if (!active() || version !== generation || location.pathname !== route) return;
+      if (!active() || version !== generation || location.pathname !== route) {
+        report("Coleta: draft changed or page left · send when ready");
+        return;
+      }
       if (!await write(el, draft)) {
         report("Coleta: could not restore your draft · please check it before sending");
         return;
@@ -298,6 +306,16 @@ function handleSend(event) {
 }
 document.addEventListener("keydown", handleSend, true);
 document.addEventListener("click", handleSend, true);
+// Editor reconciliation yields to the page. A trusted edit during that yield
+// invalidates the turn even if its text later matches the snapshot again. Do not
+// mistake our synthetic insertion input for a new user draft.
+document.addEventListener("input", (event) => {
+  if (!event.isTrusted || writingEditor) return;
+  const el = composer();
+  if (!el?.contains(event.target)) return;
+  pending = null;
+  generation++;
+}, true);
 async function observeReply() {
   if (!active() || !ColetaBridge.autoEnabled(settings)) return;
   routeChanged();

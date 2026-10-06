@@ -37,6 +37,24 @@ retrieval trace ID, whether the context reached the model, elapsed time, and the
 actual failure/status when it did not. A connector configured in Settings is not a
 verified connection.
 
+### Automated evidence and remaining live checks (2026-10-06 UTC)
+
+- On top of `fa75f99`, trusted composer edits now invalidate an interception,
+  including edits made during rich-text insertion/reconciliation and edits reverted
+  to the original text during lookup. Failed insertion must not restore an older
+  draft over a newer user edit. Starting another draft also cancels pending reply
+  attribution conservatively. The original turn may already be queued; cancellation
+  does not retract a captured turn or mutate the graph.
+- `node --test tests/extension/*.test.cjs`: **33 passed**, including paired ChatGPT
+  and Claude synthetic tests for these races, and synchronous trusted input emitted
+  by the extension's own rich-text insertion. These exercise the content script;
+  they do **not** verify current provider DOM selectors or delivery to a model.
+- Hosted propagation, restricted-memory exclusion, deployed auth/logout, and
+  desktop/local-model delivery remain unverified in this checkout: no Coletar or
+  Supabase credentials/environment were configured. No Docker/pgvector suite was
+  run. Use the configured hosted store for those checks, not a substitute local
+  database. Record actual write and trace IDs before marking any surface supported.
+
 ## 2. Finish account access before broader invites
 
 Supabase session sign-in, sign-up, refresh, sign-out, verified-email linking, and
