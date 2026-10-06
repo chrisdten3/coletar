@@ -128,8 +128,8 @@ def live_mcp_server(monkeypatch, request, tmp_path):
     """
     import uvicorn
 
-    from coletar.config import get_settings
     from coletar.accounts import reset_directory
+    from coletar.config import get_settings
     from coletar.mcp import rest as rest_bridge
     from coletar.mcp import server as mcp_server
     from coletar.store import reset_store
