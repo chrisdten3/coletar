@@ -70,22 +70,21 @@ verified connection.
   the same pre-existing boxing memory. All were revoked; a further request with a
   revoked key received 401. This proves the hosted REST/auth/store path, not that
   the provider clients themselves called it. No test memory was added.
-- The hosted service still returned the unrelated sentiment memory alongside the
-  boxing result on all three keys. The branch now filters hash-only matches in
+- Before deployment, the hosted service returned the unrelated sentiment memory
+  alongside the boxing result on all three keys. The branch filters hash-only matches in
   browser REST (both styles), MCP search, and the local proxy. Tests cover all
   three paths. A read-only Supabase check of the branch with the test tenant's
   actual memories returned three unfiltered hits (lexical coverage 1.0, 0.0,
-  0.0) and one guarded hit (1.0) for the boxing query. A
-  deployed repeat check remains a gate before claiming the fix works for users.
-- The deployed test account's `/web-api/state` response was 6.24 MiB for 3,836
+  0.0) and one guarded hit (1.0) for the boxing query. The deployed repeat check
+  is recorded below.
+- Before deployment, the test account's `/web-api/state` response was 6.24 MiB for 3,836
   objects and 2,000 events, taking about 4.2 seconds over HTTP. The inspector
-  change on this branch defers event snapshots until an object is opened and
+  change defers event snapshots until an object is opened and
   reads review timestamps through the Store protocol. A read-only check against
   the configured Supabase data returned the same 3,836 objects and review counts
   in a 2.88 MiB snapshot, taking 2.78 seconds cold and 2.23 seconds warm. This
-  is source-level integration evidence; deployment and a hosted repeat check are
-  still required. The 2,000-event scan used for usage totals remains a cost to
-  profile if the hosted page is still slow.
+  was source-level integration evidence. The 2,000-event scan used for usage totals
+  remains a cost to profile if the hosted page is still slow.
 - An opt-in hosted smoke test now exercises the configured Supabase test tenant and
   production REST API (`tests/test_hosted_live_sync_smoke.py`). On 6 October 2026
   UTC, a Claude-bound key wrote `mem_697f8430b7ab481b`. Claude, ChatGPT, and local
@@ -102,9 +101,33 @@ verified connection.
   and was absent under ChatGPT and local policies. Both test objects were retired
   with creation and retirement events; temporary keys were revoked. This checks
   hosted HTTP, auth, storage, provenance, and prompt-block assembly. It does not
-  show that any provider client sent the block to a model. The deployed service
-  still returned other, unrelated hits; repeat this smoke after deploying the
-  precision fix and inspect the full returned set.
+  show that any provider client sent the block to a model. This run preceded the
+  precision deployment and included unrelated hits.
+
+### Production deployment and repeat checks (2026-10-06 UTC)
+
+- PR #64 merged as `ca50aed9`; GitHub and Vercel report a successful Production
+  deployment of that exact commit. The canonical `/healthz` returned 200. No
+  migration files changed in the PR.
+- The hosted smoke passed again after deployment: Claude-bound write
+  `mem_aefca0439e164963` was returned with its exact content by the Claude,
+  ChatGPT, and local policy keys. Their trace IDs were respectively
+  `evt_1ab7c7eb5d60453a`, `evt_3d078fd93f984a04`, and
+  `evt_aeb858cc7e6a4696`. Claude-only `mem_b48051925c0e458b` appeared only
+  under the Claude policy. The test retired both objects and revoked its keys.
+- Production HTTP `/v1/search` for `i like to watch boxing` returned only
+  `mem_ab7b818d505fff1f` in both `terse` and `full` styles, with no unrelated
+  sentiment in the prompt block. Trace IDs were `evt_41fd441369674508`
+  (47.688 ms server retrieval) and `evt_d60088b9d250485e` (38.281 ms).
+  A temporary read-only ChatGPT key used for this check was revoked.
+- Authenticated production `/web-api/state` returned 3,840 objects and no bulk
+  events in 3,025,210 bytes and 3.82 seconds over HTTP. Event history remains
+  available per object. This improves payload size; page latency still deserves
+  profiling before calling the inspector fast.
+- **Still open:** the owner must reload the updated extension and test trusted
+  Send and visible injection on active ChatGPT and Claude pages. REST responses
+  and synthetic adapter tests cannot prove current provider DOM behavior or that
+  the context reached either model.
 
 ## 2. Finish account access before broader invites
 
