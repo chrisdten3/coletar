@@ -50,10 +50,30 @@ verified connection.
   by the extension's own rich-text insertion. These exercise the content script;
   they do **not** verify current provider DOM selectors or delivery to a model.
 - Hosted propagation, restricted-memory exclusion, deployed auth/logout, and
-  desktop/local-model delivery remain unverified in this checkout: no Coletar or
-  Supabase credentials/environment were configured. No Docker/pgvector suite was
-  run. Use the configured hosted store for those checks, not a substitute local
-  database. Record actual write and trace IDs before marking any surface supported.
+  desktop/local-model delivery were unverified in the cloud checkout, where no
+  Coletar or Supabase credentials/environment were configured. The local checkout
+  has the ignored environment files; hosted checks below supersede that access
+  limitation. No Docker/pgvector suite was run. Record actual write and trace IDs
+  before marking any provider client supported.
+
+### Hosted test-account evidence (2026-10-05)
+
+- The test account signed in through Supabase Auth. `/web-api/state` returned 401
+  without a token and with a bad token, and 200 with the test account's token. Its
+  response tenant matched the separately configured test tenant.
+- Supabase logout returned 204 and rejected reuse of that session's refresh token.
+  The already-issued access JWT continued to receive 200 until expiry. The browser
+  clears its local session and reloads on sign-out; the new client regression test
+  ensures a refresh finishing late cannot silently sign the user back in.
+- Three short-lived, read-only keys bound to the test tenant were issued for Claude,
+  ChatGPT, and local policies. Each received 200 from hosted `/v1/search` and saw
+  the same pre-existing boxing memory. All were revoked; a further request with a
+  revoked key received 401. This proves the hosted REST/auth/store path, not that
+  the provider clients themselves called it. No test memory was added.
+- The hosted service still returned the unrelated sentiment memory alongside the
+  boxing result on all three keys. The browser precision fix in `831e32f` is on
+  this branch and has been checked against Supabase read-only, but it is not yet
+  deployed to the hosted service. That deployment and repeat check remain a gate.
 
 ## 2. Finish account access before broader invites
 

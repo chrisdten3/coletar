@@ -85,6 +85,7 @@ function harness({ config = SUPABASE_CONFIG, rawConfig = null, stored = null, st
       calls.push({ url, init });
       const next = responses.shift();
       if (!next) throw new Error(`no stubbed response for ${url}`);
+      if (next.wait) await next.wait;
       if (next.networkError) throw new Error('offline');
       return {
         ok: next.status < 400,
@@ -228,6 +229,40 @@ test('signing out clears the session even when the revoke call fails', async () 
   await h.auth.session.signOut();
   assert.equal(h.auth.session.signedIn, false);
   assert.equal(h.saved(), null);
+});
+
+test('a late refresh cannot sign the person back in after sign-out', async () => {
+  const h = harness({ stored: session() });
+  h.advance(3600);
+  let finishRefresh;
+  const wait = new Promise((resolve) => { finishRefresh = resolve; });
+  h.reply(
+    { wait, status: 200, body: { access_token: 'late-access', refresh_token: 'late-refresh', expires_in: 3600 } },
+    { status: 204 },
+  );
+  const token = h.auth.session.token();
+  await h.auth.session.signOut();
+  finishRefresh();
+  assert.equal(await token, null);
+  assert.equal(h.auth.session.signedIn, false);
+  assert.equal(h.saved(), null);
+});
+
+test('a failed old refresh cannot clear a newly signed-in account', async () => {
+  const h = harness({ stored: session() });
+  h.advance(3600);
+  let finishRefresh;
+  const wait = new Promise((resolve) => { finishRefresh = resolve; });
+  h.reply(
+    { wait, status: 400, body: { error: 'invalid_grant' } },
+    { status: 200, body: { access_token: 'new-access', refresh_token: 'new-refresh', expires_in: 3600 } },
+  );
+  const oldToken = h.auth.session.token();
+  await h.auth.session.signIn('other@example.com', 'password');
+  finishRefresh();
+  assert.equal(await oldToken, null);
+  assert.equal(h.auth.session.signedIn, true);
+  assert.equal(h.saved().access_token, 'new-access');
 });
 
 test('a browser with storage denied still signs in, for the life of the tab', async () => {
