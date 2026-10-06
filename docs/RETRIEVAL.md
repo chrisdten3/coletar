@@ -35,6 +35,24 @@ supersedes it. The second half matters: compression (§6) retires superseded obj
 eventually, but retrieval must not serve a stale fact in the window before the job
 next runs. Writing the correction is what hides the old fact, not the job.
 
+## Browser composer precision
+
+The browser bridge requests `style: "terse"`. When the deployment uses the
+`hashing` embedder, that path now excludes hits with zero shared content tokens.
+Signed hashing can assign a small positive cosine to unrelated text through
+character overlap or bucket collisions; that is not semantic evidence. In a
+Supabase check on 5 October 2026, `i like to watch boxing` ranked the actual
+boxing preference at 0.8692 and an unrelated sentiment memory at 0.0298. The
+latter had lexical coverage 0.0 and appeared in the user's ChatGPT prompt. The
+browser path now returns only the boxing preference for that query. A regression
+test pins the example in `tests/test_rest_bridge.py`.
+
+This filter runs before context assembly and tracing, so the trace records what
+was actually injected. It is specific to terse composer retrieval under hashing:
+model-side retrieval keeps its measured ranking contract, and a semantic embedder
+may still return a useful paraphrase with no shared words. Empty browser context
+is preferable to asserting an unrelated fact about the user.
+
 ## Scope
 
 `search` takes the scope the *conversation* is happening in:

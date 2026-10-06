@@ -213,6 +213,7 @@ async def retrieve(
     principal: str | None = None,
     record_query_text: bool = False,
     trace: bool = True,
+    require_lexical_match: bool = False,
 ) -> RetrievedContext:
     """Retrieve, assemble, and record one trace.
 
@@ -254,6 +255,12 @@ async def retrieve(
         tenant_id, query, scope=scope, caller_surface=caller_surface, top_k=top_k * 4
     )
     hits = [hit for hit in hits if hit.obj.type is not ObjectType.ENTITY]
+    if require_lexical_match:
+        # Signed hashing is a lexical approximation. A vector-only hit from it
+        # has no shared content word and may be a hash collision, not a semantic
+        # match. Composer injection is visible as part of the user's own prompt,
+        # so this caller can prefer an empty block to an unrelated memory.
+        hits = [hit for hit in hits if hit.components.lexical > 0.0]
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
     rerank_started = time.perf_counter()

@@ -175,6 +175,36 @@ async def test_search_returns_an_injectable_block(client, store):
     assert "fixed-point" in body["prompt_block"]
 
 
+async def test_browser_does_not_inject_a_hash_collision_as_personal_context(client, store):
+    """Regression for a real ChatGPT Send: boxing pulled unrelated sentiment."""
+    from coletar.schema.objects import Provider
+
+    await store.put_object(TENANT, Memory.from_write("I like to watch boxing."))
+    await store.put_object(
+        TENANT,
+        Memory.from_write("Relayed anti-capitalist sentiment against colonizers."),
+    )
+    query = "i like to watch boxing"
+    # The raw hashing ranker really does produce a weak vector-only near miss.
+    raw = await store.search(
+        TENANT, query, caller_surface=Provider.CHATGPT, top_k=6,
+    )
+    assert len(raw) == 2
+    assert raw[1].components.lexical == 0.0
+
+    async with client as c:
+        response = await c.post(
+            "/v1/search",
+            json={"query": query, "top_k": 6, "style": "terse"},
+            headers={"X-API-Key": "sk-bridge", "Origin": "https://chatgpt.com"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["results"]) == 1
+    assert "boxing" in body["prompt_block"]
+    assert "anti-capitalist" not in body["prompt_block"]
+
+
 async def test_search_is_tenant_scoped(client, store):
     from coletar.schema.tenancy import tenant_id
 
