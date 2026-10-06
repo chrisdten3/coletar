@@ -94,6 +94,21 @@ async def test_locality_comes_from_the_principals_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_proxy_does_not_inject_a_hash_collision() -> None:
+    store = InMemoryStore()
+    await store.put_object(TENANT, Memory.from_write("I like to watch boxing."))
+    await store.put_object(
+        TENANT, Memory.from_write("Relayed anti-capitalist sentiment against colonizers.")
+    )
+    client = LocalContextClient(store, principal(SCOPE_READ))
+
+    block = await client.context_block("i like to watch boxing", scope=GLOBAL_SCOPE)
+
+    assert "boxing" in block
+    assert "anti-capitalist" not in block
+
+
+@pytest.mark.asyncio
 async def test_a_write_still_lands_as_a_connector_write() -> None:
     """The event log has to keep distinguishing "the bridge extracted this from my
     words" from "a frontier model called write_memory"."""

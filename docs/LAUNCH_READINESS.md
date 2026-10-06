@@ -71,9 +71,12 @@ verified connection.
   revoked key received 401. This proves the hosted REST/auth/store path, not that
   the provider clients themselves called it. No test memory was added.
 - The hosted service still returned the unrelated sentiment memory alongside the
-  boxing result on all three keys. The browser precision fix in `831e32f` is on
-  this branch and has been checked against Supabase read-only, but it is not yet
-  deployed to the hosted service. That deployment and repeat check remain a gate.
+  boxing result on all three keys. The branch now filters hash-only matches in
+  browser REST (both styles), MCP search, and the local proxy. Tests cover all
+  three paths. A read-only Supabase check of the branch with the test tenant's
+  actual memories returned three unfiltered hits (lexical coverage 1.0, 0.0,
+  0.0) and one guarded hit (1.0) for the boxing query. A
+  deployed repeat check remains a gate before claiming the fix works for users.
 - The deployed test account's `/web-api/state` response was 6.24 MiB for 3,836
   objects and 2,000 events, taking about 4.2 seconds over HTTP. The inspector
   change on this branch defers event snapshots until an object is opened and

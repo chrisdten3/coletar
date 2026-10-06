@@ -105,6 +105,7 @@ class LocalContextClient:
             # search, so it leaves the same record.
             surface="proxy",
             principal=self._principal.id,
+            require_lexical_match=self._store.embedder_model.startswith("hashing-"),
         )
         return context.as_prompt_block(style=style)
 

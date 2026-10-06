@@ -171,7 +171,7 @@ async def search(request: Request) -> JSONResponse:
         token_budget=settings.retrieval_token_budget,
         surface=body.surface,
         principal=principal.id,
-        require_lexical_match=body.style == "terse" and store.embedder_model.startswith("hashing-"),
+        require_lexical_match=store.embedder_model.startswith("hashing-"),
     )
     return JSONResponse(
         {

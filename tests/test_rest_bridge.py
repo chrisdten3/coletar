@@ -175,7 +175,10 @@ async def test_search_returns_an_injectable_block(client, store):
     assert "fixed-point" in body["prompt_block"]
 
 
-async def test_browser_does_not_inject_a_hash_collision_as_personal_context(client, store):
+@pytest.mark.parametrize("style", ["terse", "full"])
+async def test_browser_does_not_inject_a_hash_collision_as_personal_context(
+    client, store, style: str
+):
     """Regression for a real ChatGPT Send: boxing pulled unrelated sentiment."""
     from coletar.schema.objects import Provider
 
@@ -195,7 +198,7 @@ async def test_browser_does_not_inject_a_hash_collision_as_personal_context(clie
     async with client as c:
         response = await c.post(
             "/v1/search",
-            json={"query": query, "top_k": 6, "style": "terse"},
+            json={"query": query, "top_k": 6, "style": style},
             headers={"X-API-Key": "sk-bridge", "Origin": "https://chatgpt.com"},
         )
     assert response.status_code == 200

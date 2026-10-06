@@ -258,8 +258,8 @@ async def retrieve(
     if require_lexical_match:
         # Signed hashing is a lexical approximation. A vector-only hit from it
         # has no shared content word and may be a hash collision, not a semantic
-        # match. Composer injection is visible as part of the user's own prompt,
-        # so this caller can prefer an empty block to an unrelated memory.
+        # match. A prompt-facing caller can prefer an empty block to an unrelated
+        # memory; semantic embedders keep vector-only paraphrase matches.
         hits = [hit for hit in hits if hit.components.lexical > 0.0]
     candidates_ms = (time.perf_counter() - started) * 1000.0
 
