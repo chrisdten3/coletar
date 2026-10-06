@@ -159,8 +159,9 @@ async def search(request: Request) -> JSONResponse:
         )
 
     settings = get_settings()
+    store = build_store()
     result = await retrieve(
-        build_store(),
+        store,
         principal.tenant_id,
         body.query,
         scope=_scope(body.project_id),
@@ -170,6 +171,7 @@ async def search(request: Request) -> JSONResponse:
         token_budget=settings.retrieval_token_budget,
         surface=body.surface,
         principal=principal.id,
+        require_lexical_match=store.embedder_model.startswith("hashing-"),
     )
     return JSONResponse(
         {

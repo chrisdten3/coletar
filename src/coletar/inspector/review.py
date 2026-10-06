@@ -24,10 +24,6 @@ from coletar.schema.objects import ContextObject, ObjectType, Scope
 from coletar.schema.tenancy import TenantId
 from coletar.store.base import Store
 
-#: The log is read in one pass and can be long; this bounds it without bounding the
-#: graph, which is the thing the gate actually reasons about.
-_EVENT_SCAN_LIMIT = 100_000
-
 
 class InspectorError(Exception):
     """A refusal the user can act on, phrased for them rather than for a log."""
@@ -49,13 +45,7 @@ class ReviewStatus:
 
 async def _reviewed_at(store: Store, tenant_id: TenantId) -> dict[str, datetime]:
     """Most recent review per object, from the log."""
-    latest: dict[str, datetime] = {}
-    for event in await store.list_events(tenant_id, limit=_EVENT_SCAN_LIMIT):
-        if event.type is EventType.OBJECT_REVIEWED and event.object_id:
-            current = latest.get(event.object_id)
-            if current is None or event.at > current:
-                latest[event.object_id] = event.at
-    return latest
+    return await store.latest_review_times(tenant_id)
 
 
 async def review_status(store: Store, tenant_id: TenantId) -> ReviewStatus:

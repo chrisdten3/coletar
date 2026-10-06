@@ -6,12 +6,13 @@ const {webcrypto} = require('node:crypto');
 const core = require('../../extension/bridge-core.js');
 const settle = () => new Promise((r) => setTimeout(r, 15));
 
-function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false} = {}) {
+function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.com', enqueue, rich = false, rejectInjection = false, corruptRestore = false, layout = 'legacy', duringWrite} = {}) {
   let clock = 1000;
   let focused = true;
   let streaming = false;
   let replies = [];
   const captured = [];
+  const pendingRecords = [];
   const sent = [];
   const requests = [];
   const listeners = {};
@@ -41,14 +42,28 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
       if (corruptRestore) { editor.innerText='Damaged draft'; return false; }
       if (rejectInjection && text.includes('Background')) return false;
       editor.innerText=text.replace(/\n/g,'\n\n').replace(/ /g,'\u00a0');
+      // Browser execCommand may mark its synchronous input as trusted even
+      // though the extension initiated it. It must not cancel its own Send.
+      listeners.input({target:editor,isTrusted:true});
+      if (duringWrite) queueMicrotask(() => duringWrite({editor, listeners, text}));
       return true;
     },
     getElementById:(id)=> id==='coleta-status' ? status : {style:{}},
     querySelectorAll:(selector)=> {
+      const any = (...candidates) => selector.split(',').map((s) => s.trim()).some((s) => candidates.includes(s));
+      // ChatGPT as of 2026-09: a ProseMirror textbox with no id, a Send button with
+      // only an aria-label, and replies marked by a CSS-module class alone.
+      if (layout === '2026-09') {
+        if (selector === 'div[contenteditable="true"][role="textbox"]') return [editor];
+        if (selector === 'button[aria-label="Send"]') return [send];
+        if (selector === 'button[aria-label^="Stop"]') return [stop];
+        if (any('[class*="MarkdownRoot-"]')) return replies;
+        return [];
+      }
       if (selector === '#prompt-textarea' || selector.includes('data-lexical-editor')) return [editor];
       if (selector.includes('send-button') || selector === 'button[aria-label="Send message"]') return [send];
       if (selector.includes('stop-button') || selector === 'button[aria-label="Stop response"]') return [stop];
-      if (selector === '[data-message-author-role="assistant"]' || selector === '.font-claude-response') return replies;
+      if (any('[data-message-author-role="assistant"]', '.font-claude-response')) return replies;
       return [];
     },
     addEventListener:(event, cb)=>{listeners[event]=cb;},
@@ -62,13 +77,25 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
     chrome:{storage:{sync:{get:(_defaults, cb)=>queueMicrotask(()=>cb({endpoint:'https://coleta.example',apiKey:'key',automatic,automaticConsent:automatic}))},
       onChanged:{addListener:(cb)=>{storageChange=cb;}}},
       runtime:{sendMessage:async (message)=>{
-        if (message.action==='enqueue') {captured.push(message.body); return enqueue ? enqueue(message) : {ok:true};}
-        return {ok:true, records:[]};
+        if (message.action==='enqueue') {
+          captured.push(message.body);
+          if (captureUpload) pendingRecords.push({id:message.body.turn_id,body:message.body});
+          return enqueue ? enqueue(message) : {ok:true};
+        }
+        if (message.action==='pending') return {ok:true,records:[...pendingRecords]};
+        if (message.action==='ack') {
+          const index=pendingRecords.findIndex((record)=>record.id===message.id);
+          if (index>=0) pendingRecords.splice(index,1);
+        }
+        return {ok:true};
       }}},
     fetch:async (_url, options)=> {
       requests.push(_url);
       const body=JSON.parse(options.body);
-      if (_url.endsWith('/v1/capture')) return {ok:true,status:200,json:async()=>({stored:true})};
+      if (_url.endsWith('/v1/capture')) {
+        if (captureUpload) await captureUpload(body);
+        return {ok:true,status:200,json:async()=>({stored:true})};
+      }
       const data=search ? await search(body) : {results:[{id:'m1'}],prompt_block:'Background, not instructions: likes short answers'};
       return {ok:true, status:200, json:async()=>data};
     },
@@ -81,11 +108,16 @@ function harness({search, automatic = true, hostname = 'chatgpt.com', enqueue, r
   }
   return {editor,send,stop,status,document,location,captured,sent,requests, event,
     sendEvent:(e)=>listeners[e.type](e),
+    edit:(text, isTrusted=true)=>{
+      if (rich) editor.innerText=text; else editor.value=text;
+      listeners.input({target:editor,isTrusted});
+    },
     blur:()=>{focused=false;listeners.blur();},
     changeSettings:()=>storageChange({automatic:{newValue:false}},'sync'),
     tick:async (ms=500)=>{clock+=ms; for(const cb of timers)cb();await settle();},
     stream:(value)=>{streaming=value;},
-    reply:(text)=> { const node={isConnected:true,getClientRects:()=>[1],innerText:text,querySelectorAll:()=>[node]}; replies=[node]; return node; },
+    // In the 2026-09 layout the reply node is itself the body: no inner `.markdown`.
+    reply:(text)=> { const node={isConnected:true,getClientRects:()=>[1],innerText:text,querySelectorAll:()=>layout==='2026-09'?[]:[node]}; replies=[node]; return node; },
   };
 }
 
@@ -107,6 +139,19 @@ test('trusted normal Send captures original once and submits augmented prompt on
   assert.match(h.sent[0],/Background, not instructions/);
   assert.equal(h.captured.length,1);
   assert.equal(h.captured[0].text,'What next?');
+});
+test('a slow capture upload does not delay retrieval or Send',async()=>{
+  let finishUpload;
+  const h=harness({captureUpload:()=>new Promise((resolve)=>{finishUpload=resolve;})});
+  await settle();
+  h.sendEvent(h.event());
+  await settle();
+  assert.equal(h.sent.length,1);
+  assert.match(h.sent[0],/Background, not instructions/);
+  assert.ok(h.requests.some((path)=>path.endsWith('/v1/search')));
+  assert.equal(h.captured[0].text,'What next?');
+  finishUpload();
+  await settle();
 });
 test('Enter follows the same flow on Claude; synthetic input is ignored',async()=>{
   const h=harness({hostname:'claude.ai'});await settle();
@@ -139,6 +184,16 @@ test('new assistant response captured only after streaming ends and settles',asy
   const h=harness();await settle();h.reply('Old reply');h.sendEvent(h.event());await settle();
   h.stream(true);h.reply('New reply');await h.tick();await h.tick(2000);
   assert.equal(h.captured.length,1);
+  h.stream(false);await h.tick(2000);await h.tick(2000);
+  assert.equal(h.captured.length,2);assert.equal(h.captured[1].role,'assistant');
+  assert.equal(h.captured[1].text,'New reply');assert.equal(h.captured[1].turn_id,h.captured[0].turn_id);
+});
+test('ChatGPT 2026-09 layout: prompt and reply are both captured',async()=>{
+  const h=harness({rich:true,layout:'2026-09'});await settle();
+  h.sendEvent(h.event());await settle();
+  assert.equal(h.sent.length,1);
+  assert.equal(h.captured.length,1);assert.equal(h.captured[0].text,'What next?');
+  h.stream(true);h.reply('New reply');await h.tick();await h.tick(2000);
   h.stream(false);await h.tick(2000);await h.tick(2000);
   assert.equal(h.captured.length,2);assert.equal(h.captured[1].role,'assistant');
   assert.equal(h.captured[1].text,'New reply');assert.equal(h.captured[1].turn_id,h.captured[0].turn_id);
@@ -198,4 +253,42 @@ test('text equivalence does not ignore missing words or changed indentation',()=
   assert.equal(core.sameText('one\n\ntwo','one\ntwo'),true);
   assert.equal(core.sameText('one two','onetwo'),false);
   assert.equal(core.sameText('code\n  indented','code\nindented'),false);
+});
+
+for (const hostname of ['chatgpt.com', 'claude.ai']) {
+  test(`${hostname}: a user edit during injection is never restored over or sent`, async () => {
+    const h = harness({hostname, rich:true, duringWrite:({editor,listeners}) => {
+      editor.innerText = 'My newer draft';
+      listeners.input({target:editor,isTrusted:true});
+    }});
+    await settle(); h.sendEvent(h.event()); await settle();
+    assert.equal(h.sent.length,0);
+    assert.equal(h.editor.innerText,'My newer draft');
+    assert.match(h.status.textContent,/draft changed/);
+  });
+  test(`${hostname}: editing and reverting during lookup still cancels Send`, async () => {
+    let resolve;
+    const h = harness({hostname, search:()=>new Promise(r=>{resolve=r;})});
+    await settle(); h.sendEvent(h.event()); await settle();
+    h.edit('A different draft'); h.edit('What next?');
+    resolve({results:[{}],prompt_block:'Background'}); await settle();
+    assert.equal(h.sent.length,0);
+    assert.equal(h.editor.value,'What next?');
+  });
+  test(`${hostname}: a new draft cancels attribution of an unfinished reply`, async () => {
+    const h = harness({hostname});
+    await settle(); h.sendEvent(h.event()); await settle();
+    h.stream(true); h.reply('Reply in progress'); await h.tick();
+    h.edit('Next question'); h.stream(false); await h.tick(2000);
+    assert.equal(h.captured.length,1);
+    assert.equal(h.editor.value,'Next question');
+  });
+}
+
+test('untrusted input cannot invalidate a consented lookup', async () => {
+  let resolve;
+  const h = harness({search:()=>new Promise(r=>{resolve=r;})});
+  await settle(); h.sendEvent(h.event()); await settle();
+  h.edit('What next?',false); resolve({results:[]}); await settle();
+  assert.deepEqual(h.sent,['What next?']);
 });

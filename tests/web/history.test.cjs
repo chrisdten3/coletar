@@ -208,3 +208,39 @@ test('a failed panel does not blank the panels that loaded', async () => {
   // `historyError` this replaced put a warning on every tab on the page.
   assert.equal(context.overviewTab().includes('Try again'), false);
 });
+
+test('object history loads only for the opened object and retries only on request', async () => {
+  const id = 'memory-one';
+  const { context, countOf } = harness({
+    hash: '#/library',
+    routes: { [`/objects/${id}/events`]: 500 },
+  });
+
+  await context.loadObjectEvents(id);
+  await context.loadObjectEvents(id);
+  assert.equal(countOf(`/objects/${id}/events`), 1);
+  assert.equal(vm.runInContext('objectEventsError', context), true);
+
+  await context.loadObjectEvents(id, true);
+  assert.equal(countOf(`/objects/${id}/events`), 2);
+});
+
+test('a late object history response cannot replace the next object’s history', async () => {
+  let finishFirst;
+  const first = new Promise((resolve) => { finishFirst = resolve; });
+  const { context } = harness({
+    hash: '#/library',
+    bodies: {
+      '/objects/first/events': first,
+      '/objects/second/events': [{ object_id: 'second', type: 'object.created' }],
+    },
+  });
+
+  const firstLoad = context.loadObjectEvents('first');
+  await context.loadObjectEvents('second');
+  finishFirst([{ object_id: 'first', type: 'object.created' }]);
+  await firstLoad;
+
+  assert.equal(vm.runInContext('objectEventsId', context), 'second');
+  assert.equal(vm.runInContext('objectEvents[0].object_id', context), 'second');
+});

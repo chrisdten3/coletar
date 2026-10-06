@@ -472,6 +472,15 @@ class InMemoryStore:
         # event's `before`/`after` dict must not be able to rewrite history.
         return [e.model_copy(deep=True) for e in out[-limit:][::-1]]
 
+    async def latest_review_times(self, tenant_id: TenantId) -> dict[str, datetime]:
+        latest: dict[str, datetime] = {}
+        for event in self._events.get(tenant_id, []):
+            if event.type is EventType.OBJECT_REVIEWED and event.object_id:
+                previous = latest.get(event.object_id)
+                if previous is None or event.at > previous:
+                    latest[event.object_id] = event.at
+        return latest
+
     async def reads_of(
         self, tenant_id: TenantId, object_id: str, *, limit: int = 100
     ) -> list[ReadReceipt]:

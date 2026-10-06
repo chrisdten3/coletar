@@ -94,6 +94,21 @@ async def test_locality_comes_from_the_principals_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_local_proxy_does_not_inject_a_hash_collision() -> None:
+    store = InMemoryStore()
+    await store.put_object(TENANT, Memory.from_write("I like to watch boxing."))
+    await store.put_object(
+        TENANT, Memory.from_write("Relayed anti-capitalist sentiment against colonizers.")
+    )
+    client = LocalContextClient(store, principal(SCOPE_READ))
+
+    block = await client.context_block("i like to watch boxing", scope=GLOBAL_SCOPE)
+
+    assert "boxing" in block
+    assert "anti-capitalist" not in block
+
+
+@pytest.mark.asyncio
 async def test_a_write_still_lands_as_a_connector_write() -> None:
     """The event log has to keep distinguishing "the bridge extracted this from my
     words" from "a frontier model called write_memory"."""
@@ -119,7 +134,7 @@ def _free_port() -> int:
 
 
 @pytest.fixture(params=[False, True], ids=["stateful", "stateless"])
-def live_mcp_server(monkeypatch, request):
+def live_mcp_server(monkeypatch, request, tmp_path):
     """The real MCP app, real auth middleware, on a real port.
 
     A TestClient would not do: the point is that `streamable_http_client` can
@@ -128,6 +143,7 @@ def live_mcp_server(monkeypatch, request):
     """
     import uvicorn
 
+    from coletar.accounts import reset_directory
     from coletar.config import get_settings
     from coletar.mcp import rest as rest_bridge
     from coletar.mcp import server as mcp_server
@@ -143,6 +159,10 @@ def live_mcp_server(monkeypatch, request):
     )
     monkeypatch.setenv("COLETAR_CAPTURE_TURNS", "true")
     monkeypatch.setenv("COLETAR_LIVE_EXTRACTION_MODE", "off")
+    # This fixture supplies its own in-process graph. Its credential directory
+    # must follow that graph, even when the developer's .env selects Postgres.
+    monkeypatch.setenv("COLETAR_STORE_BACKEND", "memory")
+    monkeypatch.setenv("COLETAR_STORE_PATH", str(tmp_path / "proxy-graph.json"))
     port = _free_port()
     # The SDK's DNS-rebinding guard matches the *whole* Host header, port included.
     # This is the M3.3 "421 Misdirected Request" in miniature, and only a non-default
@@ -152,6 +172,7 @@ def live_mcp_server(monkeypatch, request):
     )
     get_settings.cache_clear()
     reset_store()
+    reset_directory()
     config = uvicorn.Config(
         mcp_server.build_app(stateless=request.param),
         host="127.0.0.1", port=port, log_level="error"
@@ -171,6 +192,7 @@ def live_mcp_server(monkeypatch, request):
     thread.join(timeout=10)
     get_settings.cache_clear()
     reset_store()
+    reset_directory()
 
 
 @pytest.mark.asyncio

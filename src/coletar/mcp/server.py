@@ -191,6 +191,7 @@ async def search_context(
         token_budget=settings.retrieval_token_budget,
         surface="mcp",
         principal=principal.id,
+        require_lexical_match=store.embedder_model.startswith("hashing-"),
     )
 
     return SearchContextResponse(

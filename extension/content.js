@@ -12,11 +12,15 @@ chrome.storage.onChanged.addListener((changes, area) => {
   mount();
 });
 const adapters = {
+  // ChatGPT's 2026-09 composer is a ProseMirror textbox with no id, its Send button
+  // has only an aria-label, and replies lost `data-message-author-role`: the reply
+  // body is a CSS-module `MarkdownRoot-<hash>` that user messages do not use. The
+  // older selectors stay first for accounts still served the previous layout.
   "chatgpt.com": {
-    composers: ['#prompt-textarea'],
-    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
-    stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]'],
-    replies: '[data-message-author-role="assistant"]',
+    composers: ['#prompt-textarea', 'div[contenteditable="true"][role="textbox"]'],
+    send: ['button[data-testid="send-button"]', 'button[aria-label="Send prompt"]', 'button[aria-label="Send"]'],
+    stop: ['button[data-testid="stop-button"]', 'button[aria-label="Stop streaming"]', 'button[aria-label^="Stop"]'],
+    replies: '[data-message-author-role="assistant"], [class*="MarkdownRoot-"]',
     text: '.markdown',
   },
   "claude.ai": {
@@ -40,6 +44,7 @@ function find(selectors) {
 }
 const composer = () => find(adapter?.composers);
 const read = (el) => (el.value !== undefined ? el.value : el.innerText || "").trim();
+let writingEditor = false;
 async function write(el, text) {
   try {
   if (el.value !== undefined) {
@@ -53,7 +58,11 @@ async function write(el, text) {
     range.selectNodeContents(el);
     selection.removeAllRanges();
     selection.addRange(range);
-    document.execCommand("insertText", false, text);
+    // execCommand can emit trusted input synchronously. Ignore only that
+    // insertion, not user input while awaiting the editor's reconciliation.
+    writingEditor = true;
+    try { document.execCommand("insertText", false, text); }
+    finally { writingEditor = false; }
   }
     // Let the editor reconcile its input before deciding that insertion failed.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -194,14 +203,13 @@ async function intercept(event, el, button) {
     // or unavailable extension/server never gets to hold the website indefinitely.
     const queued = await ColetaBridge.bounded(queue("enqueue", config, {body:turn}), 100);
     if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
-    const saved = await ColetaBridge.bounded(call("/v1/capture", turn, config, 200), 200);
-    if (saved?.ok && saved.data.stored && queued?.id) {
-      void queue("ack", config, {id:queued.id});
-    }
-    if (!unchanged()) { report("Coleta: send cancelled · draft kept"); return; }
+    // Delivery must not hold the user's Send while retrieval is running. The
+    // encrypted outbox is durable; a failed or slow upload stays queued for retry.
+    if (queued?.ok) void flush();
+    else void call("/v1/capture", turn, config, 1500);
     const result = await ColetaBridge.bounded(call("/v1/search", {
       query:original.slice(0,4000), top_k:6, style:"terse",
-    }, config, 400), 400);
+    }, config, 1200), 1200);
     if (!unchanged()) {
       report("Coleta: draft changed or page left · send when ready");
       return;
@@ -209,7 +217,10 @@ async function intercept(event, el, button) {
     let augmented = result?.ok ? ColetaBridge.augment(original, result.data) : draft;
     let injectionFailed = false;
     if (augmented !== draft && !await write(el, augmented)) {
-      if (!active() || version !== generation || location.pathname !== route) return;
+      if (!active() || version !== generation || location.pathname !== route) {
+        report("Coleta: draft changed or page left · send when ready");
+        return;
+      }
       if (!await write(el, draft)) {
         report("Coleta: could not restore your draft · please check it before sending");
         return;
@@ -295,6 +306,16 @@ function handleSend(event) {
 }
 document.addEventListener("keydown", handleSend, true);
 document.addEventListener("click", handleSend, true);
+// Editor reconciliation yields to the page. A trusted edit during that yield
+// invalidates the turn even if its text later matches the snapshot again. Do not
+// mistake our synthetic insertion input for a new user draft.
+document.addEventListener("input", (event) => {
+  if (!event.isTrusted || writingEditor) return;
+  const el = composer();
+  if (!el?.contains(event.target)) return;
+  pending = null;
+  generation++;
+}, true);
 async function observeReply() {
   if (!active() || !ColetaBridge.autoEnabled(settings)) return;
   routeChanged();
@@ -314,7 +335,10 @@ async function observeReply() {
   const node = nodes[0];
   if (turn.node && node !== turn.node) { pending = null; return; }
   turn.node = node;
-  const bodies = adapter.text ? [...node.querySelectorAll(adapter.text)] : [node];
+  // A reply node that is itself the body (ChatGPT's current layout) has no inner
+  // `.markdown`, so fall back to the node rather than reading nothing.
+  const inner = adapter.text ? [...node.querySelectorAll(adapter.text)] : [];
+  const bodies = inner.length ? inner : [node];
   const text = bodies.map((body) => body.innerText || "").join("\n\n").trim();
   if (!text || text.length > 100_000) return;
   if (text !== turn.text) { turn.text = text; turn.changed = Date.now(); return; }

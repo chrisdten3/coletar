@@ -157,6 +157,22 @@ async def test_search_results_conform_to_the_memory_schema(store, caller):
     assert hit.score is not None
 
 
+async def test_mcp_search_excludes_hash_collision_from_model_context(store, caller):
+    await store.put_object(TENANT, Memory.from_write("I like to watch boxing."))
+    await store.put_object(
+        TENANT, Memory.from_write("Relayed anti-capitalist sentiment against colonizers.")
+    )
+
+    with principal_scope(caller):
+        result = await mcp_server.mcp.call_tool(
+            "search_context", {"query": "i like to watch boxing", "top_k": 6}
+        )
+
+    payload = SearchContextResponse.model_validate(result.structured_content)
+    assert len(payload.results) == 1
+    assert "boxing" in payload.results[0].content
+
+
 async def test_write_then_read_round_trips_through_the_tools(store, caller):
     with principal_scope(caller):
         written = await mcp_server.mcp.call_tool(

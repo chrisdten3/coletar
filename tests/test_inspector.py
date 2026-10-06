@@ -551,7 +551,7 @@ async def test_product_import_recognises_both_providers_and_user_turns(live_stor
         assert response.status_code == 200, response.text
         assert response.json()["turns"] > 0
         assert response.json()["memories"] + response.json()["corroborated"] > 0
-    state = client.get("/web-api/state").json()
+    state = client.get("/web-api/state?include_events=true").json()
     assert all(o["provenance"]["provider"] == "claude" for o in state["objects"])
     assert any(e["type"] == "object.corroborated" for e in state["events"])
     assert not state["can_compile"]
@@ -559,6 +559,33 @@ async def test_product_import_recognises_both_providers_and_user_turns(live_stor
     assert malformed.status_code == 422
     unrelated = client.post("/web-api/import", files={"file": ("unrelated.json", b'[{"other":1}]')})
     assert unrelated.status_code == 422
+
+
+async def test_workspace_load_defers_event_snapshots_until_one_object_is_opened(
+    live_store: None,
+) -> None:
+    from fastapi.testclient import TestClient
+
+    from coletar.inspector.app import app
+
+    client = TestClient(app, base_url="http://localhost")
+    first = client.post("/web-api/memories", json={"content": "I prefer boxing."})
+    second = client.post("/web-api/memories", json={"content": "I prefer running."})
+    assert first.status_code == second.status_code == 200
+    first_id = first.json()["id"]
+    second_id = second.json()["id"]
+
+    initial = client.get("/web-api/state")
+    assert initial.status_code == 200
+    assert initial.json()["events"] == []
+    assert len(initial.json()["objects"]) == 2
+
+    history = client.get(f"/web-api/objects/{first_id}/events")
+    assert history.status_code == 200
+    assert history.json()
+    assert all(event["object_id"] == first_id for event in history.json())
+    assert second_id not in history.text
+    assert client.get("/web-api/objects/missing/events").status_code == 404
 
 
 @pytest.mark.asyncio
@@ -636,7 +663,7 @@ async def test_design_sample_populates_review_and_read_log(live_store: None) -> 
 
     client = TestClient(app, base_url="http://localhost")
     assert client.post("/web-api/sample").status_code == 200
-    state = client.get("/web-api/state").json()
+    state = client.get("/web-api/state?include_events=true").json()
 
     # The supersession and both sides of the conflict are what Review is about.
     unreviewed = set(state["unreviewed"])

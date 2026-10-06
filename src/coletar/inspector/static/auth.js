@@ -143,34 +143,43 @@ function asSession(payload) {
 
 const supabase = {
   session: stored(),
+  // A refresh started for an older session must never restore it after sign-out
+  // or replace a different account that signed in while the request was pending.
+  generation: 0,
   // One in-flight refresh at a time. Without this, several API calls racing past
   // expiry each spend the refresh token, and because GoTrue rotates it on use
   // every loser of that race is signed out.
   refreshing: null,
 
   async refresh() {
-    if (!this.session?.refresh_token) return null;
+    const original = this.session;
+    if (!original?.refresh_token) return null;
     if (this.refreshing) return this.refreshing;
-    this.refreshing = (async () => {
+    const generation = this.generation;
+    const pending = (async () => {
       try {
         const next = asSession(
           await gotrue("/token?grant_type=refresh_token", {
-            body: { refresh_token: this.session.refresh_token },
+            body: { refresh_token: original.refresh_token },
           }),
         );
+        if (this.generation !== generation || this.session !== original) return null;
         this.set(next);
         return next;
       } catch {
         // A refresh token that will not exchange is a session that is over. Clear
         // it rather than retrying: keeping it means every later call fails the
         // same way and the person is never shown a sign-in form.
-        this.set(null);
+        if (this.generation === generation && this.session === original) this.set(null);
         return null;
-      } finally {
-        this.refreshing = null;
       }
     })();
-    return this.refreshing;
+    this.refreshing = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.refreshing === pending) this.refreshing = null;
+    }
   },
 
   set(session) {
@@ -194,6 +203,8 @@ const supabase = {
       await gotrue("/token?grant_type=password", { body: { email, password } }),
     );
     if (!next) throw new Error("That sign-in did not return a session.");
+    this.generation++;
+    this.refreshing = null;
     this.set(next);
     return next;
   },
@@ -216,6 +227,8 @@ const supabase = {
     });
     const next = asSession(payload);
     if (next) {
+      this.generation++;
+      this.refreshing = null;
       this.set(next);
       return { session: next };
     }
@@ -228,6 +241,8 @@ const supabase = {
 
   async signOut() {
     const token = this.session?.access_token;
+    this.generation++;
+    this.refreshing = null;
     this.set(null);
     if (token) {
       // Best effort. The session is already gone locally, and a failed revoke must
