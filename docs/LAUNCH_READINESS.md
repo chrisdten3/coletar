@@ -143,10 +143,15 @@ verified connection.
   capture check for that one Claude turn; ChatGPT reply capture remains unverified.
 - That second prompt, `i like steak`, also exposed a relevance failure: production
   trace `evt_8a20b8f5b2504f8f` returned the boxing memory because `like` was
-  shared. The reply mentioned a boxing card. A topic-word guard is tested on the
-  branch against REST, MCP, local proxy, and the configured Supabase memories;
-  it must be deployed and repeated over production HTTP before this failure is
-  marked fixed.
+  shared. The reply mentioned a boxing card. PR #67 (`0a3d169`) added a topic-word
+  guard across REST, MCP, and local proxy; all CI checks passed and Vercel reported
+  a successful Production deployment of the merge commit. On 2026-10-07 UTC,
+  production HTTP checks using short-lived, read-only keys for both Claude and
+  ChatGPT returned only the stored steak preference for `i like steak` and only
+  the boxing preference for `i like to watch boxing`, in both `full` and `terse`
+  styles. The keys were revoked. The steak preference had been captured after
+  the original failure, so the correct post-deployment result is steak rather
+  than an empty context block. A fresh visible-page Send check is still needed.
 - **Still open:** test a failed lookup, changed draft, stopped stream, and completed
   ChatGPT assistant capture on the live page. Repeat after provider UI changes. Native
   desktop and local-model delivery need their own client-level evidence.

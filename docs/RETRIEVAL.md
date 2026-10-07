@@ -53,10 +53,13 @@ boxing preference because both statements contained `like`. Its production trace
 showed lexical coverage 0.5 and a 0.3846 hashing cosine, enough to rank it despite
 the topics being unrelated. Under hashing, prompt-facing retrieval now requires a
 shared topic word when the query names one; common framing verbs such as `like`,
-`prefer`, and `use` cannot supply that evidence alone. A read-only check against
-the configured Supabase memories returns no context for steak and still returns
-the boxing preference for `i like to watch boxing`. The ranking formula and its
-published evaluation baselines remain unchanged.
+`prefer`, and `use` cannot supply that evidence alone. Before a steak memory was
+captured, a read-only check against the configured Supabase memories returned no
+context for steak and still returned the boxing preference for `i like to watch
+boxing`. After that capture and deployment of PR #67, production HTTP checks for
+both ChatGPT and Claude policies, in full and terse styles, returned only steak
+for the steak query and only boxing for the boxing query. The ranking formula and
+its published evaluation baselines remain unchanged.
 
 This filter runs before context assembly and tracing, so the trace records what
 was actually returned. The ranking formula and its evaluation harness are unchanged;
