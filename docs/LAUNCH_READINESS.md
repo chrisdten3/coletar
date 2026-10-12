@@ -151,7 +151,15 @@ verified connection.
   the boxing preference for `i like to watch boxing`, in both `full` and `terse`
   styles. The keys were revoked. The steak preference had been captured after
   the original failure, so the correct post-deployment result is steak rather
-  than an empty context block. A fresh visible-page Send check is still needed.
+  than an empty context block.
+- On 2026-10-12 UTC, the owner supplied a fresh Claude web screenshot of a
+  submitted `i like steak` prompt. Its injected context contained only the steak
+  preference, with no boxing memory, and the extension showed "1 memories added".
+  Production trace `evt_e594c5926b814bfa` at 01:07:03 UTC returned only
+  `mem_c98ee4b3eb9b33e5`; `evt_e53efc3eb6754315` recorded the encrypted user
+  turn. This closes the visible-page repeat check for the steak/boxing relevance
+  failure. Claude was still generating in the screenshot, so it does not establish
+  completed-reply capture for this turn or any other provider layout.
 - **Still open:** test a failed lookup, changed draft, stopped stream, and completed
   ChatGPT assistant capture on the live page. Repeat after provider UI changes. Native
   desktop and local-model delivery need their own client-level evidence.
