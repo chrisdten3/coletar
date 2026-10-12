@@ -160,6 +160,13 @@ verified connection.
   turn. This closes the visible-page repeat check for the steak/boxing relevance
   failure. Claude was still generating in the screenshot, so it does not establish
   completed-reply capture for this turn or any other provider layout.
+- A later screenshot showed that Claude finished that same reply, but no paired
+  assistant capture event exists for its turn ID. The owner left the Claude page
+  to share the in-progress screenshot; the extension cancels reply attribution
+  when the page loses focus or becomes hidden. A new uninterrupted foreground
+  turn is required to check completed-reply capture. The extension now reports
+  this cancellation in its status instead of leaving the earlier memory count
+  visible.
 - **Still open:** test a failed lookup, changed draft, stopped stream, and completed
   ChatGPT assistant capture on the live page. Repeat after provider UI changes. Native
   desktop and local-model delivery need their own client-level evidence.

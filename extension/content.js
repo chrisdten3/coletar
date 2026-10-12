@@ -351,9 +351,17 @@ async function observeReply() {
   void flush();
 }
 document.addEventListener("visibilitychange", () => {
-  if (!active()) { pending = null; generation++; }
+  if (!active()) {
+    if (pending) report("Coleta: reply not captured · keep this page active until it finishes");
+    pending = null;
+    generation++;
+  }
 });
-window.addEventListener("blur", () => { pending = null; generation++; });
+window.addEventListener("blur", () => {
+  if (pending) report("Coleta: reply not captured · keep this page active until it finishes");
+  pending = null;
+  generation++;
+});
 window.addEventListener("popstate", () => { pending = null; generation++; lastRoute = location.pathname; });
 // Poll only a foreground page. No DOM read occurs while another tab/window is active.
 setInterval(() => {
