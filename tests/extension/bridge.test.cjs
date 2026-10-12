@@ -113,6 +113,7 @@ function harness({search, captureUpload, automatic = true, hostname = 'chatgpt.c
       listeners.input({target:editor,isTrusted});
     },
     blur:()=>{focused=false;listeners.blur();},
+    hide:()=>{document.visibilityState='hidden';listeners.visibilitychange();},
     changeSettings:()=>storageChange({automatic:{newValue:false}},'sync'),
     tick:async (ms=500)=>{clock+=ms; for(const cb of timers)cb();await settle();},
     stream:(value)=>{streaming=value;},
@@ -203,10 +204,13 @@ test('a stable reply without observed completion controls is not captured',async
   await h.tick();await h.tick(2000);assert.equal(h.captured.length,1);
 });
 test('Stop and backgrounding cancel reply capture',async()=>{
-  for(const cancel of ['stop','blur']) {
+  for(const cancel of ['stop','blur','hide']) {
     const h=harness();await settle();h.sendEvent(h.event());await settle();h.stream(true);h.reply('Partial');await h.tick();
-    if(cancel==='stop')h.sendEvent(h.event('click',{target:h.stop}));else h.blur();
+    if(cancel==='stop')h.sendEvent(h.event('click',{target:h.stop}));
+    else if(cancel==='blur')h.blur();
+    else h.hide();
     h.stream(false);await h.tick(2000);assert.equal(h.captured.length,1);
+    if(cancel!=='stop') assert.match(h.status.textContent,/reply not captured.*keep this page active/);
   }
 });
 test('automatic off leaves native Send untouched',async()=>{
